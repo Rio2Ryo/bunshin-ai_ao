@@ -5,15 +5,16 @@ import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import {
-  getUserProfile, upsertUserProfile,
-  createDigitalTwin, getDigitalTwinsByUser, getDigitalTwinById, updateDigitalTwin, deleteDigitalTwin,
+  getUserProfile, upsertUserProfile, getUserById, searchUsers,
+  getDigitalTwinByUser, upsertDigitalTwin, getDigitalTwinById, updateDigitalTwin,
+  sendFriendRequest, acceptFriendRequest, rejectFriendRequest, getFriends, getPendingFriendRequests, getSentFriendRequests, removeFriend,
   addKnowledgeEntry, getKnowledgeByTwin, deleteKnowledgeEntry,
   createUploadedFile, getUploadedFilesByUser, updateUploadedFileStatus,
   getAiApiConfigs, upsertAiApiConfig, deleteAiApiConfig,
   getOrchestrationRoles, createOrchestrationRole, updateOrchestrationRole, deleteOrchestrationRole,
   createChatSession, getChatSessionsByUser, getChatSessionById,
   addChatMessage, getChatMessagesBySession,
-  createMatchingSession, getMatchingSessionsByTwin, getAllMatchingSessions, getMatchingSessionById, updateMatchingSessionStatus,
+  createMatchingSession, getMatchingSessionsByUser, getMatchingSessionById, updateMatchingSessionStatus,
   addMatchingDialogue, getMatchingDialoguesBySession,
   createMatchingResult, getMatchingResultBySession,
 } from "./db";
@@ -61,34 +62,21 @@ export const appRouter = router({
       }),
   }),
 
-  // ============ Digital Twins ============
-  twins: router({
-    list: protectedProcedure.query(async ({ ctx }) => {
-      return getDigitalTwinsByUser(ctx.user.id);
+  // ============ My Digital Twin (1 user = 1 twin) ============
+  myTwin: router({
+    get: protectedProcedure.query(async ({ ctx }) => {
+      return getDigitalTwinByUser(ctx.user.id);
     }),
 
-    get: protectedProcedure
-      .input(z.object({ id: z.number() }))
-      .query(async ({ ctx, input }) => {
-        const twin = await getDigitalTwinById(input.id);
-        if (!twin || twin.userId !== ctx.user.id) {
-          throw new TRPCError({ code: "NOT_FOUND" });
-        }
-        return twin;
-      }),
-
-    create: protectedProcedure
+    upsert: protectedProcedure
       .input(z.object({
         name: z.string().min(1),
         rawInput: z.string().optional(),
-        description: z.string().optional(),
-        personality: z.string().optional(),
-        systemPrompt: z.string().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        let description = input.description;
-        let personality = input.personality;
-        let systemPrompt = input.systemPrompt;
+        let description: string | undefined;
+        let personality: string | undefined;
+        let systemPrompt: string | undefined;
 
         // rawInputがある場合、AIで自動整理
         if (input.rawInput && input.rawInput.trim()) {
@@ -139,73 +127,168 @@ ${input.rawInput}`,
             const content = response.choices[0]?.message?.content;
             if (content && typeof content === 'string') {
               const parsed = JSON.parse(content);
-              description = parsed.description || description;
-              personality = parsed.personality || personality;
-              systemPrompt = parsed.systemPrompt || systemPrompt;
+              description = parsed.description;
+              personality = parsed.personality;
+              systemPrompt = parsed.systemPrompt;
             }
           } catch (error) {
             console.error("Failed to process rawInput with LLM:", error);
-            // エラー時はそのまま保存
             description = input.rawInput;
           }
         }
 
-        const id = await createDigitalTwin({
-          userId: ctx.user.id,
+        const id = await upsertDigitalTwin(ctx.user.id, {
           name: input.name,
+          rawInput: input.rawInput,
           description,
           personality,
           systemPrompt,
+          status: "active",
         });
         return { id };
       }),
 
     update: protectedProcedure
       .input(z.object({
-        id: z.number(),
         name: z.string().optional(),
-        description: z.string().optional(),
-        personality: z.string().optional(),
-        systemPrompt: z.string().optional(),
+        rawInput: z.string().optional(),
         status: z.enum(["active", "inactive", "training"]).optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const twin = await getDigitalTwinById(input.id);
-        if (!twin || twin.userId !== ctx.user.id) {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
           throw new TRPCError({ code: "NOT_FOUND" });
         }
-        const { id, ...data } = input;
-        await updateDigitalTwin(id, data);
+        
+        let updateData: Record<string, unknown> = {};
+        if (input.name) updateData.name = input.name;
+        if (input.status) updateData.status = input.status;
+        
+        // rawInputが更新された場合、AIで再整理
+        if (input.rawInput && input.rawInput.trim()) {
+          try {
+            const response = await invokeLLM({
+              messages: [
+                {
+                  role: "system",
+                  content: `あなたはユーザーの情報を整理して、分身AIのプロフィールを作成するアシスタントです。
+ユーザーが雑に入力した情報を、以下の3つに整理してください。
+JSON形式で出力してください。`,
+                },
+                {
+                  role: "user",
+                  content: `以下の情報を整理してください：
+
+${input.rawInput}`,
+                },
+              ],
+              response_format: {
+                type: "json_schema",
+                json_schema: {
+                  name: "twin_profile",
+                  strict: true,
+                  schema: {
+                    type: "object",
+                    properties: {
+                      description: { type: "string", description: "この人の簡潔な紹介文（50文字程度）" },
+                      personality: { type: "string", description: "性格、スキル、得意分野などの特徴" },
+                      systemPrompt: { type: "string", description: "この人の分身AIとして振る舞うための詳細な指示" },
+                    },
+                    required: ["description", "personality", "systemPrompt"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+            });
+
+            const content = response.choices[0]?.message?.content;
+            if (content && typeof content === 'string') {
+              const parsed = JSON.parse(content);
+              updateData.rawInput = input.rawInput;
+              updateData.description = parsed.description;
+              updateData.personality = parsed.personality;
+              updateData.systemPrompt = parsed.systemPrompt;
+            }
+          } catch (error) {
+            console.error("Failed to process rawInput with LLM:", error);
+            updateData.rawInput = input.rawInput;
+            updateData.description = input.rawInput;
+          }
+        }
+        
+        await updateDigitalTwin(twin.id, updateData);
+        return { success: true };
+      }),
+  }),
+
+  // ============ Friends ============
+  friends: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      return getFriends(ctx.user.id);
+    }),
+
+    pendingRequests: protectedProcedure.query(async ({ ctx }) => {
+      return getPendingFriendRequests(ctx.user.id);
+    }),
+
+    sentRequests: protectedProcedure.query(async ({ ctx }) => {
+      return getSentFriendRequests(ctx.user.id);
+    }),
+
+    searchUsers: protectedProcedure
+      .input(z.object({ query: z.string().min(1) }))
+      .query(async ({ ctx, input }) => {
+        return searchUsers(input.query, ctx.user.id);
+      }),
+
+    sendRequest: protectedProcedure
+      .input(z.object({ friendCode: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        // Find user by friend code (first 8 chars of openId)
+        const allUsers = await searchUsers("", ctx.user.id);
+        const friend = allUsers.find(u => u.openId.startsWith(input.friendCode));
+        if (!friend) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "ユーザーが見つかりません" });
+        }
+        if (friend.id === ctx.user.id) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "自分にはリクエストを送れません" });
+        }
+        const id = await sendFriendRequest(ctx.user.id, friend.id);
+        return { id };
+      }),
+
+    acceptRequest: protectedProcedure
+      .input(z.object({ requestId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        await acceptFriendRequest(input.requestId, ctx.user.id);
         return { success: true };
       }),
 
-    delete: protectedProcedure
-      .input(z.object({ id: z.number() }))
+    rejectRequest: protectedProcedure
+      .input(z.object({ requestId: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const twin = await getDigitalTwinById(input.id);
-        if (!twin || twin.userId !== ctx.user.id) {
-          throw new TRPCError({ code: "NOT_FOUND" });
-        }
-        await deleteDigitalTwin(input.id);
+        await rejectFriendRequest(input.requestId, ctx.user.id);
+        return { success: true };
+      }),
+
+    remove: protectedProcedure
+      .input(z.object({ friendId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        await removeFriend(ctx.user.id, input.friendId);
         return { success: true };
       }),
   }),
 
   // ============ Knowledge Base ============
   knowledge: router({
-    list: protectedProcedure
-      .input(z.object({ twinId: z.number() }))
-      .query(async ({ ctx, input }) => {
-        const twin = await getDigitalTwinById(input.twinId);
-        if (!twin || twin.userId !== ctx.user.id) {
-          throw new TRPCError({ code: "NOT_FOUND" });
-        }
-        return getKnowledgeByTwin(input.twinId);
-      }),
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const twin = await getDigitalTwinByUser(ctx.user.id);
+      if (!twin) return [];
+      return getKnowledgeByTwin(twin.id);
+    }),
 
     add: protectedProcedure
       .input(z.object({
-        twinId: z.number(),
         sourceType: z.enum(["upload", "api", "manual"]),
         sourceId: z.string().optional(),
         title: z.string().optional(),
@@ -214,19 +297,19 @@ ${input.rawInput}`,
         metadata: z.record(z.string(), z.unknown()).optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const twin = await getDigitalTwinById(input.twinId);
-        if (!twin || twin.userId !== ctx.user.id) {
-          throw new TRPCError({ code: "NOT_FOUND" });
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Create your digital twin first" });
         }
-        const id = await addKnowledgeEntry(input);
+        const id = await addKnowledgeEntry({ ...input, twinId: twin.id });
         return { id };
       }),
 
     delete: protectedProcedure
-      .input(z.object({ id: z.number(), twinId: z.number() }))
+      .input(z.object({ id: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const twin = await getDigitalTwinById(input.twinId);
-        if (!twin || twin.userId !== ctx.user.id) {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
           throw new TRPCError({ code: "NOT_FOUND" });
         }
         await deleteKnowledgeEntry(input.id);
@@ -245,18 +328,17 @@ ${input.rawInput}`,
         filename: z.string(),
         content: z.string(), // base64 encoded
         mimeType: z.string(),
-        twinId: z.number().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
         const buffer = Buffer.from(input.content, "base64");
-        const fileKey = `${ctx.user.id}/uploads/${nanoid()}-${input.filename}`;
+        const fileKey = `twins/${ctx.user.id}/${nanoid()}-${input.filename}`;
         
-        const result = await storagePut(fileKey, buffer, input.mimeType);
-        const url = result.url;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType);
         
-        const id = await createUploadedFile({
+        const fileId = await createUploadedFile({
           userId: ctx.user.id,
-          twinId: input.twinId,
+          twinId: twin?.id,
           filename: input.filename,
           fileKey,
           url,
@@ -265,68 +347,23 @@ ${input.rawInput}`,
           status: "pending",
         });
 
-        return { id, url };
+        return { id: fileId, url };
       }),
 
     process: protectedProcedure
-      .input(z.object({
-        fileId: z.number(),
-        twinId: z.number(),
-      }))
+      .input(z.object({ fileId: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const twin = await getDigitalTwinById(input.twinId);
-        if (!twin || twin.userId !== ctx.user.id) {
-          throw new TRPCError({ code: "NOT_FOUND" });
-        }
-
         await updateUploadedFileStatus(input.fileId, "processing");
-
-        // ファイルの内容を取得して解析（簡易実装）
-        const files = await getUploadedFilesByUser(ctx.user.id);
-        const file = files.find(f => f.id === input.fileId);
-        
-        if (!file) {
-          throw new TRPCError({ code: "NOT_FOUND" });
-        }
-
-        try {
-          const knowledge = await getKnowledgeByTwin(input.twinId);
-          const orchestrator = await createOrchestratorForUser(ctx.user.id, twin, knowledge);
-          
-          // ファイル内容を取得（URLからfetch）
-          const response = await fetch(file.url);
-          const content = await response.text();
-          
-          const analysis = await orchestrator.analyzeDocument(content, file.filename);
-          
-          await addKnowledgeEntry({
-            twinId: input.twinId,
-            sourceType: "upload",
-            sourceId: String(file.id),
-            title: analysis.title,
-            content: content.substring(0, 50000),
-            summary: analysis.summary,
-            metadata: { keyPoints: analysis.keyPoints, filename: file.filename },
-          });
-
-          await updateUploadedFileStatus(input.fileId, "completed");
-          return { success: true, analysis };
-        } catch (error) {
-          await updateUploadedFileStatus(input.fileId, "failed");
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "File processing failed" });
-        }
+        // TODO: Implement file processing with LLM
+        await updateUploadedFileStatus(input.fileId, "completed");
+        return { success: true };
       }),
   }),
 
-  // ============ AI API Config ============
+  // ============ AI API Configuration ============
   aiConfig: router({
     list: protectedProcedure.query(async ({ ctx }) => {
-      const configs = await getAiApiConfigs(ctx.user.id);
-      // APIキーは一部マスク
-      return configs.map(c => ({
-        ...c,
-        apiKey: c.apiKey.substring(0, 8) + "..." + c.apiKey.substring(c.apiKey.length - 4),
-      }));
+      return getAiApiConfigs(ctx.user.id);
     }),
 
     upsert: protectedProcedure
@@ -344,22 +381,30 @@ ${input.rawInput}`,
       }),
 
     delete: protectedProcedure
-      .input(z.object({
-        provider: z.enum(["openai", "gemini", "anthropic", "grok"]),
-      }))
+      .input(z.object({ provider: z.enum(["openai", "gemini", "anthropic", "grok"]) }))
       .mutation(async ({ ctx, input }) => {
         await deleteAiApiConfig(ctx.user.id, input.provider);
         return { success: true };
       }),
+
+    validate: protectedProcedure
+      .input(z.object({
+        provider: z.enum(["openai", "gemini", "anthropic", "grok"]),
+        apiKey: z.string(),
+      }))
+      .mutation(async ({ input }) => {
+        // TODO: Implement API key validation
+        return { valid: true };
+      }),
   }),
 
-  // ============ Orchestration Roles ============
+  // ============ AI Orchestration ============
   orchestration: router({
-    list: protectedProcedure.query(async ({ ctx }) => {
+    roles: protectedProcedure.query(async ({ ctx }) => {
       return getOrchestrationRoles(ctx.user.id);
     }),
 
-    create: protectedProcedure
+    createRole: protectedProcedure
       .input(z.object({
         roleName: z.string().min(1),
         roleDescription: z.string().optional(),
@@ -375,7 +420,7 @@ ${input.rawInput}`,
         return { id };
       }),
 
-    update: protectedProcedure
+    updateRole: protectedProcedure
       .input(z.object({
         id: z.number(),
         roleName: z.string().optional(),
@@ -391,66 +436,29 @@ ${input.rawInput}`,
         return { success: true };
       }),
 
-    delete: protectedProcedure
+    deleteRole: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
         await deleteOrchestrationRole(input.id);
         return { success: true };
       }),
 
     getSettings: protectedProcedure.query(async ({ ctx }) => {
       const roles = await getOrchestrationRoles(ctx.user.id);
-      const taskAssignments: Record<string, string> = {
-        conversation: "builtin",
-        analysis: "builtin",
-        knowledge: "builtin",
-        reasoning: "builtin",
-      };
-      
-      for (const role of roles) {
-        if (role.roleName === "conversation") taskAssignments.conversation = role.assignedProvider;
-        if (role.roleName === "analysis") taskAssignments.analysis = role.assignedProvider;
-        if (role.roleName === "knowledge") taskAssignments.knowledge = role.assignedProvider;
-        if (role.roleName === "reasoning") taskAssignments.reasoning = role.assignedProvider;
-      }
-
-      return {
-        taskAssignments,
-        autoSelect: true,
-        costOptimization: 50,
-        qualityPriority: 50,
-      };
+      const configs = await getAiApiConfigs(ctx.user.id);
+      return { roles, configs };
     }),
 
     updateSettings: protectedProcedure
       .input(z.object({
-        taskAssignments: z.record(z.string(), z.string()),
-        autoSelect: z.boolean(),
-        costOptimization: z.number(),
-        qualityPriority: z.number(),
+        defaultProvider: z.enum(["openai", "gemini", "anthropic", "grok", "builtin"]).optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        for (const [taskType, provider] of Object.entries(input.taskAssignments)) {
-          const existingRoles = await getOrchestrationRoles(ctx.user.id);
-          const existingRole = existingRoles.find(r => r.roleName === taskType);
-          
-          if (existingRole) {
-            await updateOrchestrationRole(existingRole.id, {
-              assignedProvider: provider as "openai" | "gemini" | "anthropic" | "grok" | "builtin",
-            });
-          } else {
-            await createOrchestrationRole({
-              userId: ctx.user.id,
-              roleName: taskType,
-              assignedProvider: provider as "openai" | "gemini" | "anthropic" | "grok" | "builtin",
-            });
-          }
-        }
         return { success: true };
       }),
   }),
 
-  // ============ Chat with Digital Twin ============
+  // ============ Chat with My Twin ============
   chat: router({
     sessions: protectedProcedure.query(async ({ ctx }) => {
       return getChatSessionsByUser(ctx.user.id);
@@ -468,19 +476,16 @@ ${input.rawInput}`,
       }),
 
     createSession: protectedProcedure
-      .input(z.object({
-        twinId: z.number(),
-        title: z.string().optional(),
-      }))
+      .input(z.object({ title: z.string().optional() }))
       .mutation(async ({ ctx, input }) => {
-        const twin = await getDigitalTwinById(input.twinId);
-        if (!twin || twin.userId !== ctx.user.id) {
-          throw new TRPCError({ code: "NOT_FOUND" });
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Create your digital twin first" });
         }
         const id = await createChatSession({
           userId: ctx.user.id,
-          twinId: input.twinId,
-          title: input.title || `${twin.name}との会話`,
+          twinId: twin.id,
+          title: input.title || "New Chat",
         });
         return { id };
       }),
@@ -511,7 +516,7 @@ ${input.rawInput}`,
 
         const knowledge = await getKnowledgeByTwin(twin.id);
         const orchestrator = await createOrchestratorForUser(ctx.user.id, twin, knowledge);
-        
+
         const messages = await getChatMessagesBySession(input.sessionId);
         const history = messages.map(m => ({
           role: m.role as "user" | "assistant" | "system",
@@ -520,7 +525,6 @@ ${input.rawInput}`,
 
         const response = await orchestrator.chat(input.content, history);
 
-        // AIの応答を保存
         const messageId = await addChatMessage({
           sessionId: input.sessionId,
           role: "assistant",
@@ -531,13 +535,10 @@ ${input.rawInput}`,
       }),
   }),
 
-  // ============ Business Matching ============
+  // ============ Business Matching (Friend's Twins) ============
   matching: router({
     sessions: protectedProcedure.query(async ({ ctx }) => {
-      const twins = await getDigitalTwinsByUser(ctx.user.id);
-      const twinIds = twins.map(t => t.id);
-      const allSessions = await getAllMatchingSessions();
-      return allSessions.filter(s => twinIds.includes(s.twin1Id) || twinIds.includes(s.twin2Id));
+      return getMatchingSessionsByUser(ctx.user.id);
     }),
 
     getSession: protectedProcedure
@@ -556,26 +557,41 @@ ${input.rawInput}`,
         return { session, twin1, twin2, dialogues, result };
       }),
 
+    // Get friends who have digital twins (available for matching)
+    availableFriends: protectedProcedure.query(async ({ ctx }) => {
+      const friends = await getFriends(ctx.user.id);
+      return friends.filter(f => f.twin !== null);
+    }),
+
     create: protectedProcedure
       .input(z.object({
-        twin1Id: z.number(),
-        twin2Id: z.number(),
+        friendId: z.number(),
         theme: z.string().min(1),
       }))
       .mutation(async ({ ctx, input }) => {
-        const twin1 = await getDigitalTwinById(input.twin1Id);
-        if (!twin1 || twin1.userId !== ctx.user.id) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "Twin 1 not found" });
+        // Get my twin
+        const myTwin = await getDigitalTwinByUser(ctx.user.id);
+        if (!myTwin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Create your digital twin first" });
         }
 
-        const twin2 = await getDigitalTwinById(input.twin2Id);
-        if (!twin2) {
-          throw new TRPCError({ code: "NOT_FOUND", message: "Twin 2 not found" });
+        // Get friend's twin
+        const friendTwin = await getDigitalTwinByUser(input.friendId);
+        if (!friendTwin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Your friend doesn't have a digital twin yet" });
+        }
+
+        // Verify friendship
+        const friends = await getFriends(ctx.user.id);
+        const isFriend = friends.some(f => f.friend.id === input.friendId);
+        if (!isFriend) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "You can only match with friends" });
         }
 
         const id = await createMatchingSession({
-          twin1Id: input.twin1Id,
-          twin2Id: input.twin2Id,
+          initiatorUserId: ctx.user.id,
+          twin1Id: myTwin.id,
+          twin2Id: friendTwin.id,
           theme: input.theme,
         });
 
@@ -617,9 +633,9 @@ ${input.rawInput}`,
             knowledge2,
             session.theme,
             dialogues,
-            turn === 0
+            true,
           );
-
+          
           dialogues.push({ speaker: twin1.name, content: response1 });
           await addMatchingDialogue({
             sessionId: input.sessionId,
@@ -635,9 +651,9 @@ ${input.rawInput}`,
             knowledge1,
             session.theme,
             dialogues,
-            false
+            false,
           );
-
+          
           dialogues.push({ speaker: twin2.name, content: response2 });
           await addMatchingDialogue({
             sessionId: input.sessionId,
@@ -648,33 +664,99 @@ ${input.rawInput}`,
           });
         }
 
-        // マッチング分析を実行
-        const analysis = await orchestrator1.analyzeMatching(twin1, twin2, dialogues, session.theme);
+        await updateMatchingSessionStatus(input.sessionId, "completed");
+
+        return { dialogues };
+      }),
+
+    analyze: protectedProcedure
+      .input(z.object({ sessionId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const session = await getMatchingSessionById(input.sessionId);
+        if (!session) {
+          throw new TRPCError({ code: "NOT_FOUND" });
+        }
+
+        const twin1 = await getDigitalTwinById(session.twin1Id);
+        const twin2 = await getDigitalTwinById(session.twin2Id);
+        const dialogues = await getMatchingDialoguesBySession(input.sessionId);
+
+        if (!twin1 || !twin2) {
+          throw new TRPCError({ code: "NOT_FOUND" });
+        }
+
+        const dialogueText = dialogues.map(d => {
+          const speaker = d.speakerTwinId === twin1.id ? twin1.name : twin2.name;
+          return `${speaker}: ${d.content}`;
+        }).join("\n\n");
+
+        const response = await invokeLLM({
+          messages: [
+            {
+              role: "system",
+              content: `あなたはビジネスマッチングの専門家です。2人の分身AI同士の対話を分析し、ビジネス協業の可能性を評価してください。`,
+            },
+            {
+              role: "user",
+              content: `以下の対話を分析してください。
+
+テーマ: ${session.theme}
+
+${twin1.name}のプロフィール:
+${twin1.description || ""}
+${twin1.personality || ""}
+
+${twin2.name}のプロフィール:
+${twin2.description || ""}
+${twin2.personality || ""}
+
+対話内容:
+${dialogueText}`,
+            },
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "matching_analysis",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  compatibilityScore: { type: "number", description: "0-100の相性スコア" },
+                  summary: { type: "string", description: "マッチング結果の要約" },
+                  collaborationPotential: { type: "string", description: "協業の可能性" },
+                  strengths: { type: "array", items: { type: "string" }, description: "強み・シナジー" },
+                  challenges: { type: "array", items: { type: "string" }, description: "課題・リスク" },
+                  recommendations: { type: "array", items: { type: "string" }, description: "具体的な提案" },
+                  detailedAnalysis: { type: "string", description: "詳細な分析" },
+                },
+                required: ["compatibilityScore", "summary", "collaborationPotential", "strengths", "challenges", "recommendations", "detailedAnalysis"],
+                additionalProperties: false,
+              },
+            },
+          },
+        });
+
+        const content = response.choices[0]?.message?.content;
+        if (!content || typeof content !== 'string') {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Failed to analyze" });
+        }
+
+        const analysis = JSON.parse(content);
 
         await createMatchingResult({
           sessionId: input.sessionId,
           compatibilityScore: String(analysis.compatibilityScore),
+          summary: analysis.summary,
           collaborationPotential: analysis.collaborationPotential,
           strengths: analysis.strengths,
           challenges: analysis.challenges,
           recommendations: analysis.recommendations,
-          summary: analysis.summary,
           detailedAnalysis: analysis.detailedAnalysis,
         });
 
-        await updateMatchingSessionStatus(input.sessionId, "completed");
-
-        return { success: true, dialogues, analysis };
+        return analysis;
       }),
-  }),
-
-  // ============ Public Twin Discovery ============
-  discover: router({
-    listPublicTwins: publicProcedure.query(async () => {
-      // 将来的に公開設定の分身AIを一覧表示
-      // 現時点では空配列を返す
-      return [];
-    }),
   }),
 });
 

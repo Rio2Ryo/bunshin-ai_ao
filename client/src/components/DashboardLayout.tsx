@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/sidebar";
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -31,6 +31,7 @@ const menuItems = [
   { icon: LayoutDashboard, label: "ダッシュボード", path: "/dashboard" },
   { icon: User, label: "プロフィール", path: "/profile" },
   { icon: Bot, label: "分身AI", path: "/twins" },
+  { icon: UserPlus, label: "友達", path: "/friends" },
   { icon: MessageSquare, label: "チャット", path: "/chat" },
   { icon: Users, label: "マッチング", path: "/matching" },
   { icon: Settings2, label: "AI API設定", path: "/ai-config" },

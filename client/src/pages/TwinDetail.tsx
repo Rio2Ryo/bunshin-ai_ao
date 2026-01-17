@@ -4,23 +4,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
-import { useParams, Link } from "wouter";
-import { useState, useEffect, useRef } from "react";
+import { useLocation, Link } from "wouter";
+import { useState, useRef } from "react";
 import { toast } from "sonner";
-import { Bot, Save, Loader2, Upload, FileText, Trash2, ArrowLeft, MessageSquare } from "lucide-react";
+import { Bot, Save, Loader2, Upload, FileText, Trash2, ArrowLeft, MessageSquare, Plus } from "lucide-react";
 
 export default function TwinDetail() {
-  const { id } = useParams<{ id: string }>();
-  const twinId = parseInt(id || "0");
-
-  const { data: twin, isLoading, refetch } = trpc.twins.get.useQuery({ id: twinId }, { enabled: twinId > 0 });
-  const { data: knowledge, refetch: refetchKnowledge } = trpc.knowledge.list.useQuery({ twinId }, { enabled: twinId > 0 });
+  const [, navigate] = useLocation();
+  const { data: twin, isLoading, refetch } = trpc.myTwin.get.useQuery();
+  const { data: knowledge, refetch: refetchKnowledge } = trpc.knowledge.list.useQuery();
   const { data: files } = trpc.files.list.useQuery();
 
-  const updateTwin = trpc.twins.update.useMutation();
+  const updateTwin = trpc.myTwin.update.useMutation();
   const uploadFile = trpc.files.upload.useMutation();
   const processFile = trpc.files.process.useMutation();
   const addKnowledge = trpc.knowledge.add.useMutation();
@@ -28,35 +25,19 @@ export default function TwinDetail() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [formData, setFormData] = useState({
-    name: "",
-    description: "",
-    personality: "",
-    systemPrompt: "",
-    status: "inactive" as "active" | "inactive" | "training",
-  });
-
+  const [name, setName] = useState("");
+  const [rawInput, setRawInput] = useState("");
   const [manualKnowledge, setManualKnowledge] = useState({
     title: "",
     content: "",
-    summary: "",
   });
-
-  useEffect(() => {
-    if (twin) {
-      setFormData({
-        name: twin.name,
-        description: twin.description || "",
-        personality: twin.personality || "",
-        systemPrompt: twin.systemPrompt || "",
-        status: twin.status,
-      });
-    }
-  }, [twin]);
 
   const handleSave = async () => {
     try {
-      await updateTwin.mutateAsync({ id: twinId, ...formData });
+      await updateTwin.mutateAsync({ 
+        name: name || undefined, 
+        rawInput: rawInput || undefined 
+      });
       toast.success("保存しました");
       refetch();
     } catch (error) {
@@ -76,14 +57,12 @@ export default function TwinDetail() {
           filename: file.name,
           content: base64,
           mimeType: file.type,
-          twinId,
         });
 
         toast.success("ファイルをアップロードしました。処理中...");
 
         await processFile.mutateAsync({
           fileId: result.id,
-          twinId,
         });
 
         toast.success("ファイルを処理しました");
@@ -96,21 +75,20 @@ export default function TwinDetail() {
   };
 
   const handleAddManualKnowledge = async () => {
-    if (!manualKnowledge.title.trim() || !manualKnowledge.content.trim()) {
-      toast.error("タイトルと内容を入力してください");
+    if (!manualKnowledge.content.trim()) {
+      toast.error("内容を入力してください");
       return;
     }
 
     try {
       await addKnowledge.mutateAsync({
-        twinId,
         sourceType: "manual",
-        title: manualKnowledge.title,
+        title: manualKnowledge.title || "手動追加",
         content: manualKnowledge.content,
-        summary: manualKnowledge.summary || manualKnowledge.content.substring(0, 200),
+        summary: manualKnowledge.content.substring(0, 200),
       });
       toast.success("知識を追加しました");
-      setManualKnowledge({ title: "", content: "", summary: "" });
+      setManualKnowledge({ title: "", content: "" });
       refetchKnowledge();
     } catch (error) {
       toast.error("追加に失敗しました");
@@ -121,7 +99,7 @@ export default function TwinDetail() {
     if (!confirm("この知識を削除しますか？")) return;
 
     try {
-      await deleteKnowledge.mutateAsync({ id: knowledgeId, twinId });
+      await deleteKnowledge.mutateAsync({ id: knowledgeId });
       toast.success("削除しました");
       refetchKnowledge();
     } catch (error) {
@@ -143,10 +121,9 @@ export default function TwinDetail() {
     return (
       <DashboardLayout>
         <div className="text-center py-16">
-          <p className="text-muted-foreground">分身AIが見つかりません</p>
-          <Link href="/twins">
-            <Button className="mt-4">一覧に戻る</Button>
-          </Link>
+          <Bot className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
+          <p className="text-muted-foreground mb-4">分身AIがありません</p>
+          <Button onClick={() => navigate("/twins")}>分身AIを作成</Button>
         </div>
       </DashboardLayout>
     );
@@ -172,7 +149,7 @@ export default function TwinDetail() {
             </div>
           </div>
           <div className="ml-auto flex gap-2">
-            <Link href={`/chat?twinId=${twinId}`}>
+            <Link href="/chat">
               <Button variant="outline">
                 <MessageSquare className="h-4 w-4 mr-2" />
                 チャット
@@ -193,68 +170,31 @@ export default function TwinDetail() {
             <Card>
               <CardHeader>
                 <CardTitle>基本設定</CardTitle>
-                <CardDescription>分身AIの基本情報を編集します</CardDescription>
+                <CardDescription>分身AIの情報を編集します</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="name">名前</Label>
-                    <Input
-                      id="name"
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="status">ステータス</Label>
-                    <Select
-                      value={formData.status}
-                      onValueChange={(value: "active" | "inactive" | "training") =>
-                        setFormData({ ...formData, status: value })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="active">アクティブ</SelectItem>
-                        <SelectItem value="inactive">非アクティブ</SelectItem>
-                        <SelectItem value="training">学習中</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
                 <div className="space-y-2">
-                  <Label htmlFor="description">説明</Label>
-                  <Textarea
-                    id="description"
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    rows={2}
+                  <Label htmlFor="name">名前</Label>
+                  <Input
+                    id="name"
+                    value={name || twin.name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder={twin.name}
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="personality">性格・特徴</Label>
+                  <Label htmlFor="rawInput">情報（自由入力）</Label>
                   <Textarea
-                    id="personality"
-                    value={formData.personality}
-                    onChange={(e) => setFormData({ ...formData, personality: e.target.value })}
-                    rows={4}
-                    placeholder="この分身AIの性格や特徴を詳しく記述してください"
+                    id="rawInput"
+                    value={rawInput || twin.rawInput || ""}
+                    onChange={(e) => setRawInput(e.target.value)}
+                    rows={6}
+                    placeholder="スキル、経歴、趣味など...なんでも書いてOK"
                   />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="systemPrompt">システムプロンプト</Label>
-                  <Textarea
-                    id="systemPrompt"
-                    value={formData.systemPrompt}
-                    onChange={(e) => setFormData({ ...formData, systemPrompt: e.target.value })}
-                    rows={4}
-                    placeholder="AIへの詳細な指示（上級者向け）"
-                  />
+                  <p className="text-sm text-muted-foreground">
+                    AIが自動で整理してプロフィールを作成します
+                  </p>
                 </div>
 
                 <div className="flex justify-end">
@@ -266,6 +206,26 @@ export default function TwinDetail() {
                 </div>
               </CardContent>
             </Card>
+
+            {twin.description && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>AIが整理した情報</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <Label className="text-muted-foreground">紹介</Label>
+                    <p className="mt-1">{twin.description}</p>
+                  </div>
+                  {twin.personality && (
+                    <div>
+                      <Label className="text-muted-foreground">特徴・スキル</Label>
+                      <p className="mt-1 whitespace-pre-wrap">{twin.personality}</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
 
           {/* Knowledge Tab */}
@@ -282,7 +242,7 @@ export default function TwinDetail() {
                     id="knowledgeTitle"
                     value={manualKnowledge.title}
                     onChange={(e) => setManualKnowledge({ ...manualKnowledge, title: e.target.value })}
-                    placeholder="知識のタイトル"
+                    placeholder="知識のタイトル（オプション）"
                   />
                 </div>
                 <div className="space-y-2">
@@ -295,18 +255,9 @@ export default function TwinDetail() {
                     placeholder="詳細な内容"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="knowledgeSummary">要約（オプション）</Label>
-                  <Textarea
-                    id="knowledgeSummary"
-                    value={manualKnowledge.summary}
-                    onChange={(e) => setManualKnowledge({ ...manualKnowledge, summary: e.target.value })}
-                    rows={2}
-                    placeholder="内容の要約"
-                  />
-                </div>
                 <Button onClick={handleAddManualKnowledge} disabled={addKnowledge.isPending}>
                   {addKnowledge.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  <Plus className="h-4 w-4 mr-2" />
                   追加
                 </Button>
               </CardContent>

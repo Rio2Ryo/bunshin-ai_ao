@@ -3,10 +3,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { Slider } from "@/components/ui/slider";
 import { trpc } from "@/lib/trpc";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { Loader2, Save, Bot, Zap, MessageSquare, BarChart3, FileText, Brain } from "lucide-react";
 
@@ -37,10 +35,9 @@ const TASK_TYPES = [
   },
 ];
 
-const AI_MODELS = [
+const AI_PROVIDERS = [
   { id: "builtin", name: "ビルトイン", description: "デフォルトのAIモデル" },
-  { id: "openai", name: "OpenAI GPT-4", description: "高度な推論能力" },
-  { id: "openai-fast", name: "OpenAI GPT-3.5", description: "高速レスポンス" },
+  { id: "openai", name: "OpenAI GPT", description: "高度な推論能力" },
   { id: "gemini", name: "Google Gemini", description: "マルチモーダル対応" },
   { id: "anthropic", name: "Claude", description: "長文処理に強い" },
   { id: "grok", name: "Grok", description: "リアルタイム情報" },
@@ -50,33 +47,12 @@ export default function Orchestration() {
   const { data: settings, isLoading, refetch } = trpc.orchestration.getSettings.useQuery();
   const updateSettings = trpc.orchestration.updateSettings.useMutation();
 
-  const [taskAssignments, setTaskAssignments] = useState<Record<string, string>>({
-    conversation: "builtin",
-    analysis: "builtin",
-    knowledge: "builtin",
-    reasoning: "builtin",
-  });
-
-  const [autoSelect, setAutoSelect] = useState(true);
-  const [costOptimization, setCostOptimization] = useState(50);
-  const [qualityPriority, setQualityPriority] = useState(50);
-
-  useEffect(() => {
-    if (settings) {
-      setTaskAssignments(settings.taskAssignments || taskAssignments);
-      setAutoSelect(settings.autoSelect ?? true);
-      setCostOptimization(settings.costOptimization ?? 50);
-      setQualityPriority(settings.qualityPriority ?? 50);
-    }
-  }, [settings]);
+  const [defaultProvider, setDefaultProvider] = useState<string>("builtin");
 
   const handleSave = async () => {
     try {
       await updateSettings.mutateAsync({
-        taskAssignments,
-        autoSelect,
-        costOptimization,
-        qualityPriority,
+        defaultProvider: defaultProvider as "openai" | "gemini" | "anthropic" | "grok" | "builtin",
       });
       toast.success("設定を保存しました");
       refetch();
@@ -97,99 +73,99 @@ export default function Orchestration() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 max-w-4xl">
-        <div>
-          <h1 className="text-3xl font-bold">AIオーケストレーション</h1>
-          <p className="text-muted-foreground mt-2">
-            複数のAIモデルに役割を割り当て、タスクに応じて最適なAIを自動選択します。
-          </p>
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">AIオーケストレーション</h1>
+            <p className="text-muted-foreground mt-2">
+              複数のAIモデルを使い分け、タスクに最適なAIを選択します
+            </p>
+          </div>
+          <Button onClick={handleSave} disabled={updateSettings.isPending}>
+            {updateSettings.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            <Save className="h-4 w-4 mr-2" />
+            保存
+          </Button>
         </div>
 
-        {/* Concept Explanation */}
-        <Card className="border-primary/50 bg-primary/5">
-          <CardContent className="pt-6">
-            <div className="flex items-start gap-4">
-              <div className="h-12 w-12 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                <Zap className="h-6 w-6 text-primary" />
-              </div>
-              <div>
-                <h3 className="font-semibold mb-2">AIオーケストレーションとは</h3>
-                <p className="text-sm text-muted-foreground">
-                  単一のAIに頼るのではなく、Claude、GPT、Geminiなど複数の異なるAIを使い分け、
-                  それぞれに最適な役割を割り当てて全体をプロジェクトマネジメントする仕組みです。
-                  タスクの種類に応じて最適なAIを自動選択し、効率的かつ高品質な結果を実現します。
-                </p>
-              </div>
+        {/* オーケストレーションの説明 */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Zap className="h-5 w-5 text-primary" />
+              Manusのオーケストレーション
+            </CardTitle>
+            <CardDescription>
+              Manusは単独のAIではなく、複数のAI（Claude、GPT、Geminiなど）を使い分けるオーケストレーターです
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              タスクの種類に応じて最適なAIモデルを自動選択し、全体をプロジェクトマネジメントします。
+              外部AIのAPIキーを設定すると、より高度な処理が可能になります。
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* デフォルトプロバイダー設定 */}
+        <Card>
+          <CardHeader>
+            <CardTitle>デフォルトAIプロバイダー</CardTitle>
+            <CardDescription>
+              特に指定がない場合に使用するAIプロバイダーを選択します
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <Label>プロバイダー</Label>
+              <Select value={defaultProvider} onValueChange={setDefaultProvider}>
+                <SelectTrigger className="w-full md:w-[300px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {AI_PROVIDERS.map((provider) => (
+                    <SelectItem key={provider.id} value={provider.id}>
+                      <div className="flex flex-col">
+                        <span>{provider.name}</span>
+                        <span className="text-xs text-muted-foreground">{provider.description}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </CardContent>
         </Card>
 
-        {/* Auto Selection */}
+        {/* タスクタイプ一覧 */}
         <Card>
           <CardHeader>
-            <CardTitle>自動選択モード</CardTitle>
+            <CardTitle>タスクタイプ</CardTitle>
             <CardDescription>
-              タスクの内容を分析し、最適なAIモデルを自動的に選択します
+              各タスクタイプに対して、どのAIが使用されるかを確認できます
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="auto-select">自動選択を有効にする</Label>
-                <p className="text-sm text-muted-foreground">
-                  オフにすると、下記の手動設定が優先されます
-                </p>
-              </div>
-              <Switch
-                id="auto-select"
-                checked={autoSelect}
-                onCheckedChange={setAutoSelect}
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Task Assignments */}
-        <Card>
-          <CardHeader>
-            <CardTitle>タスク別AI割り当て</CardTitle>
-            <CardDescription>
-              各タスクタイプに使用するAIモデルを設定します
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-2">
               {TASK_TYPES.map((task) => {
                 const Icon = task.icon;
                 return (
-                  <div key={task.id} className="flex items-center gap-4">
-                    <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
-                      <Icon className="h-5 w-5 text-primary" />
+                  <div key={task.id} className="p-4 rounded-lg border bg-muted/30">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="p-2 rounded-lg bg-primary/10">
+                        <Icon className="h-5 w-5 text-primary" />
+                      </div>
+                      <div>
+                        <p className="font-medium">{task.name}</p>
+                        <p className="text-xs text-muted-foreground">{task.description}</p>
+                      </div>
                     </div>
-                    <div className="flex-1">
-                      <Label className="font-medium">{task.name}</Label>
-                      <p className="text-sm text-muted-foreground">{task.description}</p>
+                    <div className="flex items-center gap-2 text-sm">
+                      <Bot className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-muted-foreground">
+                        使用AI: {AI_PROVIDERS.find(p => p.id === defaultProvider)?.name || "ビルトイン"}
+                      </span>
                     </div>
-                    <Select
-                      value={taskAssignments[task.id]}
-                      onValueChange={(value) =>
-                        setTaskAssignments({ ...taskAssignments, [task.id]: value })
-                      }
-                      disabled={autoSelect}
-                    >
-                      <SelectTrigger className="w-48">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {AI_MODELS.map((model) => (
-                          <SelectItem key={model.id} value={model.id}>
-                            <div>
-                              <p>{model.name}</p>
-                            </div>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
                   </div>
                 );
               })}
@@ -197,85 +173,31 @@ export default function Orchestration() {
           </CardContent>
         </Card>
 
-        {/* Optimization Settings */}
-        <Card>
-          <CardHeader>
-            <CardTitle>最適化設定</CardTitle>
-            <CardDescription>
-              コストと品質のバランスを調整します
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <Label>コスト最適化</Label>
-                <span className="text-sm text-muted-foreground">{costOptimization}%</span>
-              </div>
-              <Slider
-                value={[costOptimization]}
-                onValueChange={([value]) => setCostOptimization(value)}
-                max={100}
-                step={10}
-              />
-              <p className="text-xs text-muted-foreground">
-                高い値: 低コストのモデルを優先 / 低い値: 高性能モデルを優先
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <Label>品質優先度</Label>
-                <span className="text-sm text-muted-foreground">{qualityPriority}%</span>
-              </div>
-              <Slider
-                value={[qualityPriority]}
-                onValueChange={([value]) => setQualityPriority(value)}
-                max={100}
-                step={10}
-              />
-              <p className="text-xs text-muted-foreground">
-                高い値: 品質重視（時間がかかる場合あり） / 低い値: 速度重視
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* AI Models Overview */}
-        <Card>
-          <CardHeader>
-            <CardTitle>利用可能なAIモデル</CardTitle>
-            <CardDescription>
-              設定されているAPIキーに基づいて利用可能なモデルを表示
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 md:grid-cols-2">
-              {AI_MODELS.map((model) => (
-                <div
-                  key={model.id}
-                  className="flex items-center gap-3 p-3 rounded-lg bg-muted/50"
-                >
-                  <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center">
-                    <Bot className="h-4 w-4 text-primary" />
+        {/* 登録済みロール */}
+        {settings?.roles && settings.roles.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>登録済みの役割設定</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {settings.roles.map((role) => (
+                  <div key={role.id} className="flex items-center justify-between p-3 rounded-lg border">
+                    <div>
+                      <p className="font-medium">{role.roleName}</p>
+                      <p className="text-sm text-muted-foreground">{role.roleDescription}</p>
+                    </div>
+                    <div className="text-sm">
+                      <span className="px-2 py-1 rounded bg-primary/10 text-primary">
+                        {AI_PROVIDERS.find(p => p.id === role.assignedProvider)?.name || role.assignedProvider}
+                      </span>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-medium text-sm">{model.name}</p>
-                    <p className="text-xs text-muted-foreground">{model.description}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Save Button */}
-        <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={updateSettings.isPending}>
-            {updateSettings.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            <Save className="h-4 w-4 mr-2" />
-            設定を保存
-          </Button>
-        </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </DashboardLayout>
   );

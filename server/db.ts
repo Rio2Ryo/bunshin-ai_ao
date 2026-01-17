@@ -1,9 +1,10 @@
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, or, ne, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
-  InsertUser, users,
+  InsertUser, users, User,
   userProfiles, InsertUserProfile, UserProfile,
   digitalTwins, InsertDigitalTwin, DigitalTwin,
+  friendships, InsertFriendship, Friendship,
   knowledgeBase, InsertKnowledgeEntry, KnowledgeEntry,
   uploadedFiles, InsertUploadedFile, UploadedFile,
   aiApiConfigs, InsertAiApiConfig, AiApiConfig,
@@ -93,6 +94,28 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
+export async function getUserById(id: number): Promise<User | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
+  return result[0];
+}
+
+export async function searchUsers(query: string, excludeUserId: number): Promise<User[]> {
+  const db = await getDb();
+  if (!db) return [];
+  // Simple search by name or email
+  return db.select().from(users)
+    .where(and(
+      ne(users.id, excludeUserId),
+      or(
+        sql`${users.name} LIKE ${`%${query}%`}`,
+        sql`${users.email} LIKE ${`%${query}%`}`
+      )
+    ))
+    .limit(20);
+}
+
 // ============ User Profile Functions ============
 export async function getUserProfile(userId: number): Promise<UserProfile | undefined> {
   const db = await getDb();
@@ -119,18 +142,51 @@ export async function upsertUserProfile(profile: InsertUserProfile): Promise<voi
   });
 }
 
-// ============ Digital Twin Functions ============
-export async function createDigitalTwin(twin: InsertDigitalTwin): Promise<number> {
+// ============ Digital Twin Functions (1 user = 1 twin) ============
+export async function getOrCreateDigitalTwin(userId: number): Promise<DigitalTwin | null> {
   const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const result = await db.insert(digitalTwins).values(twin);
-  return result[0].insertId;
+  if (!db) return null;
+  const existing = await db.select().from(digitalTwins).where(eq(digitalTwins.userId, userId)).limit(1);
+  return existing[0] || null;
 }
 
-export async function getDigitalTwinsByUser(userId: number): Promise<DigitalTwin[]> {
+export async function upsertDigitalTwin(userId: number, data: Partial<InsertDigitalTwin>): Promise<number> {
   const db = await getDb();
-  if (!db) return [];
-  return db.select().from(digitalTwins).where(eq(digitalTwins.userId, userId)).orderBy(desc(digitalTwins.createdAt));
+  if (!db) throw new Error("Database not available");
+  
+  const existing = await db.select().from(digitalTwins).where(eq(digitalTwins.userId, userId)).limit(1);
+  
+  if (existing.length > 0) {
+    // Update existing
+    await db.update(digitalTwins).set({
+      name: data.name,
+      description: data.description,
+      personality: data.personality,
+      systemPrompt: data.systemPrompt,
+      rawInput: data.rawInput,
+      status: data.status,
+    }).where(eq(digitalTwins.id, existing[0].id));
+    return existing[0].id;
+  } else {
+    // Create new
+    const result = await db.insert(digitalTwins).values({
+      userId,
+      name: data.name || "My Digital Twin",
+      description: data.description,
+      personality: data.personality,
+      systemPrompt: data.systemPrompt,
+      rawInput: data.rawInput,
+      status: data.status || "inactive",
+    });
+    return result[0].insertId;
+  }
+}
+
+export async function getDigitalTwinByUser(userId: number): Promise<DigitalTwin | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(digitalTwins).where(eq(digitalTwins.userId, userId)).limit(1);
+  return result[0];
 }
 
 export async function getDigitalTwinById(id: number): Promise<DigitalTwin | undefined> {
@@ -146,10 +202,119 @@ export async function updateDigitalTwin(id: number, data: Partial<InsertDigitalT
   await db.update(digitalTwins).set(data).where(eq(digitalTwins.id, id));
 }
 
-export async function deleteDigitalTwin(id: number): Promise<void> {
+// ============ Friendship Functions ============
+export async function sendFriendRequest(userId: number, friendId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  // Check if already exists
+  const existing = await db.select().from(friendships)
+    .where(or(
+      and(eq(friendships.userId, userId), eq(friendships.friendId, friendId)),
+      and(eq(friendships.userId, friendId), eq(friendships.friendId, userId))
+    ))
+    .limit(1);
+  
+  if (existing.length > 0) {
+    return existing[0].id;
+  }
+  
+  const result = await db.insert(friendships).values({
+    userId,
+    friendId,
+    status: "pending",
+  });
+  return result[0].insertId;
+}
+
+export async function acceptFriendRequest(requestId: number, userId: number): Promise<void> {
   const db = await getDb();
   if (!db) return;
-  await db.delete(digitalTwins).where(eq(digitalTwins.id, id));
+  // Only the friend (receiver) can accept
+  await db.update(friendships)
+    .set({ status: "accepted" })
+    .where(and(eq(friendships.id, requestId), eq(friendships.friendId, userId)));
+}
+
+export async function rejectFriendRequest(requestId: number, userId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(friendships)
+    .set({ status: "rejected" })
+    .where(and(eq(friendships.id, requestId), eq(friendships.friendId, userId)));
+}
+
+export async function getFriends(userId: number): Promise<{ friendship: Friendship; friend: User; twin: DigitalTwin | null }[]> {
+  const db = await getDb();
+  if (!db) return [];
+  
+  // Get accepted friendships where user is either userId or friendId
+  const friendshipList = await db.select().from(friendships)
+    .where(and(
+      eq(friendships.status, "accepted"),
+      or(eq(friendships.userId, userId), eq(friendships.friendId, userId))
+    ));
+  
+  const result: { friendship: Friendship; friend: User; twin: DigitalTwin | null }[] = [];
+  
+  for (const f of friendshipList) {
+    const friendUserId = f.userId === userId ? f.friendId : f.userId;
+    const friend = await getUserById(friendUserId);
+    if (friend) {
+      const twin = await getDigitalTwinByUser(friendUserId) || null;
+      result.push({ friendship: f, friend, twin });
+    }
+  }
+  
+  return result;
+}
+
+export async function getPendingFriendRequests(userId: number): Promise<{ friendship: Friendship; sender: User }[]> {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const pending = await db.select().from(friendships)
+    .where(and(eq(friendships.friendId, userId), eq(friendships.status, "pending")));
+  
+  const result: { friendship: Friendship; sender: User }[] = [];
+  
+  for (const f of pending) {
+    const sender = await getUserById(f.userId);
+    if (sender) {
+      result.push({ friendship: f, sender });
+    }
+  }
+  
+  return result;
+}
+
+export async function getSentFriendRequests(userId: number): Promise<{ friendship: Friendship; receiver: User }[]> {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const sent = await db.select().from(friendships)
+    .where(and(eq(friendships.userId, userId), eq(friendships.status, "pending")));
+  
+  const result: { friendship: Friendship; receiver: User }[] = [];
+  
+  for (const f of sent) {
+    const receiver = await getUserById(f.friendId);
+    if (receiver) {
+      result.push({ friendship: f, receiver });
+    }
+  }
+  
+  return result;
+}
+
+export async function removeFriend(userId: number, friendId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(friendships)
+    .where(or(
+      and(eq(friendships.userId, userId), eq(friendships.friendId, friendId)),
+      and(eq(friendships.userId, friendId), eq(friendships.friendId, userId))
+    ));
 }
 
 // ============ Knowledge Base Functions ============
@@ -293,18 +458,21 @@ export async function createMatchingSession(session: InsertMatchingSession): Pro
   return result[0].insertId;
 }
 
-export async function getMatchingSessionsByTwin(twinId: number): Promise<MatchingSession[]> {
+export async function getMatchingSessionsByUser(userId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(matchingSessions)
-    .where(eq(matchingSessions.twin1Id, twinId))
+  const sessions = await db.select().from(matchingSessions)
+    .where(eq(matchingSessions.initiatorUserId, userId))
     .orderBy(desc(matchingSessions.createdAt));
-}
-
-export async function getAllMatchingSessions(): Promise<MatchingSession[]> {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(matchingSessions).orderBy(desc(matchingSessions.createdAt));
+  
+  // Fetch twin info for each session
+  const result = await Promise.all(sessions.map(async (session) => {
+    const twin1 = await getDigitalTwinById(session.twin1Id);
+    const twin2 = await getDigitalTwinById(session.twin2Id);
+    return { ...session, twin1, twin2 };
+  }));
+  
+  return result;
 }
 
 export async function getMatchingSessionById(id: number): Promise<MatchingSession | undefined> {

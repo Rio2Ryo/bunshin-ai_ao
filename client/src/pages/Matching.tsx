@@ -9,47 +9,52 @@ import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Users, Plus, Loader2, Play, CheckCircle, XCircle, Clock } from "lucide-react";
+import { Users, Plus, Loader2, Play, CheckCircle, XCircle, Clock, UserPlus, Bot } from "lucide-react";
 
 export default function Matching() {
-  const { data: twins } = trpc.twins.list.useQuery();
+  const { data: myTwin } = trpc.myTwin.get.useQuery();
+  const { data: friends } = trpc.friends.list.useQuery();
   const { data: sessions, isLoading, refetch } = trpc.matching.sessions.useQuery();
 
   const createSession = trpc.matching.create.useMutation();
   const runDialogue = trpc.matching.runDialogue.useMutation();
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [newSession, setNewSession] = useState({
-    twin1Id: "",
-    twin2Id: "",
-    theme: "",
-  });
+  const [selectedFriendId, setSelectedFriendId] = useState("");
+  const [theme, setTheme] = useState("");
 
   const handleCreate = async () => {
-    if (!newSession.twin1Id || !newSession.twin2Id || !newSession.theme.trim()) {
-      toast.error("すべての項目を入力してください");
+    if (!selectedFriendId || !theme.trim()) {
+      toast.error("友達とテーマを選択してください");
       return;
     }
 
-    if (newSession.twin1Id === newSession.twin2Id) {
-      toast.error("異なる分身AIを選択してください");
+    if (!myTwin) {
+      toast.error("まず自分の分身AIを作成してください");
+      return;
+    }
+
+    // 選択した友達の分身AIを取得
+    const friend = friends?.find(f => f.friend.id === parseInt(selectedFriendId));
+    if (!friend?.twin) {
+      toast.error("この友達はまだ分身AIを作成していません");
       return;
     }
 
     try {
       const result = await createSession.mutateAsync({
-        twin1Id: parseInt(newSession.twin1Id),
-        twin2Id: parseInt(newSession.twin2Id),
-        theme: newSession.theme,
+        friendId: friend.friend.id,
+        theme: theme,
       });
 
       toast.success("マッチングセッションを作成しました");
       setIsCreateOpen(false);
-      setNewSession({ twin1Id: "", twin2Id: "", theme: "" });
+      setSelectedFriendId("");
+      setTheme("");
       refetch();
 
       // 自動的に対話を開始
-      toast.info("対話を開始しています...");
+      toast.info("分身AI同士の対話を開始しています...");
       await runDialogue.mutateAsync({ sessionId: result.id, turns: 5 });
       toast.success("対話が完了しました");
       refetch();
@@ -95,6 +100,9 @@ export default function Matching() {
     }
   };
 
+  // 友達の中で分身AIを持っている人だけフィルタ
+  const friendsWithTwin = friends?.filter(f => f.twin) || [];
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -102,71 +110,61 @@ export default function Matching() {
           <div>
             <h1 className="text-3xl font-bold">ビジネスマッチング</h1>
             <p className="text-muted-foreground mt-2">
-              分身AI同士が対話し、ビジネスの協業可能性を探ります。
+              友達の分身AIとあなたの分身AIが対話して、ビジネスの可能性を探ります
             </p>
           </div>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button>
+              <Button disabled={!myTwin}>
                 <Plus className="h-4 w-4 mr-2" />
                 新規マッチング
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-lg">
+            <DialogContent>
               <DialogHeader>
-                <DialogTitle>新規マッチング</DialogTitle>
+                <DialogTitle>新規マッチングセッション</DialogTitle>
                 <DialogDescription>
-                  2つの分身AIを選択し、対話テーマを設定してください。
+                  友達の分身AIを選んで、ビジネステーマを設定してください
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 mt-4">
+                <div className="p-3 rounded-lg bg-muted/50 border">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
+                    <Bot className="h-4 w-4" />
+                    あなたの分身AI
+                  </div>
+                  <p className="font-medium">{myTwin?.name || "未作成"}</p>
+                </div>
+
                 <div className="space-y-2">
-                  <Label>分身AI 1（あなた）</Label>
-                  <Select
-                    value={newSession.twin1Id}
-                    onValueChange={(value) => setNewSession({ ...newSession, twin1Id: value })}
-                  >
+                  <Label>対話相手（友達の分身AI）</Label>
+                  <Select value={selectedFriendId} onValueChange={setSelectedFriendId}>
                     <SelectTrigger>
-                      <SelectValue placeholder="分身AIを選択" />
+                      <SelectValue placeholder="友達を選択" />
                     </SelectTrigger>
                     <SelectContent>
-                      {twins?.map((twin) => (
-                        <SelectItem key={twin.id} value={String(twin.id)}>
-                          {twin.name}
-                        </SelectItem>
-                      ))}
+                      {friendsWithTwin.length > 0 ? (
+                        friendsWithTwin.map((friend) => (
+                          <SelectItem key={friend.friend.id} value={friend.friend.id.toString()}>
+                            {friend.twin?.name} ({friend.friend.name})
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <div className="p-2 text-sm text-muted-foreground text-center">
+                          分身AIを持つ友達がいません
+                        </div>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
 
                 <div className="space-y-2">
-                  <Label>分身AI 2（相手）</Label>
-                  <Select
-                    value={newSession.twin2Id}
-                    onValueChange={(value) => setNewSession({ ...newSession, twin2Id: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="分身AIを選択" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {twins?.map((twin) => (
-                        <SelectItem key={twin.id} value={String(twin.id)}>
-                          {twin.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    ※ 将来的には他のユーザーの分身AIも選択可能になります
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>対話テーマ</Label>
+                  <Label htmlFor="theme">対話テーマ</Label>
                   <Input
-                    value={newSession.theme}
-                    onChange={(e) => setNewSession({ ...newSession, theme: e.target.value })}
-                    placeholder="例: AI技術を活用した新規事業の可能性"
+                    id="theme"
+                    value={theme}
+                    onChange={(e) => setTheme(e.target.value)}
+                    placeholder="例: AI活用した新規事業の可能性"
                   />
                 </div>
 
@@ -174,9 +172,9 @@ export default function Matching() {
                   <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
                     キャンセル
                   </Button>
-                  <Button
-                    onClick={handleCreate}
-                    disabled={createSession.isPending || runDialogue.isPending}
+                  <Button 
+                    onClick={handleCreate} 
+                    disabled={createSession.isPending || runDialogue.isPending || friendsWithTwin.length === 0}
                   >
                     {(createSession.isPending || runDialogue.isPending) && (
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -189,9 +187,43 @@ export default function Matching() {
           </Dialog>
         </div>
 
+        {!myTwin && (
+          <Card className="border-yellow-500/50 bg-yellow-500/10">
+            <CardContent className="flex items-center gap-4 py-4">
+              <Bot className="h-8 w-8 text-yellow-500" />
+              <div className="flex-1">
+                <p className="font-medium">まず分身AIを作成してください</p>
+                <p className="text-sm text-muted-foreground">
+                  マッチングを始めるには、自分の分身AIが必要です
+                </p>
+              </div>
+              <Link href="/twins">
+                <Button>分身AIを作成</Button>
+              </Link>
+            </CardContent>
+          </Card>
+        )}
+
+        {friendsWithTwin.length === 0 && myTwin && (
+          <Card className="border-blue-500/50 bg-blue-500/10">
+            <CardContent className="flex items-center gap-4 py-4">
+              <UserPlus className="h-8 w-8 text-blue-500" />
+              <div className="flex-1">
+                <p className="font-medium">友達を追加しましょう</p>
+                <p className="text-sm text-muted-foreground">
+                  マッチングするには、分身AIを持つ友達が必要です
+                </p>
+              </div>
+              <Link href="/friends">
+                <Button variant="outline">友達を追加</Button>
+              </Link>
+            </CardContent>
+          </Card>
+        )}
+
         {isLoading ? (
-          <div className="grid gap-4 md:grid-cols-2">
-            {[1, 2].map((i) => (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {[1, 2, 3].map((i) => (
               <Card key={i} className="animate-pulse">
                 <CardContent className="pt-6">
                   <div className="h-32 bg-muted rounded-lg" />
@@ -200,28 +232,26 @@ export default function Matching() {
             ))}
           </div>
         ) : sessions && sessions.length > 0 ? (
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {sessions.map((session) => (
               <Card key={session.id} className="hover:border-primary/50 transition-colors">
                 <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <CardTitle className="text-lg line-clamp-1">{session.theme}</CardTitle>
-                      <CardDescription className="flex items-center gap-2 mt-1">
-                        {getStatusIcon(session.status)}
-                        {getStatusText(session.status)}
-                      </CardDescription>
-                    </div>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg">{session.theme}</CardTitle>
+                    {getStatusIcon(session.status)}
                   </div>
+                  <CardDescription>
+                    {getStatusText(session.status)}
+                  </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-center gap-2 mb-4">
-                    <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                    <div className="flex items-center gap-1 text-sm">
                       <Users className="h-4 w-4" />
-                      <span>Twin #{session.twin1Id}</span>
-                      <span>×</span>
-                      <span>Twin #{session.twin2Id}</span>
+                      <span>{session.twin1?.name}</span>
                     </div>
+                    <span className="text-muted-foreground">×</span>
+                    <span className="text-sm">{session.twin2?.name}</span>
                   </div>
                   <div className="flex gap-2">
                     <Link href={`/matching/${session.id}`} className="flex-1">
@@ -235,11 +265,7 @@ export default function Matching() {
                         onClick={() => handleRunDialogue(session.id)}
                         disabled={runDialogue.isPending}
                       >
-                        {runDialogue.isPending ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Play className="h-4 w-4" />
-                        )}
+                        <Play className="h-4 w-4" />
                       </Button>
                     )}
                   </div>
@@ -252,14 +278,16 @@ export default function Matching() {
             <CardContent className="py-16">
               <div className="text-center">
                 <Users className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
-                <h3 className="text-xl font-semibold mb-2">マッチング履歴がありません</h3>
+                <h3 className="text-xl font-semibold mb-2">マッチングセッションがありません</h3>
                 <p className="text-muted-foreground mb-6">
-                  分身AI同士の対話を開始して、ビジネスマッチングを行いましょう。
+                  友達の分身AIと対話して、ビジネスの可能性を探りましょう
                 </p>
-                <Button onClick={() => setIsCreateOpen(true)}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  新規マッチング
-                </Button>
+                {myTwin && friendsWithTwin.length > 0 && (
+                  <Button onClick={() => setIsCreateOpen(true)}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    新規マッチング
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>

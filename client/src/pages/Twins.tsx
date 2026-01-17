@@ -4,219 +4,220 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Bot, Plus, Loader2, MessageSquare, Settings, Trash2, Sparkles } from "lucide-react";
+import { Bot, Edit, Loader2, MessageSquare, Save, Sparkles, User } from "lucide-react";
 
-export default function Twins() {
-  const { data: twins, isLoading, refetch } = trpc.twins.list.useQuery();
-  const createTwin = trpc.twins.create.useMutation();
-  const deleteTwin = trpc.twins.delete.useMutation();
+export default function MyTwin() {
+  const { data: twin, isLoading, refetch } = trpc.myTwin.get.useQuery();
+  const upsertMutation = trpc.myTwin.upsert.useMutation();
+  const updateMutation = trpc.myTwin.update.useMutation();
 
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState("");
-  const [freeInput, setFreeInput] = useState("");
-  const [isCreating, setIsCreating] = useState(false);
+  const [rawInput, setRawInput] = useState("");
 
-  const handleCreate = async () => {
+  if (isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  const handleStartEdit = () => {
+    setName(twin?.name || "");
+    setRawInput(twin?.rawInput || "");
+    setIsEditing(true);
+  };
+
+  const handleSave = async () => {
     if (!name.trim()) {
       toast.error("名前を入力してください");
       return;
     }
 
-    setIsCreating(true);
     try {
-      // 自由入力をそのまま送信 - バックエンドでAIが整理する
-      await createTwin.mutateAsync({
-        name: name.trim(),
-        rawInput: freeInput.trim(),
-      });
-      toast.success("分身AIを作成しました！AIが情報を整理中...");
-      setIsCreateOpen(false);
-      setName("");
-      setFreeInput("");
+      if (twin) {
+        await updateMutation.mutateAsync({
+          name,
+          rawInput,
+        });
+      } else {
+        await upsertMutation.mutateAsync({
+          name,
+          rawInput,
+        });
+      }
+      toast.success(twin ? "分身AIを更新しました" : "分身AIを作成しました");
+      setIsEditing(false);
       refetch();
     } catch (error) {
-      toast.error("作成に失敗しました");
-    } finally {
-      setIsCreating(false);
+      toast.error("エラーが発生しました");
     }
   };
 
-  const handleDelete = async (id: number, twinName: string) => {
-    if (!confirm(`「${twinName}」を削除しますか？この操作は取り消せません。`)) {
-      return;
-    }
-
-    try {
-      await deleteTwin.mutateAsync({ id });
-      toast.success("削除しました");
-      refetch();
-    } catch (error) {
-      toast.error("削除に失敗しました");
-    }
-  };
+  const isSaving = upsertMutation.isPending || updateMutation.isPending;
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">分身AI</h1>
-            <p className="text-muted-foreground mt-2">
-              あなたの分身AIを作成・管理します。
+            <h1 className="text-3xl font-bold">自分の分身AI</h1>
+            <p className="text-muted-foreground mt-1">
+              あなたの分身AIを作成・管理します
             </p>
           </div>
-          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="h-4 w-4 mr-2" />
-                新規作成
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-lg">
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <Sparkles className="h-5 w-5 text-primary" />
-                  分身AIを作成
-                </DialogTitle>
-                <DialogDescription>
-                  名前と情報を入力するだけ。AIが自動で整理します。
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">名前 *</Label>
-                  <Input
-                    id="name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="例: 山田太郎、ビジネス用AI"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="freeInput">あなたの情報（なんでもOK）</Label>
-                  <Textarea
-                    id="freeInput"
-                    value={freeInput}
-                    onChange={(e) => setFreeInput(e.target.value)}
-                    placeholder={`雑に書いてOK！例：
-
-・Webエンジニア5年目
-・React, TypeScript得意
-・スタートアップで働いてる
-・副業でAI系のプロダクト作りたい
-・趣味はゲームと筋トレ
-・コミュニケーション苦手だけど技術は自信ある
-
-...みたいな感じで、思いつくまま書いてください。
-AIが整理してプロフィールを作ります。`}
-                    rows={10}
-                    className="resize-none"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    スキル、経歴、性格、趣味、ビジネスの話...なんでも書いてください
-                  </p>
-                </div>
-                <div className="flex justify-end gap-2">
-                  <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
-                    キャンセル
-                  </Button>
-                  <Button onClick={handleCreate} disabled={isCreating}>
-                    {isCreating && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                    {isCreating ? "AIが処理中..." : "作成"}
-                  </Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
         </div>
 
-        {isLoading ? (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {[1, 2, 3].map((i) => (
-              <Card key={i} className="animate-pulse">
-                <CardContent className="pt-6">
-                  <div className="h-32 bg-muted rounded-lg" />
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ) : twins && twins.length > 0 ? (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {twins.map((twin) => (
-              <Card key={twin.id} className="hover:border-primary/50 transition-colors">
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="h-12 w-12 rounded-full bg-primary/20 flex items-center justify-center">
-                        <Bot className="h-6 w-6 text-primary" />
-                      </div>
-                      <div>
-                        <CardTitle className="text-lg">{twin.name}</CardTitle>
-                        <CardDescription>
-                          {twin.status === "active" ? (
-                            <span className="text-green-500">アクティブ</span>
-                          ) : twin.status === "training" ? (
-                            <span className="text-yellow-500">学習中</span>
-                          ) : (
-                            <span className="text-muted-foreground">非アクティブ</span>
-                          )}
-                        </CardDescription>
-                      </div>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-4 line-clamp-2">
-                    {twin.description || twin.personality || "情報を追加してください"}
-                  </p>
-                  <div className="flex gap-2">
-                    <Link href={`/twins/${twin.id}`} className="flex-1">
-                      <Button variant="outline" className="w-full" size="sm">
-                        <Settings className="h-4 w-4 mr-1" />
-                        詳細
-                      </Button>
-                    </Link>
-                    <Link href={`/chat?twinId=${twin.id}`} className="flex-1">
-                      <Button variant="outline" className="w-full" size="sm">
-                        <MessageSquare className="h-4 w-4 mr-1" />
-                        チャット
-                      </Button>
-                    </Link>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleDelete(twin.id, twin.name)}
-                      className="text-destructive hover:text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ) : (
+        {!twin && !isEditing ? (
+          // 分身AIがない場合
+          <Card className="border-dashed">
+            <CardContent className="flex flex-col items-center justify-center py-12">
+              <div className="rounded-full bg-primary/10 p-4 mb-4">
+                <Bot className="h-12 w-12 text-primary" />
+              </div>
+              <h3 className="text-xl font-semibold mb-2">分身AIを作成しよう</h3>
+              <p className="text-muted-foreground text-center max-w-md mb-6">
+                あなたの情報を入力するだけで、AIが自動で整理して分身AIを作成します。
+                友達の分身AIとビジネスマッチングができるようになります。
+              </p>
+              <Button onClick={() => setIsEditing(true)} size="lg">
+                <Sparkles className="mr-2 h-5 w-5" />
+                分身AIを作成
+              </Button>
+            </CardContent>
+          </Card>
+        ) : isEditing ? (
+          // 編集モード
           <Card>
-            <CardContent className="py-16">
-              <div className="text-center">
-                <Bot className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
-                <h3 className="text-xl font-semibold mb-2">分身AIがありません</h3>
-                <p className="text-muted-foreground mb-6">
-                  名前と情報を入力するだけで、あなたの分身AIが作れます。
+            <CardHeader>
+              <CardTitle>{twin ? "分身AIを編集" : "分身AIを作成"}</CardTitle>
+              <CardDescription>
+                あなたの情報を自由に入力してください。AIが自動で整理します。
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-2">
+                <Label htmlFor="name">名前 *</Label>
+                <Input
+                  id="name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="あなたの名前"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="rawInput">あなたの情報（なんでもOK）</Label>
+                <Textarea
+                  id="rawInput"
+                  value={rawInput}
+                  onChange={(e) => setRawInput(e.target.value)}
+                  placeholder={`例:
+・マーケティング10年やってます
+・SNS運用が得意
+・新規事業の立ち上げ経験あり
+・趣味はキャンプ
+・東京在住
+
+雑に書いてOK！AIが整理します。`}
+                  rows={10}
+                />
+                <p className="text-sm text-muted-foreground">
+                  経歴、スキル、趣味、性格など、なんでも書いてください。AIが自動で整理してプロフィールを作成します。
                 </p>
-                <Button onClick={() => setIsCreateOpen(true)}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  分身AIを作成
+              </div>
+
+              <div className="flex gap-3">
+                <Button onClick={handleSave} disabled={isSaving}>
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      処理中...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="mr-2 h-4 w-4" />
+                      {twin ? "更新する" : "作成する"}
+                    </>
+                  )}
+                </Button>
+                <Button variant="outline" onClick={() => setIsEditing(false)} disabled={isSaving}>
+                  キャンセル
                 </Button>
               </div>
             </CardContent>
           </Card>
-        )}
+        ) : twin ? (
+          // 分身AIの表示
+          <div className="grid gap-6 md:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-full bg-primary/10 p-3">
+                      <User className="h-6 w-6 text-primary" />
+                    </div>
+                    <div>
+                      <CardTitle>{twin.name}</CardTitle>
+                      <Badge variant={twin.status === "active" ? "default" : "secondary"}>
+                        {twin.status === "active" ? "アクティブ" : twin.status}
+                      </Badge>
+                    </div>
+                  </div>
+                  <Button variant="ghost" size="icon" onClick={handleStartEdit}>
+                    <Edit className="h-4 w-4" />
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {twin.description && (
+                  <div>
+                    <h4 className="font-medium text-sm text-muted-foreground mb-1">紹介</h4>
+                    <p>{twin.description}</p>
+                  </div>
+                )}
+                {twin.personality && (
+                  <div>
+                    <h4 className="font-medium text-sm text-muted-foreground mb-1">特徴・スキル</h4>
+                    <p className="whitespace-pre-wrap">{twin.personality}</p>
+                  </div>
+                )}
+                <div className="pt-4">
+                  <Link href="/chat">
+                    <Button className="w-full">
+                      <MessageSquare className="mr-2 h-4 w-4" />
+                      分身AIとチャット
+                    </Button>
+                  </Link>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">入力した情報</CardTitle>
+                <CardDescription>AIが整理する前の元データ</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {twin.rawInput ? (
+                  <p className="whitespace-pre-wrap text-sm">{twin.rawInput}</p>
+                ) : (
+                  <p className="text-muted-foreground text-sm">
+                    入力情報がありません。編集して情報を追加してください。
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        ) : null}
       </div>
     </DashboardLayout>
   );

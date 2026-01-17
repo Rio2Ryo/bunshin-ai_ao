@@ -41,15 +41,16 @@ export type UserProfile = typeof userProfiles.$inferSelect;
 export type InsertUserProfile = typeof userProfiles.$inferInsert;
 
 /**
- * Digital Twin AI (分身AI) configuration
+ * Digital Twin AI (分身AI) - Each user has exactly ONE digital twin
  */
 export const digitalTwins = mysqlTable("digital_twins", {
   id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+  userId: int("userId").notNull().unique(), // UNIQUE: 1 user = 1 twin
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
   personality: text("personality"),
   systemPrompt: text("systemPrompt"),
+  rawInput: text("rawInput"), // User's raw input that AI will analyze
   status: mysqlEnum("status", ["active", "inactive", "training"]).default("inactive").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -57,6 +58,21 @@ export const digitalTwins = mysqlTable("digital_twins", {
 
 export type DigitalTwin = typeof digitalTwins.$inferSelect;
 export type InsertDigitalTwin = typeof digitalTwins.$inferInsert;
+
+/**
+ * Friendships between users (友達関係)
+ */
+export const friendships = mysqlTable("friendships", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(), // The user who initiated or is part of the friendship
+  friendId: int("friendId").notNull(), // The friend user
+  status: mysqlEnum("status", ["pending", "accepted", "rejected", "blocked"]).default("pending").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Friendship = typeof friendships.$inferSelect;
+export type InsertFriendship = typeof friendships.$inferInsert;
 
 /**
  * Knowledge base entries for digital twins
@@ -164,12 +180,13 @@ export type ChatMessage = typeof chatMessages.$inferSelect;
 export type InsertChatMessage = typeof chatMessages.$inferInsert;
 
 /**
- * Business matching sessions (分身AI同士の対話)
+ * Business matching sessions (友達の分身AI同士の対話)
  */
 export const matchingSessions = mysqlTable("matching_sessions", {
   id: int("id").autoincrement().primaryKey(),
-  twin1Id: int("twin1Id").notNull(),
-  twin2Id: int("twin2Id").notNull(),
+  initiatorUserId: int("initiatorUserId").notNull(), // User who started the matching
+  twin1Id: int("twin1Id").notNull(), // Initiator's twin
+  twin2Id: int("twin2Id").notNull(), // Friend's twin
   theme: varchar("theme", { length: 500 }).notNull(),
   status: mysqlEnum("status", ["pending", "running", "completed", "failed"]).default("pending").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

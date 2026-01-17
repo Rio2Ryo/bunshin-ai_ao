@@ -14,6 +14,7 @@ import Matching from "./pages/Matching";
 import MatchingSession from "./pages/MatchingSession";
 import AIConfig from "./pages/AIConfig";
 import Orchestration from "./pages/Orchestration";
+import Friends from "./pages/Friends";
 
 function Router() {
   return (
@@ -29,6 +30,7 @@ function Router() {
       <Route path="/matching/:id" component={MatchingSession} />
       <Route path="/ai-config" component={AIConfig} />
       <Route path="/orchestration" component={Orchestration} />
+      <Route path="/friends" component={Friends} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
