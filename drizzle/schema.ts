@@ -12,6 +12,8 @@ export const users = mysqlTable("users", {
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
   plan: mysqlEnum("plan", ["free", "premium", "enterprise"]).default("free").notNull(),
   friendCode: varchar("friendCode", { length: 8 }).unique(), // Unique code for adding friends
+  stripeCustomerId: varchar("stripeCustomerId", { length: 255 }), // Stripe customer ID
+  stripeSubscriptionId: varchar("stripeSubscriptionId", { length: 255 }), // Active subscription ID
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
@@ -54,6 +56,9 @@ export const digitalTwins = mysqlTable("digital_twins", {
   systemPrompt: text("systemPrompt"),
   rawInput: text("rawInput"), // User's raw input that AI will analyze
   status: mysqlEnum("status", ["active", "inactive", "training"]).default("inactive").notNull(),
+  isPublic: int("isPublic").default(0).notNull(), // 0 = private, 1 = public (searchable)
+  publicBio: text("publicBio"), // Short bio for public profile
+  tags: json("tags").$type<string[]>(), // Tags for search/discovery
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

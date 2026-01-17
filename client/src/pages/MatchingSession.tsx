@@ -6,8 +6,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
 import { useParams, Link } from "wouter";
-import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, FileText } from "lucide-react";
 import { Streamdown } from "streamdown";
+import { toast } from "sonner";
 
 export default function MatchingSession() {
   const { id } = useParams<{ id: string }>();
@@ -17,6 +18,48 @@ export default function MatchingSession() {
     { id: sessionId },
     { enabled: sessionId > 0 }
   );
+
+  const { data: reportData, refetch: fetchReport, isFetching: isExporting } = trpc.matching.exportReport.useQuery(
+    { sessionId },
+    { enabled: false }
+  );
+
+  const handleExportPdf = async () => {
+    try {
+      const result = await fetchReport();
+      if (result.data?.html) {
+        // Open HTML in new window for printing
+        const printWindow = window.open("", "_blank");
+        if (printWindow) {
+          printWindow.document.write(result.data.html);
+          printWindow.document.close();
+          toast.success("レポートを新しいタブで開きました。印刷またはPDF保存してください。");
+        }
+      }
+    } catch (error) {
+      toast.error("レポートの生成に失敗しました");
+    }
+  };
+
+  const handleExportHtml = async () => {
+    try {
+      const result = await fetchReport();
+      if (result.data?.html) {
+        const blob = new Blob([result.data.html], { type: "text/html" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `matching-report-${sessionId}.html`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        toast.success("HTMLレポートをダウンロードしました");
+      }
+    } catch (error) {
+      toast.error("レポートの生成に失敗しました");
+    }
+  };
 
   if (isLoading) {
     return (
@@ -48,17 +91,49 @@ export default function MatchingSession() {
     <DashboardLayout>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center gap-4">
-          <Link href="/matching">
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="h-5 w-5" />
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Link href="/matching">
+              <Button variant="ghost" size="icon">
+                <ArrowLeft className="h-5 w-5" />
+              </Button>
+            </Link>
+            <div>
+              <h1 className="text-2xl font-bold">{session.theme}</h1>
+              <p className="text-muted-foreground">
+                {twin1?.name || `Twin #${session.twin1Id}`} × {twin2?.name || `Twin #${session.twin2Id}`}
+              </p>
+            </div>
+          </div>
+          
+          {/* Export Buttons */}
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportHtml}
+              disabled={isExporting}
+            >
+              {isExporting ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <FileText className="h-4 w-4 mr-2" />
+              )}
+              HTML
             </Button>
-          </Link>
-          <div>
-            <h1 className="text-2xl font-bold">{session.theme}</h1>
-            <p className="text-muted-foreground">
-              {twin1?.name || `Twin #${session.twin1Id}`} × {twin2?.name || `Twin #${session.twin2Id}`}
-            </p>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={handleExportPdf}
+              disabled={isExporting}
+            >
+              {isExporting ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4 mr-2" />
+              )}
+              PDF印刷
+            </Button>
           </div>
         </div>
 

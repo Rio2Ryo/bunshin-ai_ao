@@ -4,26 +4,32 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
-import { Crown, Users, MessageSquare, Database, FileUp, Zap, Check, Sparkles } from "lucide-react";
+import { Crown, Users, MessageSquare, Database, FileUp, Zap, Check, Sparkles, CreditCard, Settings } from "lucide-react";
 import { toast } from "sonner";
+import { useState, useEffect } from "react";
+import { useSearch } from "wouter";
 
 const planDetails = {
   free: {
     name: "フリープラン",
-    price: "無料",
+    priceMonthly: "無料",
+    priceYearly: "無料",
     color: "bg-gray-500",
     icon: Zap,
   },
   premium: {
     name: "プレミアム",
-    price: "¥980/月",
+    priceMonthly: "¥980/月",
+    priceYearly: "¥9,800/年",
     color: "bg-cyan-500",
     icon: Crown,
   },
   enterprise: {
     name: "エンタープライズ",
-    price: "お問い合わせ",
+    priceMonthly: "¥4,980/月",
+    priceYearly: "¥49,800/年",
     color: "bg-purple-500",
     icon: Sparkles,
   },
@@ -31,16 +37,45 @@ const planDetails = {
 
 export default function Plan() {
   const { user } = useAuth();
+  const search = useSearch();
+  const [showUpgradeDialog, setShowUpgradeDialog] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<"premium" | "enterprise">("premium");
+  const [billingInterval, setBillingInterval] = useState<"monthly" | "yearly">("monthly");
+
   const { data: stats, isLoading, refetch } = trpc.plan.getStats.useQuery();
-  const upgradeMutation = trpc.plan.upgrade.useMutation({
-    onSuccess: () => {
-      toast.success("プランを変更しました");
-      refetch();
+  const { data: subscription } = trpc.plan.getSubscription.useQuery();
+  
+  const checkoutMutation = trpc.plan.createCheckoutSession.useMutation({
+    onSuccess: (data) => {
+      toast.info("決済ページに移動します...");
+      window.open(data.url, "_blank");
+      setShowUpgradeDialog(false);
     },
     onError: (error) => {
       toast.error(error.message);
     },
   });
+
+  const portalMutation = trpc.plan.createPortalSession.useMutation({
+    onSuccess: (data) => {
+      toast.info("サブスクリプション管理ページに移動します...");
+      window.open(data.url, "_blank");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  // Handle success/cancel URL params
+  useEffect(() => {
+    const params = new URLSearchParams(search);
+    if (params.get("success") === "true") {
+      toast.success("決済が完了しました！プランがアップグレードされました。");
+      refetch();
+    } else if (params.get("canceled") === "true") {
+      toast.info("決済がキャンセルされました。");
+    }
+  }, [search, refetch]);
 
   if (isLoading || !stats) {
     return (
@@ -56,12 +91,24 @@ export default function Plan() {
   const PlanIcon = planDetails[currentPlan].icon;
 
   const getUsagePercent = (current: number, max: number) => {
-    if (max === -1) return 0; // Unlimited
+    if (max === -1) return 0;
     return Math.min((current / max) * 100, 100);
   };
 
   const formatLimit = (value: number) => {
     return value === -1 ? "無制限" : value.toString();
+  };
+
+  const handleUpgrade = (plan: "premium" | "enterprise") => {
+    setSelectedPlan(plan);
+    setShowUpgradeDialog(true);
+  };
+
+  const handleCheckout = () => {
+    checkoutMutation.mutate({
+      plan: selectedPlan,
+      interval: billingInterval,
+    });
   };
 
   return (
@@ -80,10 +127,36 @@ export default function Plan() {
                   <CardDescription>現在のプラン</CardDescription>
                 </div>
               </div>
-              <Badge variant="outline" className="text-lg px-4 py-2 border-cyan-500 text-cyan-400">
-                {planDetails[currentPlan].price}
-              </Badge>
+              <div className="flex items-center gap-3">
+                <Badge variant="outline" className="text-lg px-4 py-2 border-cyan-500 text-cyan-400">
+                  {planDetails[currentPlan].priceMonthly}
+                </Badge>
+                {subscription && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => portalMutation.mutate()}
+                    disabled={portalMutation.isPending}
+                  >
+                    <Settings className="h-4 w-4 mr-2" />
+                    管理
+                  </Button>
+                )}
+              </div>
             </div>
+            {subscription && (
+              <div className="mt-4 text-sm text-gray-400">
+                {subscription.cancelAtPeriodEnd ? (
+                  <span className="text-yellow-500">
+                    {new Date(subscription.currentPeriodEnd).toLocaleDateString("ja-JP")}に解約予定
+                  </span>
+                ) : (
+                  <span>
+                    次回更新日: {new Date(subscription.currentPeriodEnd).toLocaleDateString("ja-JP")}
+                  </span>
+                )}
+              </div>
+            )}
           </CardHeader>
         </Card>
 
@@ -187,7 +260,10 @@ export default function Plan() {
                     </div>
                     <CardTitle>{details.name}</CardTitle>
                   </div>
-                  <div className="text-2xl font-bold mt-2">{details.price}</div>
+                  <div className="text-2xl font-bold mt-2">{details.priceMonthly}</div>
+                  {plan !== "free" && (
+                    <div className="text-sm text-gray-400">{details.priceYearly}（年払い）</div>
+                  )}
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center gap-2 text-sm">
@@ -220,17 +296,17 @@ export default function Plan() {
                       <Button disabled className="w-full" variant="outline">
                         現在のプラン
                       </Button>
-                    ) : plan === "enterprise" ? (
-                      <Button className="w-full" variant="outline">
-                        お問い合わせ
+                    ) : plan === "free" ? (
+                      <Button disabled className="w-full" variant="outline">
+                        -
                       </Button>
                     ) : (
                       <Button 
                         className="w-full bg-cyan-600 hover:bg-cyan-700"
-                        onClick={() => upgradeMutation.mutate({ plan })}
-                        disabled={upgradeMutation.isPending}
+                        onClick={() => handleUpgrade(plan)}
                       >
-                        {plan === "premium" && currentPlan === "free" ? "アップグレード" : "変更する"}
+                        <CreditCard className="h-4 w-4 mr-2" />
+                        アップグレード
                       </Button>
                     )}
                   </div>
@@ -239,7 +315,89 @@ export default function Plan() {
             );
           })}
         </div>
+
+        {/* Test Mode Notice */}
+        <Card className="bg-yellow-900/20 border-yellow-500/30">
+          <CardContent className="pt-6">
+            <div className="flex items-start gap-3">
+              <CreditCard className="h-5 w-5 text-yellow-500 mt-0.5" />
+              <div>
+                <h3 className="font-semibold text-yellow-500">テストモード</h3>
+                <p className="text-sm text-gray-400 mt-1">
+                  現在テストモードで動作しています。テスト用カード番号: <code className="bg-gray-800 px-2 py-0.5 rounded">4242 4242 4242 4242</code>
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
+
+      {/* Upgrade Dialog */}
+      <Dialog open={showUpgradeDialog} onOpenChange={setShowUpgradeDialog}>
+        <DialogContent className="bg-gray-900 border-gray-700">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Crown className="h-5 w-5 text-cyan-400" />
+              {planDetails[selectedPlan].name}にアップグレード
+            </DialogTitle>
+            <DialogDescription>
+              お支払い方法を選択してください
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 mt-4">
+            {/* Billing Interval Selection */}
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => setBillingInterval("monthly")}
+                className={`p-4 rounded-lg border-2 text-left transition-colors ${
+                  billingInterval === "monthly"
+                    ? "border-cyan-500 bg-cyan-500/10"
+                    : "border-gray-700 hover:border-gray-600"
+                }`}
+              >
+                <div className="font-semibold">月額プラン</div>
+                <div className="text-2xl font-bold mt-1">
+                  {selectedPlan === "premium" ? "¥980" : "¥4,980"}
+                  <span className="text-sm font-normal text-gray-400">/月</span>
+                </div>
+              </button>
+              <button
+                onClick={() => setBillingInterval("yearly")}
+                className={`p-4 rounded-lg border-2 text-left transition-colors relative ${
+                  billingInterval === "yearly"
+                    ? "border-cyan-500 bg-cyan-500/10"
+                    : "border-gray-700 hover:border-gray-600"
+                }`}
+              >
+                <Badge className="absolute -top-2 -right-2 bg-green-600">2ヶ月分お得</Badge>
+                <div className="font-semibold">年額プラン</div>
+                <div className="text-2xl font-bold mt-1">
+                  {selectedPlan === "premium" ? "¥9,800" : "¥49,800"}
+                  <span className="text-sm font-normal text-gray-400">/年</span>
+                </div>
+              </button>
+            </div>
+
+            <Button
+              className="w-full bg-cyan-600 hover:bg-cyan-700"
+              onClick={handleCheckout}
+              disabled={checkoutMutation.isPending}
+            >
+              {checkoutMutation.isPending ? (
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
+              ) : (
+                <CreditCard className="h-4 w-4 mr-2" />
+              )}
+              決済に進む
+            </Button>
+
+            <p className="text-xs text-gray-500 text-center">
+              決済はStripeで安全に処理されます
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

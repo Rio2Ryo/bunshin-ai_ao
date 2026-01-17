@@ -18,6 +18,7 @@ import {
   addMatchingDialogue, getMatchingDialoguesBySession,
   createMatchingResult, getMatchingResultBySession,
   getUserStats, incrementMatchingCount, updateUserPlan, generateFriendCode, getUserByFriendCode, setUserFriendCode,
+  searchPublicTwins, getPublicTwins, updateTwinPublicSettings,
 } from "./db";
 import { PlanType } from "../drizzle/schema";
 import { storagePut } from "./storage";
@@ -221,6 +222,47 @@ ${input.rawInput}`,
         
         await updateDigitalTwin(twin.id, updateData);
         return { success: true };
+      }),
+
+    // 公開設定の更新
+    updatePublicSettings: protectedProcedure
+      .input(z.object({
+        isPublic: z.boolean(),
+        publicBio: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+        await updateTwinPublicSettings(twin.id, input.isPublic, input.publicBio, input.tags);
+        return { success: true };
+      }),
+
+    // 公開分身AIの検索
+    searchPublic: protectedProcedure
+      .input(z.object({
+        query: z.string().optional(),
+        limit: z.number().min(1).max(100).default(20),
+      }))
+      .query(async ({ ctx, input }) => {
+        if (input.query && input.query.trim()) {
+          return searchPublicTwins(input.query, ctx.user.id, input.limit);
+        }
+        return getPublicTwins(ctx.user.id, input.limit);
+      }),
+
+    // 公開分身AIの詳細取得
+    getPublicTwin: protectedProcedure
+      .input(z.object({ twinId: z.number() }))
+      .query(async ({ ctx, input }) => {
+        const twin = await getDigitalTwinById(input.twinId);
+        if (!twin || !twin.isPublic) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "公開分身AIが見つかりません" });
+        }
+        const user = await getUserById(twin.userId);
+        return { twin, user };
       }),
   }),
 
@@ -921,6 +963,50 @@ ${dialogueText}`,
 
         return analysis;
       }),
+
+    exportReport: protectedProcedure
+      .input(z.object({ sessionId: z.number() }))
+      .query(async ({ ctx, input }) => {
+        const session = await getMatchingSessionById(input.sessionId);
+        if (!session) {
+          throw new TRPCError({ code: "NOT_FOUND" });
+        }
+
+        const twin1 = await getDigitalTwinById(session.twin1Id);
+        const twin2 = await getDigitalTwinById(session.twin2Id);
+        const dialogues = await getMatchingDialoguesBySession(input.sessionId);
+        const result = await getMatchingResultBySession(input.sessionId);
+
+        if (!twin1 || !twin2) {
+          throw new TRPCError({ code: "NOT_FOUND" });
+        }
+
+        const { generateMatchingReportHtml } = await import("./services/pdfGenerator");
+
+        const reportDialogues = dialogues.map(d => ({
+          speaker: d.speakerTwinId === twin1.id ? twin1.name : twin2.name,
+          content: d.content,
+          createdAt: d.createdAt,
+        }));
+
+        const html = generateMatchingReportHtml({
+          sessionId: input.sessionId,
+          theme: session.theme,
+          createdAt: session.createdAt,
+          twin1: { name: twin1.name, description: twin1.description },
+          twin2: { name: twin2.name, description: twin2.description },
+          dialogues: reportDialogues,
+          analysis: result ? {
+            compatibilityScore: result.compatibilityScore ? parseInt(result.compatibilityScore) : undefined,
+            strengths: result.strengths || undefined,
+            opportunities: result.recommendations || undefined,
+            recommendations: result.recommendations || undefined,
+            summary: result.summary || undefined,
+          } : null,
+        });
+
+        return { html };
+      }),
   }),
 
   // ============ Plan & Usage ============
@@ -928,6 +1014,18 @@ ${dialogueText}`,
     getStats: protectedProcedure.query(async ({ ctx }) => {
       const plan = (ctx.user.plan || "free") as PlanType;
       return getUserStats(ctx.user.id, plan);
+    }),
+
+    getInfo: protectedProcedure.query(async ({ ctx }) => {
+      const plan = (ctx.user.plan || "free") as PlanType;
+      const stats = await getUserStats(ctx.user.id, plan);
+      return { ...stats, plan };
+    }),
+
+    getUsage: protectedProcedure.query(async ({ ctx }) => {
+      const { getUserUsage } = await import("./db");
+      const usage = await getUserUsage(ctx.user.id);
+      return usage || { id: 0, userId: ctx.user.id, matchingsThisMonth: 0, lastResetAt: new Date(), createdAt: new Date(), updatedAt: new Date() };
     }),
 
     getFriendCode: protectedProcedure.query(async ({ ctx }) => {
@@ -938,6 +1036,84 @@ ${dialogueText}`,
       const code = await generateFriendCode();
       await setUserFriendCode(ctx.user.id, code);
       return { friendCode: code };
+    }),
+
+    createCheckoutSession: protectedProcedure
+      .input(z.object({
+        plan: z.enum(["premium", "enterprise"]),
+        interval: z.enum(["monthly", "yearly"]),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { createCheckoutSession } = await import("./stripe/stripe");
+        
+        const origin = ctx.req.headers.origin || "https://bunshin-ai.manus.space";
+        const result = await createCheckoutSession({
+          userId: ctx.user.id,
+          userEmail: ctx.user.email || "",
+          userName: ctx.user.name || "",
+          plan: input.plan,
+          interval: input.interval,
+          successUrl: `${origin}/plan?success=true`,
+          cancelUrl: `${origin}/plan?canceled=true`,
+          customerId: ctx.user.stripeCustomerId || undefined,
+        });
+
+        if (!result) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "決済セッションの作成に失敗しました",
+          });
+        }
+
+        return { url: result.url, sessionId: result.sessionId };
+      }),
+
+    createPortalSession: protectedProcedure.mutation(async ({ ctx }) => {
+      if (!ctx.user.stripeCustomerId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "サブスクリプションがありません",
+        });
+      }
+
+      const { createPortalSession } = await import("./stripe/stripe");
+      const origin = ctx.req.headers.origin || "https://bunshin-ai.manus.space";
+      
+      const result = await createPortalSession({
+        customerId: ctx.user.stripeCustomerId,
+        returnUrl: `${origin}/plan`,
+      });
+
+      if (!result) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "ポータルセッションの作成に失敗しました",
+        });
+      }
+
+      return { url: result.url };
+    }),
+
+    getSubscription: protectedProcedure.query(async ({ ctx }) => {
+      if (!ctx.user.stripeSubscriptionId) {
+        return null;
+      }
+
+      const { getSubscription } = await import("./stripe/stripe");
+      const subscription = await getSubscription(ctx.user.stripeSubscriptionId);
+      
+      if (!subscription) return null;
+
+      // Get current period end from first subscription item
+      const firstItem = subscription.items.data[0];
+      const currentPeriodEnd = firstItem?.current_period_end || Math.floor(Date.now() / 1000);
+
+      return {
+        id: subscription.id,
+        status: subscription.status,
+        currentPeriodEnd: new Date(currentPeriodEnd * 1000),
+        cancelAtPeriodEnd: subscription.cancel_at_period_end,
+      };
     }),
 
     upgrade: protectedProcedure

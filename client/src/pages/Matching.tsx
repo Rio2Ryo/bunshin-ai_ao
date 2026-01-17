@@ -5,11 +5,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Slider } from "@/components/ui/slider";
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Users, Plus, Loader2, Play, CheckCircle, XCircle, Clock, UserPlus, Bot } from "lucide-react";
+import { Users, Plus, Loader2, Play, CheckCircle, XCircle, Clock, UserPlus, Bot, MessageSquare } from "lucide-react";
 
 export default function Matching() {
   const { data: myTwin } = trpc.myTwin.get.useQuery();
@@ -22,6 +23,7 @@ export default function Matching() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedFriendId, setSelectedFriendId] = useState("");
   const [theme, setTheme] = useState("");
+  const [turns, setTurns] = useState(5);
 
   const handleCreate = async () => {
     if (!selectedFriendId || !theme.trim()) {
@@ -42,22 +44,23 @@ export default function Matching() {
     }
 
     try {
-      toast.info("分身AI同士の対話を開始しています...これには数分かかる場合があります");
+      toast.info(`分身AI同士の対話を開始しています（${turns}ターン）...これには数分かかる場合があります`);
       
       // 作成と同時に対話・分析も自動実行
       await createSession.mutateAsync({
         friendId: friend.friend.id,
         theme: theme,
-        turns: 5,
+        turns: turns,
       });
 
       toast.success("対話と分析が完了しました！");
       setIsCreateOpen(false);
       setSelectedFriendId("");
       setTheme("");
+      setTurns(5);
       refetch();
-    } catch (error) {
-      toast.error("作成に失敗しました");
+    } catch (error: any) {
+      toast.error(error?.message || "作成に失敗しました");
     }
   };
 
@@ -118,7 +121,7 @@ export default function Matching() {
                 新規マッチング
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="sm:max-w-md">
               <DialogHeader>
                 <DialogTitle>新規マッチングセッション</DialogTitle>
                 <DialogDescription>
@@ -166,6 +169,31 @@ export default function Matching() {
                   />
                 </div>
 
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="flex items-center gap-2">
+                      <MessageSquare className="h-4 w-4" />
+                      対話ターン数
+                    </Label>
+                    <span className="text-sm font-medium text-primary">{turns}ターン</span>
+                  </div>
+                  <Slider
+                    value={[turns]}
+                    onValueChange={(value) => setTurns(value[0])}
+                    min={3}
+                    max={10}
+                    step={1}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>3（簡潔）</span>
+                    <span>10（詳細）</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    ターン数が多いほど深い対話になりますが、時間がかかります
+                  </p>
+                </div>
+
                 <div className="flex justify-end gap-2">
                   <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
                     キャンセル
@@ -207,9 +235,9 @@ export default function Matching() {
             <CardContent className="flex items-center gap-4 py-4">
               <UserPlus className="h-8 w-8 text-blue-500" />
               <div className="flex-1">
-                <p className="font-medium">友達を追加しましょう</p>
+                <p className="font-medium">分身AIを持つ友達を追加しましょう</p>
                 <p className="text-sm text-muted-foreground">
-                  マッチングするには、分身AIを持つ友達が必要です
+                  マッチングするには、分身AIを作成した友達が必要です
                 </p>
               </div>
               <Link href="/friends">
@@ -220,52 +248,54 @@ export default function Matching() {
         )}
 
         {isLoading ? (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {[1, 2, 3].map((i) => (
-              <Card key={i} className="animate-pulse">
-                <CardContent className="pt-6">
-                  <div className="h-32 bg-muted rounded-lg" />
-                </CardContent>
-              </Card>
-            ))}
+          <div className="flex items-center justify-center h-64">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>
         ) : sessions && sessions.length > 0 ? (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-4">
             {sessions.map((session) => (
               <Card key={session.id} className="hover:border-primary/50 transition-colors">
-                <CardHeader>
+                <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-lg">{session.theme}</CardTitle>
-                    {getStatusIcon(session.status)}
+                    <div className="flex items-center gap-2">
+                      {getStatusIcon(session.status)}
+                      <span className="text-sm text-muted-foreground">
+                        {getStatusText(session.status)}
+                      </span>
+                    </div>
                   </div>
                   <CardDescription>
-                    {getStatusText(session.status)}
+                    {session.twin1?.name || `Twin #${session.twin1Id}`} × {session.twin2?.name || `Twin #${session.twin2Id}`}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex items-center gap-2 mb-4">
-                    <div className="flex items-center gap-1 text-sm">
-                      <Users className="h-4 w-4" />
-                      <span>{session.twin1?.name}</span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">
+                      {new Date(session.createdAt).toLocaleDateString("ja-JP", {
+                        year: "numeric",
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                    <div className="flex gap-2">
+                      {session.status === "pending" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleRunDialogue(session.id)}
+                          disabled={runDialogue.isPending}
+                        >
+                          <Play className="h-4 w-4 mr-1" />
+                          対話開始
+                        </Button>
+                      )}
+                      <Link href={`/matching/${session.id}`}>
+                        <Button size="sm">詳細を見る</Button>
+                      </Link>
                     </div>
-                    <span className="text-muted-foreground">×</span>
-                    <span className="text-sm">{session.twin2?.name}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <Link href={`/matching/${session.id}`} className="flex-1">
-                      <Button variant="outline" className="w-full" size="sm">
-                        詳細を見る
-                      </Button>
-                    </Link>
-                    {session.status === "pending" && (
-                      <Button
-                        size="sm"
-                        onClick={() => handleRunDialogue(session.id)}
-                        disabled={runDialogue.isPending}
-                      >
-                        <Play className="h-4 w-4" />
-                      </Button>
-                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -273,20 +303,18 @@ export default function Matching() {
           </div>
         ) : (
           <Card>
-            <CardContent className="py-16">
-              <div className="text-center">
-                <Users className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
-                <h3 className="text-xl font-semibold mb-2">マッチングセッションがありません</h3>
-                <p className="text-muted-foreground mb-6">
-                  友達の分身AIと対話して、ビジネスの可能性を探りましょう
-                </p>
-                {myTwin && friendsWithTwin.length > 0 && (
-                  <Button onClick={() => setIsCreateOpen(true)}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    新規マッチング
-                  </Button>
-                )}
-              </div>
+            <CardContent className="flex flex-col items-center justify-center py-16">
+              <Users className="h-16 w-16 text-muted-foreground mb-4" />
+              <h3 className="text-lg font-medium mb-2">マッチングセッションがありません</h3>
+              <p className="text-muted-foreground text-center mb-4">
+                友達の分身AIとマッチングして、ビジネスの可能性を探りましょう
+              </p>
+              {myTwin && friendsWithTwin.length > 0 && (
+                <Button onClick={() => setIsCreateOpen(true)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  最初のマッチングを作成
+                </Button>
+              )}
             </CardContent>
           </Card>
         )}

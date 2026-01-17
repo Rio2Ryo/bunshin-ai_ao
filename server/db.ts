@@ -466,11 +466,12 @@ export async function getMatchingSessionsByUser(userId: number) {
     .where(eq(matchingSessions.initiatorUserId, userId))
     .orderBy(desc(matchingSessions.createdAt));
   
-  // Fetch twin info for each session
+  // Fetch twin info and analysis result for each session
   const result = await Promise.all(sessions.map(async (session) => {
     const twin1 = await getDigitalTwinById(session.twin1Id);
     const twin2 = await getDigitalTwinById(session.twin2Id);
-    return { ...session, twin1, twin2 };
+    const analysisResult = await getMatchingResultBySession(session.id);
+    return { ...session, twin1, twin2, analysisResult: analysisResult || null };
   }));
   
   return result;
@@ -628,4 +629,67 @@ export async function setUserFriendCode(userId: number, friendCode: string): Pro
   const db = await getDb();
   if (!db) return;
   await db.update(users).set({ friendCode }).where(eq(users.id, userId));
+}
+
+// ============ Public Digital Twin Functions ============
+export async function searchPublicTwins(query: string, excludeUserId: number, limit: number = 20): Promise<{ twin: DigitalTwin; user: User }[]> {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const twins = await db.select().from(digitalTwins)
+    .where(and(
+      eq(digitalTwins.isPublic, 1),
+      ne(digitalTwins.userId, excludeUserId),
+      or(
+        sql`${digitalTwins.name} LIKE ${`%${query}%`}`,
+        sql`${digitalTwins.publicBio} LIKE ${`%${query}%`}`,
+        sql`JSON_SEARCH(${digitalTwins.tags}, 'one', ${`%${query}%`}) IS NOT NULL`
+      )
+    ))
+    .limit(limit);
+  
+  const result: { twin: DigitalTwin; user: User }[] = [];
+  
+  for (const twin of twins) {
+    const user = await getUserById(twin.userId);
+    if (user) {
+      result.push({ twin, user });
+    }
+  }
+  
+  return result;
+}
+
+export async function getPublicTwins(excludeUserId: number, limit: number = 50): Promise<{ twin: DigitalTwin; user: User }[]> {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const twins = await db.select().from(digitalTwins)
+    .where(and(
+      eq(digitalTwins.isPublic, 1),
+      ne(digitalTwins.userId, excludeUserId)
+    ))
+    .orderBy(sql`RAND()`)
+    .limit(limit);
+  
+  const result: { twin: DigitalTwin; user: User }[] = [];
+  
+  for (const twin of twins) {
+    const user = await getUserById(twin.userId);
+    if (user) {
+      result.push({ twin, user });
+    }
+  }
+  
+  return result;
+}
+
+export async function updateTwinPublicSettings(twinId: number, isPublic: boolean, publicBio?: string, tags?: string[]): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(digitalTwins).set({
+    isPublic: isPublic ? 1 : 0,
+    publicBio: publicBio || null,
+    tags: tags || null,
+  }).where(eq(digitalTwins.id, twinId));
 }

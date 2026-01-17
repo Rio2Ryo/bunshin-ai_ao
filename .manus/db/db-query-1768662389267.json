@@ -1,0 +1,9 @@
+{
+  "query": "ALTER TABLE users ADD COLUMN stripeCustomerId VARCHAR(255) NULL;\nALTER TABLE users ADD COLUMN stripeSubscriptionId VARCHAR(255) NULL;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute ALTER TABLE users ADD COLUMN stripeCustomerId VARCHAR(255) NULL;\nALTER TABLE users ADD COLUMN stripeSubscriptionId VARCHAR(255) NULL;",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 2543
+}

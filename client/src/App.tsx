@@ -16,6 +16,7 @@ import AIConfig from "./pages/AIConfig";
 import Orchestration from "./pages/Orchestration";
 import Friends from "./pages/Friends";
 import Plan from "./pages/Plan";
+import Discover from "./pages/Discover";
 
 function Router() {
   return (
@@ -33,6 +34,7 @@ function Router() {
       <Route path="/orchestration" component={Orchestration} />
       <Route path="/friends" component={Friends} />
       <Route path="/plan" component={Plan} />
+      <Route path="/discover" component={Discover} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
