@@ -9,7 +9,7 @@ import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Bot, Plus, Loader2, MessageSquare, Settings, Trash2 } from "lucide-react";
+import { Bot, Plus, Loader2, MessageSquare, Settings, Trash2, Sparkles } from "lucide-react";
 
 export default function Twins() {
   const { data: twins, isLoading, refetch } = trpc.twins.list.useQuery();
@@ -17,32 +17,37 @@ export default function Twins() {
   const deleteTwin = trpc.twins.delete.useMutation();
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [newTwin, setNewTwin] = useState({
-    name: "",
-    description: "",
-    personality: "",
-    systemPrompt: "",
-  });
+  const [name, setName] = useState("");
+  const [freeInput, setFreeInput] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
 
   const handleCreate = async () => {
-    if (!newTwin.name.trim()) {
+    if (!name.trim()) {
       toast.error("名前を入力してください");
       return;
     }
 
+    setIsCreating(true);
     try {
-      await createTwin.mutateAsync(newTwin);
-      toast.success("分身AIを作成しました");
+      // 自由入力をそのまま送信 - バックエンドでAIが整理する
+      await createTwin.mutateAsync({
+        name: name.trim(),
+        rawInput: freeInput.trim(),
+      });
+      toast.success("分身AIを作成しました！AIが情報を整理中...");
       setIsCreateOpen(false);
-      setNewTwin({ name: "", description: "", personality: "", systemPrompt: "" });
+      setName("");
+      setFreeInput("");
       refetch();
     } catch (error) {
       toast.error("作成に失敗しました");
+    } finally {
+      setIsCreating(false);
     }
   };
 
-  const handleDelete = async (id: number, name: string) => {
-    if (!confirm(`「${name}」を削除しますか？この操作は取り消せません。`)) {
+  const handleDelete = async (id: number, twinName: string) => {
+    if (!confirm(`「${twinName}」を削除しますか？この操作は取り消せません。`)) {
       return;
     }
 
@@ -74,9 +79,12 @@ export default function Twins() {
             </DialogTrigger>
             <DialogContent className="sm:max-w-lg">
               <DialogHeader>
-                <DialogTitle>分身AIを作成</DialogTitle>
+                <DialogTitle className="flex items-center gap-2">
+                  <Sparkles className="h-5 w-5 text-primary" />
+                  分身AIを作成
+                </DialogTitle>
                 <DialogDescription>
-                  新しい分身AIの基本情報を入力してください。
+                  名前と情報を入力するだけ。AIが自動で整理します。
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 mt-4">
@@ -84,48 +92,42 @@ export default function Twins() {
                   <Label htmlFor="name">名前 *</Label>
                   <Input
                     id="name"
-                    value={newTwin.name}
-                    onChange={(e) => setNewTwin({ ...newTwin, name: e.target.value })}
-                    placeholder="例: ビジネス太郎"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="例: 山田太郎、ビジネス用AI"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="description">説明</Label>
+                  <Label htmlFor="freeInput">あなたの情報（なんでもOK）</Label>
                   <Textarea
-                    id="description"
-                    value={newTwin.description}
-                    onChange={(e) => setNewTwin({ ...newTwin, description: e.target.value })}
-                    placeholder="この分身AIの目的や役割"
-                    rows={2}
+                    id="freeInput"
+                    value={freeInput}
+                    onChange={(e) => setFreeInput(e.target.value)}
+                    placeholder={`雑に書いてOK！例：
+
+・Webエンジニア5年目
+・React, TypeScript得意
+・スタートアップで働いてる
+・副業でAI系のプロダクト作りたい
+・趣味はゲームと筋トレ
+・コミュニケーション苦手だけど技術は自信ある
+
+...みたいな感じで、思いつくまま書いてください。
+AIが整理してプロフィールを作ります。`}
+                    rows={10}
+                    className="resize-none"
                   />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="personality">性格・特徴</Label>
-                  <Textarea
-                    id="personality"
-                    value={newTwin.personality}
-                    onChange={(e) => setNewTwin({ ...newTwin, personality: e.target.value })}
-                    placeholder="例: 丁寧で論理的、ビジネスに精通している"
-                    rows={3}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="systemPrompt">システムプロンプト（上級者向け）</Label>
-                  <Textarea
-                    id="systemPrompt"
-                    value={newTwin.systemPrompt}
-                    onChange={(e) => setNewTwin({ ...newTwin, systemPrompt: e.target.value })}
-                    placeholder="AIへの詳細な指示（オプション）"
-                    rows={3}
-                  />
+                  <p className="text-xs text-muted-foreground">
+                    スキル、経歴、性格、趣味、ビジネスの話...なんでも書いてください
+                  </p>
                 </div>
                 <div className="flex justify-end gap-2">
                   <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
                     キャンセル
                   </Button>
-                  <Button onClick={handleCreate} disabled={createTwin.isPending}>
-                    {createTwin.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                    作成
+                  <Button onClick={handleCreate} disabled={isCreating}>
+                    {isCreating && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                    {isCreating ? "AIが処理中..." : "作成"}
                   </Button>
                 </div>
               </div>
@@ -170,7 +172,7 @@ export default function Twins() {
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm text-muted-foreground mb-4 line-clamp-2">
-                    {twin.description || twin.personality || "説明なし"}
+                    {twin.description || twin.personality || "情報を追加してください"}
                   </p>
                   <div className="flex gap-2">
                     <Link href={`/twins/${twin.id}`} className="flex-1">
@@ -205,7 +207,7 @@ export default function Twins() {
                 <Bot className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
                 <h3 className="text-xl font-semibold mb-2">分身AIがありません</h3>
                 <p className="text-muted-foreground mb-6">
-                  最初の分身AIを作成して、あなたのデジタルツインを始めましょう。
+                  名前と情報を入力するだけで、あなたの分身AIが作れます。
                 </p>
                 <Button onClick={() => setIsCreateOpen(true)}>
                   <Plus className="h-4 w-4 mr-2" />

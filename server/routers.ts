@@ -19,6 +19,7 @@ import {
 } from "./db";
 import { storagePut } from "./storage";
 import { createOrchestratorForUser } from "./services/aiOrchestrator";
+import { invokeLLM } from "./_core/llm";
 import { nanoid } from "nanoid";
 
 export const appRouter = router({
@@ -79,14 +80,82 @@ export const appRouter = router({
     create: protectedProcedure
       .input(z.object({
         name: z.string().min(1),
+        rawInput: z.string().optional(),
         description: z.string().optional(),
         personality: z.string().optional(),
         systemPrompt: z.string().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
+        let description = input.description;
+        let personality = input.personality;
+        let systemPrompt = input.systemPrompt;
+
+        // rawInputがある場合、AIで自動整理
+        if (input.rawInput && input.rawInput.trim()) {
+          try {
+            const response = await invokeLLM({
+              messages: [
+                {
+                  role: "system",
+                  content: `あなたはユーザーの情報を整理して、分身AIのプロフィールを作成するアシスタントです。
+ユーザーが雑に入力した情報を、以下の3つに整理してください。
+JSON形式で出力してください。`,
+                },
+                {
+                  role: "user",
+                  content: `以下の情報を整理してください：
+
+${input.rawInput}`,
+                },
+              ],
+              response_format: {
+                type: "json_schema",
+                json_schema: {
+                  name: "twin_profile",
+                  strict: true,
+                  schema: {
+                    type: "object",
+                    properties: {
+                      description: {
+                        type: "string",
+                        description: "この人の簡潔な紹介文（50文字程度）",
+                      },
+                      personality: {
+                        type: "string",
+                        description: "性格、スキル、得意分野などの特徴",
+                      },
+                      systemPrompt: {
+                        type: "string",
+                        description: "この人の分身AIとして振る舞うための詳細な指示",
+                      },
+                    },
+                    required: ["description", "personality", "systemPrompt"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+            });
+
+            const content = response.choices[0]?.message?.content;
+            if (content && typeof content === 'string') {
+              const parsed = JSON.parse(content);
+              description = parsed.description || description;
+              personality = parsed.personality || personality;
+              systemPrompt = parsed.systemPrompt || systemPrompt;
+            }
+          } catch (error) {
+            console.error("Failed to process rawInput with LLM:", error);
+            // エラー時はそのまま保存
+            description = input.rawInput;
+          }
+        }
+
         const id = await createDigitalTwin({
           userId: ctx.user.id,
-          ...input,
+          name: input.name,
+          description,
+          personality,
+          systemPrompt,
         });
         return { id };
       }),
