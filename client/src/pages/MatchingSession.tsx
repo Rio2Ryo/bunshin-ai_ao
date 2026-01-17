@@ -6,7 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
 import { useParams, Link } from "wouter";
-import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, FileText, Users, Calendar, DollarSign, Target, Rocket, Presentation } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, FileText, Users, Calendar, DollarSign, Target, Rocket, Presentation, Image, FileDown } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { toast } from "sonner";
 
@@ -84,6 +84,46 @@ export default function MatchingSession() {
     generatePresentationMutation.mutate({ sessionId });
   };
 
+  const generateNanoBananaMutation = trpc.matching.generateNanoBananaSlides.useMutation({
+    onSuccess: (data) => {
+      // Save slide data for nano banana generation
+      localStorage.setItem(`nano-banana-${sessionId}`, JSON.stringify({
+        slideContentFile: data.slideContentFile,
+        slideCount: data.slideCount,
+        slides: data.slides,
+        theme: data.theme,
+        twin1Name: data.twin1Name,
+        twin2Name: data.twin2Name,
+        compatibilityScore: data.compatibilityScore,
+        sessionId,
+      }));
+      // Open nano banana presentation page
+      window.open(`/nano-banana/${sessionId}`, "_blank");
+      toast.success("画像ベースのプレゼン資料を生成しました");
+    },
+    onError: () => {
+      toast.error("プレゼン資料の生成に失敗しました");
+    },
+  });
+
+  const handleGenerateNanoBanana = () => {
+    generateNanoBananaMutation.mutate({ sessionId });
+  };
+
+  const exportPptxMutation = trpc.matching.exportPptx.useMutation({
+    onSuccess: (data) => {
+      window.open(data.url, "_blank");
+      toast.success("PPTXファイルをダウンロードしました");
+    },
+    onError: () => {
+      toast.error("PPTXの生成に失敗しました");
+    },
+  });
+
+  const handleExportPptx = () => {
+    exportPptxMutation.mutate({ sessionId });
+  };
+
   if (isLoading) {
     return (
       <DashboardLayout>
@@ -158,7 +198,7 @@ export default function MatchingSession() {
               PDF印刷
             </Button>
             <Button
-              variant="default"
+              variant="outline"
               size="sm"
               onClick={handleGeneratePresentation}
               disabled={generatePresentationMutation.isPending}
@@ -168,7 +208,33 @@ export default function MatchingSession() {
               ) : (
                 <Presentation className="h-4 w-4 mr-2" />
               )}
-              プレゼン資料
+              スライド
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={handleGenerateNanoBanana}
+              disabled={generateNanoBananaMutation.isPending}
+            >
+              {generateNanoBananaMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Image className="h-4 w-4 mr-2" />
+              )}
+              画像スライド
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportPptx}
+              disabled={exportPptxMutation.isPending}
+            >
+              {exportPptxMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <FileDown className="h-4 w-4 mr-2" />
+              )}
+              PPTX
             </Button>
           </div>
         </div>

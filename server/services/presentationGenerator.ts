@@ -39,6 +39,23 @@ interface SlideContent {
   slideCount: number;
 }
 
+export interface SlideData {
+  slideNumber: number;
+  title: string;
+  content: string;
+  keyPoints: string[];
+}
+
+export interface PresentationData {
+  title: string;
+  subtitle: string;
+  slides: SlideData[];
+  theme: string;
+  twin1Name: string;
+  twin2Name: string;
+  compatibilityScore: number;
+}
+
 /**
  * マッチング結果からプレゼン資料用のコンテンツを生成する
  */
@@ -130,4 +147,69 @@ KPI: ${result?.kpis || "N/A"}
     markdown: content,
     slideCount: Math.min(slideCount, 12), // 最大12枚
   };
+}
+
+/**
+ * Markdownコンテンツをスライドデータに変換する
+ */
+export function parseMarkdownToSlides(markdown: string): SlideData[] {
+  const slideTexts = markdown.split(/\n---\n/).map(s => s.trim()).filter(s => s.length > 0);
+  
+  return slideTexts.map((text, index) => {
+    const lines = text.split('\n');
+    let title = '';
+    const keyPoints: string[] = [];
+    const contentLines: string[] = [];
+    
+    for (const line of lines) {
+      if (line.startsWith('# ')) {
+        title = line.replace(/^#\s+/, '').replace(/\*\*/g, '');
+      } else if (line.startsWith('## ')) {
+        contentLines.push(line.replace(/^##\s+/, ''));
+      } else if (line.startsWith('- ')) {
+        keyPoints.push(line.replace(/^-\s+/, '').replace(/\*\*/g, ''));
+      } else if (line.trim()) {
+        contentLines.push(line);
+      }
+    }
+    
+    return {
+      slideNumber: index + 1,
+      title: title || `スライド ${index + 1}`,
+      content: contentLines.join('\n'),
+      keyPoints,
+    };
+  });
+}
+
+/**
+ * スライドコンテンツファイルを生成する（nano bananaスライド用）
+ */
+export function generateSlideContentFile(input: PresentationInput, slides: SlideData[]): string {
+  const { theme, twin1, twin2, result } = input;
+  
+  let content = `# ${theme}\n\n`;
+  content += `**参加者**: ${twin1.name} × ${twin2.name}\n`;
+  content += `**相性スコア**: ${result?.compatibilityScore || 'N/A'}%\n\n`;
+  content += `---\n\n`;
+  
+  for (const slide of slides) {
+    content += `## スライド ${slide.slideNumber}: ${slide.title}\n\n`;
+    
+    if (slide.content) {
+      content += `${slide.content}\n\n`;
+    }
+    
+    if (slide.keyPoints.length > 0) {
+      content += `**キーポイント:**\n`;
+      for (const point of slide.keyPoints) {
+        content += `- ${point}\n`;
+      }
+      content += '\n';
+    }
+    
+    content += `---\n\n`;
+  }
+  
+  return content;
 }

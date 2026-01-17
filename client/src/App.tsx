@@ -18,6 +18,7 @@ import Friends from "./pages/Friends";
 import Plan from "./pages/Plan";
 import Discover from "./pages/Discover";
 import Presentation from "./pages/Presentation";
+import NanoBananaSlides from "./pages/NanoBananaSlides";
 
 function Router() {
   return (
@@ -37,6 +38,7 @@ function Router() {
       <Route path="/plan" component={Plan} />
       <Route path="/discover" component={Discover} />
       <Route path="/presentation/:id" component={Presentation} />
+      <Route path="/nano-banana/:id" component={NanoBananaSlides} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
