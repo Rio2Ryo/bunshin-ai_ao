@@ -42,21 +42,19 @@ export default function Matching() {
     }
 
     try {
-      const result = await createSession.mutateAsync({
+      toast.info("分身AI同士の対話を開始しています...これには数分かかる場合があります");
+      
+      // 作成と同時に対話・分析も自動実行
+      await createSession.mutateAsync({
         friendId: friend.friend.id,
         theme: theme,
+        turns: 5,
       });
 
-      toast.success("マッチングセッションを作成しました");
+      toast.success("対話と分析が完了しました！");
       setIsCreateOpen(false);
       setSelectedFriendId("");
       setTheme("");
-      refetch();
-
-      // 自動的に対話を開始
-      toast.info("分身AI同士の対話を開始しています...");
-      await runDialogue.mutateAsync({ sessionId: result.id, turns: 5 });
-      toast.success("対話が完了しました");
       refetch();
     } catch (error) {
       toast.error("作成に失敗しました");

@@ -568,6 +568,7 @@ ${input.rawInput}`,
       .input(z.object({
         friendId: z.number(),
         theme: z.string().min(1),
+        turns: z.number().min(1).max(10).default(5),
       }))
       .mutation(async ({ ctx, input }) => {
         // Get my twin
@@ -589,14 +590,142 @@ ${input.rawInput}`,
           throw new TRPCError({ code: "FORBIDDEN", message: "You can only match with friends" });
         }
 
-        const id = await createMatchingSession({
+        // Create session
+        const sessionId = await createMatchingSession({
           initiatorUserId: ctx.user.id,
           twin1Id: myTwin.id,
           twin2Id: friendTwin.id,
           theme: input.theme,
         });
 
-        return { id };
+        // Automatically run dialogue
+        await updateMatchingSessionStatus(sessionId, "running");
+
+        const knowledge1 = await getKnowledgeByTwin(myTwin.id);
+        const knowledge2 = await getKnowledgeByTwin(friendTwin.id);
+
+        const orchestrator1 = await createOrchestratorForUser(myTwin.userId, myTwin, knowledge1);
+        const orchestrator2 = await createOrchestratorForUser(friendTwin.userId, friendTwin, knowledge2);
+
+        const dialogues: { speaker: string; content: string }[] = [];
+
+        for (let turn = 0; turn < input.turns; turn++) {
+          // Twin1の発言
+          const response1 = await orchestrator1.generateMatchingDialogue(
+            friendTwin,
+            knowledge2,
+            input.theme,
+            dialogues,
+            true,
+          );
+          
+          dialogues.push({ speaker: myTwin.name, content: response1 });
+          await addMatchingDialogue({
+            sessionId,
+            speakerTwinId: myTwin.id,
+            content: response1,
+            aiProvider: "builtin",
+            turnNumber: turn * 2,
+          });
+
+          // Twin2の発言
+          const response2 = await orchestrator2.generateMatchingDialogue(
+            myTwin,
+            knowledge1,
+            input.theme,
+            dialogues,
+            false,
+          );
+          
+          dialogues.push({ speaker: friendTwin.name, content: response2 });
+          await addMatchingDialogue({
+            sessionId,
+            speakerTwinId: friendTwin.id,
+            content: response2,
+            aiProvider: "builtin",
+            turnNumber: turn * 2 + 1,
+          });
+        }
+
+        await updateMatchingSessionStatus(sessionId, "completed");
+
+        // Automatically run analysis
+        const dialogueText = dialogues.map(d => `${d.speaker}: ${d.content}`).join("\n\n");
+
+        const analysisResponse = await invokeLLM({
+          messages: [
+            {
+              role: "system",
+              content: `あなたはビジネスマッチングの専門家です。2人の分身AI同士の対話を分析し、ビジネス協業の可能性を評価してください。`,
+            },
+            {
+              role: "user",
+              content: `以下の対話を分析してください。
+
+テーマ: ${input.theme}
+
+${myTwin.name}のプロフィール:
+${myTwin.description || ""}
+${myTwin.personality || ""}
+
+${friendTwin.name}のプロフィール:
+${friendTwin.description || ""}
+${friendTwin.personality || ""}
+
+対話内容:
+${dialogueText}`,
+            },
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "matching_analysis",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  compatibilityScore: { type: "number", description: "0-100の相性スコア" },
+                  summary: { type: "string", description: "マッチング結果の要約" },
+                  collaborationPotential: { type: "string", description: "協業の可能性" },
+                  strengths: { type: "array", items: { type: "string" }, description: "強み・シナジー" },
+                  challenges: { type: "array", items: { type: "string" }, description: "課題・リスク" },
+                  recommendations: { type: "array", items: { type: "string" }, description: "具体的な提案" },
+                  detailedAnalysis: { type: "string", description: "詳細な分析" },
+                },
+                required: ["compatibilityScore", "summary", "collaborationPotential", "strengths", "challenges", "recommendations", "detailedAnalysis"],
+                additionalProperties: false,
+              },
+            },
+          },
+        });
+
+        const content = analysisResponse.choices[0]?.message?.content;
+        if (content && typeof content === 'string') {
+          const analysis = JSON.parse(content);
+
+          await createMatchingResult({
+            sessionId,
+            compatibilityScore: String(analysis.compatibilityScore),
+            summary: analysis.summary,
+            collaborationPotential: analysis.collaborationPotential,
+            strengths: analysis.strengths,
+            challenges: analysis.challenges,
+            recommendations: analysis.recommendations,
+            detailedAnalysis: analysis.detailedAnalysis,
+          });
+
+          // Send notification to owner about matching completion
+          try {
+            await notifyOwner({
+              title: `マッチング完了: ${myTwin.name} × ${friendTwin.name}`,
+              content: `テーマ: ${input.theme}\n相性スコア: ${analysis.compatibilityScore}%\n\n${analysis.summary}`,
+            });
+          } catch (e) {
+            console.warn("Failed to send notification:", e);
+          }
+        }
+
+        return { id: sessionId, dialogues };
       }),
 
     runDialogue: protectedProcedure
