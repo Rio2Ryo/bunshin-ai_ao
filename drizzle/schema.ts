@@ -10,6 +10,8 @@ export const users = mysqlTable("users", {
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
+  plan: mysqlEnum("plan", ["free", "premium", "enterprise"]).default("free").notNull(),
+  friendCode: varchar("friendCode", { length: 8 }).unique(), // Unique code for adding friends
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
@@ -231,3 +233,58 @@ export const matchingResults = mysqlTable("matching_results", {
 
 export type MatchingResult = typeof matchingResults.$inferSelect;
 export type InsertMatchingResult = typeof matchingResults.$inferInsert;
+
+/**
+ * Plan limits configuration
+ * Defines the limits for each subscription plan
+ */
+export const planLimits = {
+  free: {
+    maxTwins: 1,
+    maxFriends: 5,
+    maxMatchingsPerMonth: 3,
+    maxKnowledgeEntries: 10,
+    maxFileUploads: 5,
+    maxFileSizeMB: 5,
+    canUseExternalAI: false,
+    canCustomizeOrchestration: false,
+  },
+  premium: {
+    maxTwins: 3,
+    maxFriends: 50,
+    maxMatchingsPerMonth: 30,
+    maxKnowledgeEntries: 100,
+    maxFileUploads: 50,
+    maxFileSizeMB: 25,
+    canUseExternalAI: true,
+    canCustomizeOrchestration: true,
+  },
+  enterprise: {
+    maxTwins: -1, // unlimited
+    maxFriends: -1, // unlimited
+    maxMatchingsPerMonth: -1, // unlimited
+    maxKnowledgeEntries: -1, // unlimited
+    maxFileUploads: -1, // unlimited
+    maxFileSizeMB: 100,
+    canUseExternalAI: true,
+    canCustomizeOrchestration: true,
+  },
+} as const;
+
+export type PlanType = keyof typeof planLimits;
+export type PlanLimits = typeof planLimits[PlanType];
+
+/**
+ * Usage tracking for plan limits
+ */
+export const usageTracking = mysqlTable("usage_tracking", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().unique(),
+  matchingsThisMonth: int("matchingsThisMonth").default(0).notNull(),
+  lastResetAt: timestamp("lastResetAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type UsageTracking = typeof usageTracking.$inferSelect;
+export type InsertUsageTracking = typeof usageTracking.$inferInsert;

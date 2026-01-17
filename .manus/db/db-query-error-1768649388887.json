@@ -1,0 +1,8 @@
+{
+  "query": "ALTER TABLE users ADD COLUMN plan ENUM('free', 'premium', 'enterprise') NOT NULL DEFAULT 'free';\nALTER TABLE users ADD COLUMN friendCode VARCHAR(8) UNIQUE;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute ALTER TABLE users ADD COLUMN plan ENUM('free', 'premium', 'enterprise') NOT NULL DEFAULT 'free';\nALTER TABLE users ADD COLUMN friendCode VARCHAR(8) UNIQUE;",
+  "returncode": 1,
+  "logs": [
+    "ERROR 8200 (HY000) at line 2: unsupported add column 'friendcode' constraint UNIQUE KEY when altering '7dnHzn9LN53aWPboB5GxFU.users'"
+  ]
+}

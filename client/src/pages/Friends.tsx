@@ -16,6 +16,7 @@ export default function Friends() {
   const { user } = useAuth();
   const { data: friends, isLoading, refetch } = trpc.friends.list.useQuery();
   const { data: requests, refetch: refetchRequests } = trpc.friends.pendingRequests.useQuery();
+  const { data: friendCodeData } = trpc.plan.getFriendCode.useQuery();
 
   const sendRequest = trpc.friends.sendRequest.useMutation();
   const acceptRequest = trpc.friends.acceptRequest.useMutation();
@@ -25,8 +26,8 @@ export default function Friends() {
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [friendCode, setFriendCode] = useState("");
 
-  // ユーザーの友達コード（簡易的にopenIdの一部を使用）
-  const myFriendCode = user?.openId?.slice(0, 8) || "";
+  // ユーザーの友達コード
+  const myFriendCode = friendCodeData?.friendCode || "";
   
   // 共有用URL
   const shareUrl = typeof window !== "undefined" 

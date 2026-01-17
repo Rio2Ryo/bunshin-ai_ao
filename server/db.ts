@@ -14,6 +14,7 @@ import {
   matchingSessions, InsertMatchingSession, MatchingSession,
   matchingDialogues, InsertMatchingDialogue, MatchingDialogue,
   matchingResults, InsertMatchingResult, MatchingResult,
+  planLimits, PlanType, usageTracking, UsageTracking,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -519,4 +520,112 @@ export async function getMatchingResultBySession(sessionId: number): Promise<Mat
   if (!db) return undefined;
   const result = await db.select().from(matchingResults).where(eq(matchingResults.sessionId, sessionId)).limit(1);
   return result[0];
+}
+
+// ============ Plan & Usage Functions ============
+export function getPlanLimits(plan: PlanType) {
+  return planLimits[plan];
+}
+
+export async function getUserUsage(userId: number): Promise<UsageTracking | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(usageTracking).where(eq(usageTracking.userId, userId)).limit(1);
+  
+  if (result.length === 0) {
+    // Create new usage record
+    await db.insert(usageTracking).values({ userId, matchingsThisMonth: 0 });
+    return { id: 0, userId, matchingsThisMonth: 0, lastResetAt: new Date(), createdAt: new Date(), updatedAt: new Date() };
+  }
+  
+  // Check if we need to reset monthly counters
+  const lastReset = result[0].lastResetAt;
+  const now = new Date();
+  if (lastReset.getMonth() !== now.getMonth() || lastReset.getFullYear() !== now.getFullYear()) {
+    await db.update(usageTracking).set({ matchingsThisMonth: 0, lastResetAt: now }).where(eq(usageTracking.userId, userId));
+    return { ...result[0], matchingsThisMonth: 0, lastResetAt: now };
+  }
+  
+  return result[0];
+}
+
+export async function incrementMatchingCount(userId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(usageTracking)
+    .set({ matchingsThisMonth: sql`matchingsThisMonth + 1` })
+    .where(eq(usageTracking.userId, userId));
+}
+
+export async function getUserStats(userId: number, plan: PlanType) {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const limits = getPlanLimits(plan);
+  const usage = await getUserUsage(userId);
+  
+  // Count friends
+  const friendCount = await db.select({ count: sql<number>`COUNT(*)` }).from(friendships)
+    .where(and(
+      eq(friendships.status, "accepted"),
+      or(eq(friendships.userId, userId), eq(friendships.friendId, userId))
+    ));
+  
+  // Count knowledge entries (via user's twin)
+  const twin = await getDigitalTwinByUser(userId);
+  let knowledgeCount = 0;
+  if (twin) {
+    const kbCount = await db.select({ count: sql<number>`COUNT(*)` }).from(knowledgeBase)
+      .where(eq(knowledgeBase.twinId, twin.id));
+    knowledgeCount = kbCount[0]?.count || 0;
+  }
+  
+  // Count file uploads
+  const fileCount = await db.select({ count: sql<number>`COUNT(*)` }).from(uploadedFiles)
+    .where(eq(uploadedFiles.userId, userId));
+  
+  return {
+    plan,
+    limits,
+    usage: {
+      friends: friendCount[0]?.count || 0,
+      matchingsThisMonth: usage?.matchingsThisMonth || 0,
+      knowledgeEntries: knowledgeCount,
+      fileUploads: fileCount[0]?.count || 0,
+    },
+    canAddFriend: limits.maxFriends === -1 || (friendCount[0]?.count || 0) < limits.maxFriends,
+    canCreateMatching: limits.maxMatchingsPerMonth === -1 || (usage?.matchingsThisMonth || 0) < limits.maxMatchingsPerMonth,
+    canAddKnowledge: limits.maxKnowledgeEntries === -1 || knowledgeCount < limits.maxKnowledgeEntries,
+    canUploadFile: limits.maxFileUploads === -1 || (fileCount[0]?.count || 0) < limits.maxFileUploads,
+    canUseExternalAI: limits.canUseExternalAI,
+    canCustomizeOrchestration: limits.canCustomizeOrchestration,
+  };
+}
+
+export async function updateUserPlan(userId: number, plan: PlanType): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({ plan }).where(eq(users.id, userId));
+}
+
+export async function generateFriendCode(): Promise<string> {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Excluding confusing chars like 0/O, 1/I
+  let code = '';
+  for (let i = 0; i < 8; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+
+export async function getUserByFriendCode(friendCode: string): Promise<User | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(users).where(eq(users.friendCode, friendCode)).limit(1);
+  return result[0];
+}
+
+export async function setUserFriendCode(userId: number, friendCode: string): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({ friendCode }).where(eq(users.id, userId));
 }

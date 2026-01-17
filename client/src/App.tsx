@@ -15,6 +15,7 @@ import MatchingSession from "./pages/MatchingSession";
 import AIConfig from "./pages/AIConfig";
 import Orchestration from "./pages/Orchestration";
 import Friends from "./pages/Friends";
+import Plan from "./pages/Plan";
 
 function Router() {
   return (
@@ -31,6 +32,7 @@ function Router() {
       <Route path="/ai-config" component={AIConfig} />
       <Route path="/orchestration" component={Orchestration} />
       <Route path="/friends" component={Friends} />
+      <Route path="/plan" component={Plan} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

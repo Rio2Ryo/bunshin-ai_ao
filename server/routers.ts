@@ -17,7 +17,9 @@ import {
   createMatchingSession, getMatchingSessionsByUser, getMatchingSessionById, updateMatchingSessionStatus,
   addMatchingDialogue, getMatchingDialoguesBySession,
   createMatchingResult, getMatchingResultBySession,
+  getUserStats, incrementMatchingCount, updateUserPlan, generateFriendCode, getUserByFriendCode, setUserFriendCode,
 } from "./db";
+import { PlanType } from "../drizzle/schema";
 import { storagePut } from "./storage";
 import { createOrchestratorForUser } from "./services/aiOrchestrator";
 import { invokeLLM } from "./_core/llm";
@@ -245,9 +247,18 @@ ${input.rawInput}`,
     sendRequest: protectedProcedure
       .input(z.object({ friendCode: z.string().min(1) }))
       .mutation(async ({ ctx, input }) => {
-        // Find user by friend code (first 8 chars of openId)
-        const allUsers = await searchUsers("", ctx.user.id);
-        const friend = allUsers.find(u => u.openId.startsWith(input.friendCode));
+        // Check plan limits
+        const plan = (ctx.user.plan || "free") as PlanType;
+        const stats = await getUserStats(ctx.user.id, plan);
+        if (stats && !stats.canAddFriend) {
+          throw new TRPCError({ 
+            code: "FORBIDDEN", 
+            message: `友達数の上限（${stats.limits.maxFriends}人）に達しました。プランをアップグレードしてください。` 
+          });
+        }
+
+        // Find user by friend code
+        const friend = await getUserByFriendCode(input.friendCode.toUpperCase());
         if (!friend) {
           throw new TRPCError({ code: "NOT_FOUND", message: "ユーザーが見つかりません" });
         }
@@ -571,6 +582,16 @@ ${input.rawInput}`,
         turns: z.number().min(1).max(10).default(5),
       }))
       .mutation(async ({ ctx, input }) => {
+        // Check plan limits
+        const plan = (ctx.user.plan || "free") as PlanType;
+        const stats = await getUserStats(ctx.user.id, plan);
+        if (stats && !stats.canCreateMatching) {
+          throw new TRPCError({ 
+            code: "FORBIDDEN", 
+            message: `今月のマッチング回数上限（${stats.limits.maxMatchingsPerMonth}回）に達しました。プランをアップグレードしてください。` 
+          });
+        }
+
         // Get my twin
         const myTwin = await getDigitalTwinByUser(ctx.user.id);
         if (!myTwin) {
@@ -724,6 +745,9 @@ ${dialogueText}`,
             console.warn("Failed to send notification:", e);
           }
         }
+
+        // Increment matching count for usage tracking
+        await incrementMatchingCount(ctx.user.id);
 
         return { id: sessionId, dialogues };
       }),
@@ -896,6 +920,34 @@ ${dialogueText}`,
         }
 
         return analysis;
+      }),
+  }),
+
+  // ============ Plan & Usage ============
+  plan: router({
+    getStats: protectedProcedure.query(async ({ ctx }) => {
+      const plan = (ctx.user.plan || "free") as PlanType;
+      return getUserStats(ctx.user.id, plan);
+    }),
+
+    getFriendCode: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.friendCode) {
+        return { friendCode: ctx.user.friendCode };
+      }
+      // Generate new friend code
+      const code = await generateFriendCode();
+      await setUserFriendCode(ctx.user.id, code);
+      return { friendCode: code };
+    }),
+
+    upgrade: protectedProcedure
+      .input(z.object({
+        plan: z.enum(["free", "premium", "enterprise"]),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        // In a real app, this would integrate with a payment system
+        await updateUserPlan(ctx.user.id, input.plan);
+        return { success: true, plan: input.plan };
       }),
   }),
 });
