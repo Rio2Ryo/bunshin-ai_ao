@@ -181,16 +181,17 @@ export default function Matching() {
                     value={[turns]}
                     onValueChange={(value) => setTurns(value[0])}
                     min={3}
-                    max={10}
+                    max={30}
                     step={1}
                     className="w-full"
                   />
                   <div className="flex justify-between text-xs text-muted-foreground">
                     <span>3（簡潔）</span>
-                    <span>10（詳細）</span>
+                    <span>15（標準）</span>
+                    <span>30（徹底議論）</span>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    ターン数が多いほど深い対話になりますが、時間がかかります
+                    ターン数が多いほど具体的な結論が出るまで議論できます（15ターン以上推奨）
                   </p>
                 </div>
 

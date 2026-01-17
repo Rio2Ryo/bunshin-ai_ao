@@ -621,7 +621,7 @@ ${input.rawInput}`,
       .input(z.object({
         friendId: z.number(),
         theme: z.string().min(1),
-        turns: z.number().min(1).max(10).default(5),
+        turns: z.number().min(1).max(30).default(5),
       }))
       .mutation(async ({ ctx, input }) => {
         // Check plan limits
@@ -719,11 +719,20 @@ ${input.rawInput}`,
           messages: [
             {
               role: "system",
-              content: `あなたはビジネスマッチングの専門家です。2人の分身AI同士の対話を分析し、ビジネス協業の可能性を評価してください。`,
+              content: `あなたはビジネスマッチングの専門家です。2人の分身AI同士の対話を分析し、具体的なビジネス協業のアクションプランを提案してください。
+
+重要: ふんわりした要約ではなく、以下の点を具体的に記載してください：
+- 具体的な協業プロジェクト名と内容
+- 各自の役割分担（誰が何を担当するか）
+- 具体的なタイムライン（最初の1週間、最初の1ヶ月で何をするか）
+- 必要なリソースや投資（人、金、時間）
+- 期待される成果とKPI
+- リスクとその対策
+- 次のステップ（明日からできること）`,
             },
             {
               role: "user",
-              content: `以下の対話を分析してください。
+              content: `以下の対話を分析し、具体的なアクションプランを作成してください。
 
 テーマ: ${input.theme}
 
@@ -736,7 +745,16 @@ ${friendTwin.description || ""}
 ${friendTwin.personality || ""}
 
 対話内容:
-${dialogueText}`,
+${dialogueText}
+
+上記の対話を踏まえて、以下を具体的に分析してください：
+1. この2人が協業する場合の具体的なプロジェクト名と内容
+2. 各自の役割分担（誰が何を担当するか）
+3. 具体的なタイムライン（Week1, Week2-4, Month2-3で何をするか）
+4. 必要なリソースや投資
+5. 期待される成果とKPI
+6. リスクとその対策
+7. 明日からできる具体的なアクション`,
             },
           ],
           response_format: {
@@ -748,14 +766,19 @@ ${dialogueText}`,
                 type: "object",
                 properties: {
                   compatibilityScore: { type: "number", description: "0-100の相性スコア" },
-                  summary: { type: "string", description: "マッチング結果の要約" },
-                  collaborationPotential: { type: "string", description: "協業の可能性" },
-                  strengths: { type: "array", items: { type: "string" }, description: "強み・シナジー" },
-                  challenges: { type: "array", items: { type: "string" }, description: "課題・リスク" },
-                  recommendations: { type: "array", items: { type: "string" }, description: "具体的な提案" },
-                  detailedAnalysis: { type: "string", description: "詳細な分析" },
+                  summary: { type: "string", description: "協業プロジェクトの具体的な内容（プロジェクト名、目的、期待成果を含む）" },
+                  collaborationPotential: { type: "string", description: "協業の可能性と具体的な形態（共同開発、業務提携、合弁会社設立など）" },
+                  strengths: { type: "array", items: { type: "string" }, description: "具体的なシナジー（例: 「Aさんの技術力×Bさんの営業網で新規顧客開拓可能」）" },
+                  challenges: { type: "array", items: { type: "string" }, description: "具体的な課題とリスク（例: 「初期投資100万円が必要」「技術的なハードルがある」）" },
+                  recommendations: { type: "array", items: { type: "string" }, description: "具体的なアクションプラン（例: 「来週月曜にキックオフミーティングを設定」「まずはMVPを作成」）" },
+                  roleDistribution: { type: "string", description: "役割分担（例: 「Aさん: 技術開発・プロダクト設計 / Bさん: 営業・マーケティング・資金調達」）" },
+                  timeline: { type: "string", description: "具体的なタイムライン（Week1: ○○, Week2-4: ○○, Month2-3: ○○）" },
+                  resources: { type: "string", description: "必要なリソース（人、金、時間、ツールなど）" },
+                  kpis: { type: "string", description: "期待される成果とKPI（例: 「3ヶ月で売上100万円」「ユーザー1000人獲得」）" },
+                  nextSteps: { type: "string", description: "明日からできる具体的なアクション（3つ以上）" },
+                  detailedAnalysis: { type: "string", description: "詳細な分析（対話から読み取れる具体的なポイント）" },
                 },
-                required: ["compatibilityScore", "summary", "collaborationPotential", "strengths", "challenges", "recommendations", "detailedAnalysis"],
+                required: ["compatibilityScore", "summary", "collaborationPotential", "strengths", "challenges", "recommendations", "roleDistribution", "timeline", "resources", "kpis", "nextSteps", "detailedAnalysis"],
                 additionalProperties: false,
               },
             },
@@ -775,6 +798,11 @@ ${dialogueText}`,
             challenges: analysis.challenges,
             recommendations: analysis.recommendations,
             detailedAnalysis: analysis.detailedAnalysis,
+            roleDistribution: analysis.roleDistribution,
+            timeline: analysis.timeline,
+            resources: analysis.resources,
+            kpis: analysis.kpis,
+            nextSteps: analysis.nextSteps,
           });
 
           // Send notification to owner about matching completion
@@ -797,7 +825,7 @@ ${dialogueText}`,
     runDialogue: protectedProcedure
       .input(z.object({
         sessionId: z.number(),
-        turns: z.number().min(1).max(10).default(5),
+        turns: z.number().min(1).max(30).default(5),
       }))
       .mutation(async ({ ctx, input }) => {
         const session = await getMatchingSessionById(input.sessionId);

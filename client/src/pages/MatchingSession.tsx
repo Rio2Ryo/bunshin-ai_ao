@@ -6,7 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
 import { useParams, Link } from "wouter";
-import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, FileText } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, FileText, Users, Calendar, DollarSign, Target, Rocket } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { toast } from "sonner";
 
@@ -324,6 +324,91 @@ export default function MatchingSession() {
                     )}
                   </CardContent>
                 </Card>
+
+                {/* Role Distribution */}
+                {result.roleDistribution && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Users className="h-5 w-5 text-blue-500" />
+                        役割分担
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="prose prose-sm dark:prose-invert max-w-none">
+                        <Streamdown>{result.roleDistribution}</Streamdown>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Timeline */}
+                {result.timeline && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Calendar className="h-5 w-5 text-purple-500" />
+                        タイムライン
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="prose prose-sm dark:prose-invert max-w-none">
+                        <Streamdown>{result.timeline}</Streamdown>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Resources */}
+                {result.resources && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <DollarSign className="h-5 w-5 text-green-500" />
+                        必要リソース
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="prose prose-sm dark:prose-invert max-w-none">
+                        <Streamdown>{result.resources}</Streamdown>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* KPIs */}
+                {result.kpis && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Target className="h-5 w-5 text-red-500" />
+                        期待成果・KPI
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="prose prose-sm dark:prose-invert max-w-none">
+                        <Streamdown>{result.kpis}</Streamdown>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Next Steps */}
+                {result.nextSteps && (
+                  <Card className="md:col-span-2 border-primary/50 bg-primary/5">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Rocket className="h-5 w-5 text-primary" />
+                        明日からできるアクション
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="prose prose-sm dark:prose-invert max-w-none">
+                        <Streamdown>{result.nextSteps}</Streamdown>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
 
                 {/* Detailed Analysis */}
                 <Card className="md:col-span-2">

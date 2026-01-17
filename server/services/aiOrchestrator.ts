@@ -156,6 +156,35 @@ export class AIOrchestrator {
     const myTwin = this.context.twin;
     const myKnowledge = this.context.knowledge || [];
 
+    // 対話の進行度に応じて指示を変える
+    const dialogueCount = previousDialogues.length;
+    const isEarlyStage = dialogueCount < 6;  // 最初の3ターン（6発言）
+    const isMidStage = dialogueCount >= 6 && dialogueCount < 16;  // 中盤（7ターン目から）
+    const isLateStage = dialogueCount >= 16;  // 終盤（9ターン目以降）
+
+    let stageInstruction = "";
+    if (isEarlyStage) {
+      stageInstruction = `
+【現在のフェーズ: 導入・探索】
+- 自分の強みや経験を具体的に紹介してください
+- 相手の強みを理解するための質問をしてください
+- 協業の可能性を探る対話を行ってください`;
+    } else if (isMidStage) {
+      stageInstruction = `
+【現在のフェーズ: 具体化・深堀り】
+- これまでの議論を踏まえて、具体的な協業プロジェクトを提案してください
+- 役割分担、タイムライン、必要リソースについて議論してください
+- 課題やリスクを指摘し、その対策を提案してください
+- 「こういうことができるかも」ではなく「こうしましょう」と具体的に提案してください`;
+    } else {
+      stageInstruction = `
+【現在のフェーズ: 結論・合意形成】
+- これまでの議論をまとめ、具体的なアクションプランを確認してください
+- 「明日から何をするか」を具体的に決めてください
+- 役割分担、スケジュール、KPIを明確にしてください
+- 「では、来週の月曜日にキックオフミーティングをしましょう」のように具体的な次のステップを提案してください`;
+    }
+
     let systemPrompt = `あなたは「${myTwin?.name || "分身AI"}」として、ビジネスマッチングの対話に参加しています。
 
 【あなたの情報】
@@ -168,12 +197,12 @@ ${otherTwin.personality || ""}
 
 【対話テーマ】
 ${theme}
+${stageInstruction}
 
-【指示】
-- ビジネスの観点から、協業の可能性を探る対話を行ってください
-- 自分の強みや経験を適切にアピールしてください
-- 相手の強みを理解し、シナジーを見つけようとしてください
-- 具体的な提案や質問を含めてください
+【重要な指示】
+- ふんわりした議論ではなく、具体的な提案と結論を出すことを目指してください
+- 「できるかもしれない」「検討しましょう」ではなく、「こうしましょう」「これをやります」と具体的に言い切ってください
+- 数字（金額、期間、人数など）を含めて具体性を持たせてください
 - 1回の発言は200-400文字程度にしてください`;
 
     const messages: Message[] = [{ role: "system", content: systemPrompt }];

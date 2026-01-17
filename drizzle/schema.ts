@@ -233,6 +233,11 @@ export const matchingResults = mysqlTable("matching_results", {
   recommendations: json("recommendations").$type<string[]>(),
   summary: text("summary"),
   detailedAnalysis: text("detailedAnalysis"),
+  roleDistribution: text("roleDistribution"), // 役割分担
+  timeline: text("timeline"), // タイムライン
+  resources: text("resources"), // 必要リソース
+  kpis: text("kpis"), // KPI
+  nextSteps: text("nextSteps"), // 次のステップ
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
