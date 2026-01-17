@@ -8,8 +8,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { toast } from "sonner";
-import { UserPlus, Users, Loader2, Check, X, Bot, Copy, Share2 } from "lucide-react";
+import { UserPlus, Users, Loader2, Check, X, Bot, Copy, Share2, QrCode, Link } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { QRCodeSVG } from "qrcode.react";
 
 export default function Friends() {
   const { user } = useAuth();
@@ -21,14 +22,41 @@ export default function Friends() {
   const rejectRequest = trpc.friends.rejectRequest.useMutation();
 
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isShareOpen, setIsShareOpen] = useState(false);
   const [friendCode, setFriendCode] = useState("");
 
   // ユーザーの友達コード（簡易的にopenIdの一部を使用）
   const myFriendCode = user?.openId?.slice(0, 8) || "";
+  
+  // 共有用URL
+  const shareUrl = typeof window !== "undefined" 
+    ? `${window.location.origin}/friends?code=${myFriendCode}`
+    : "";
 
   const handleCopyCode = () => {
     navigator.clipboard.writeText(myFriendCode);
     toast.success("友達コードをコピーしました");
+  };
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(shareUrl);
+    toast.success("共有リンクをコピーしました");
+  };
+
+  const handleShare = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: "分身AI - 友達コード",
+          text: `分身AIで友達になりましょう！\n友達コード: ${myFriendCode}`,
+          url: shareUrl,
+        });
+      } catch (error) {
+        // ユーザーがキャンセルした場合は何もしない
+      }
+    } else {
+      setIsShareOpen(true);
+    }
   };
 
   const handleSendRequest = async () => {
@@ -119,25 +147,98 @@ export default function Friends() {
         </div>
 
         {/* 自分の友達コード */}
-        <Card>
+        <Card className="border-primary/30 bg-gradient-to-br from-primary/5 to-transparent">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Share2 className="h-5 w-5" />
+              <Share2 className="h-5 w-5 text-primary" />
               あなたの友達コード
             </CardTitle>
             <CardDescription>
-              このコードを友達に共有して、友達リクエストを受け取りましょう
+              このコードやQRコードを友達に共有して、友達リクエストを受け取りましょう
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center gap-3">
-              <code className="flex-1 p-3 rounded-lg bg-muted font-mono text-lg">
-                {myFriendCode}
-              </code>
-              <Button variant="outline" onClick={handleCopyCode}>
-                <Copy className="h-4 w-4 mr-2" />
-                コピー
-              </Button>
+            <div className="flex flex-col md:flex-row gap-6">
+              {/* QRコード */}
+              <div className="flex flex-col items-center gap-3">
+                <div className="p-4 bg-white rounded-xl shadow-lg">
+                  <QRCodeSVG 
+                    value={shareUrl}
+                    size={160}
+                    level="M"
+                    includeMargin={false}
+                  />
+                </div>
+                <p className="text-sm text-muted-foreground">QRコードをスキャン</p>
+              </div>
+              
+              {/* コードと共有ボタン */}
+              <div className="flex-1 space-y-4">
+                <div>
+                  <Label className="text-sm text-muted-foreground mb-2 block">友達コード</Label>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 p-3 rounded-lg bg-muted font-mono text-xl tracking-wider text-center">
+                      {myFriendCode}
+                    </code>
+                    <Button variant="outline" size="icon" onClick={handleCopyCode}>
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+                
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <Button className="flex-1" onClick={handleShare}>
+                    <Share2 className="h-4 w-4 mr-2" />
+                    共有する
+                  </Button>
+                  <Dialog open={isShareOpen} onOpenChange={setIsShareOpen}>
+                    <DialogTrigger asChild>
+                      <Button variant="outline" className="flex-1">
+                        <QrCode className="h-4 w-4 mr-2" />
+                        QRコードを拡大
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="sm:max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>友達コードを共有</DialogTitle>
+                        <DialogDescription>
+                          QRコードをスキャンするか、リンクをコピーして共有してください
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="flex flex-col items-center gap-6 py-4">
+                        <div className="p-6 bg-white rounded-2xl shadow-lg">
+                          <QRCodeSVG 
+                            value={shareUrl}
+                            size={240}
+                            level="H"
+                            includeMargin={false}
+                          />
+                        </div>
+                        <div className="w-full space-y-3">
+                          <div className="flex items-center gap-2">
+                            <code className="flex-1 p-2 rounded bg-muted text-sm truncate">
+                              {shareUrl}
+                            </code>
+                            <Button variant="outline" size="sm" onClick={handleCopyLink}>
+                              <Link className="h-4 w-4 mr-1" />
+                              コピー
+                            </Button>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <code className="flex-1 p-2 rounded bg-muted text-center font-mono text-lg">
+                              {myFriendCode}
+                            </code>
+                            <Button variant="outline" size="sm" onClick={handleCopyCode}>
+                              <Copy className="h-4 w-4 mr-1" />
+                              コピー
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>

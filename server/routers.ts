@@ -22,6 +22,7 @@ import { storagePut } from "./storage";
 import { createOrchestratorForUser } from "./services/aiOrchestrator";
 import { invokeLLM } from "./_core/llm";
 import { nanoid } from "nanoid";
+import { notifyOwner } from "./_core/notification";
 
 export const appRouter = router({
   system: systemRouter,
@@ -754,6 +755,16 @@ ${dialogueText}`,
           recommendations: analysis.recommendations,
           detailedAnalysis: analysis.detailedAnalysis,
         });
+
+        // Send notification to owner about matching completion
+        try {
+          await notifyOwner({
+            title: `マッチング完了: ${twin1.name} × ${twin2.name}`,
+            content: `テーマ: ${session.theme}\n相性スコア: ${analysis.compatibilityScore}%\n\n${analysis.summary}`,
+          });
+        } catch (e) {
+          console.warn("Failed to send notification:", e);
+        }
 
         return analysis;
       }),
