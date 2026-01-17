@@ -26,6 +26,7 @@ import { createOrchestratorForUser } from "./services/aiOrchestrator";
 import { invokeLLM } from "./_core/llm";
 import { nanoid } from "nanoid";
 import { notifyOwner } from "./_core/notification";
+import { generatePresentationContent } from "./services/presentationGenerator";
 
 export const appRouter = router({
   system: systemRouter,
@@ -1034,6 +1035,51 @@ ${dialogueText}`,
         });
 
         return { html };
+      }),
+
+    generatePresentation: protectedProcedure
+      .input(z.object({ sessionId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const session = await getMatchingSessionById(input.sessionId);
+        if (!session) {
+          throw new TRPCError({ code: "NOT_FOUND" });
+        }
+
+        const twin1 = await getDigitalTwinById(session.twin1Id);
+        const twin2 = await getDigitalTwinById(session.twin2Id);
+        const dialogues = await getMatchingDialoguesBySession(input.sessionId);
+        const result = await getMatchingResultBySession(input.sessionId);
+
+        if (!twin1 || !twin2) {
+          throw new TRPCError({ code: "NOT_FOUND" });
+        }
+
+        // Generate slide content from matching data
+        const slideContent = await generatePresentationContent({
+          theme: session.theme,
+          twin1: { name: twin1.name, description: twin1.description, personality: twin1.personality },
+          twin2: { name: twin2.name, description: twin2.description, personality: twin2.personality },
+          dialogues: dialogues.map(d => ({
+            speaker: d.speakerTwinId === twin1.id ? twin1.name : twin2.name,
+            content: d.content,
+          })),
+          result: result ? {
+            compatibilityScore: result.compatibilityScore ? parseInt(result.compatibilityScore) : 0,
+            summary: result.summary || "",
+            collaborationPotential: result.collaborationPotential || "",
+            strengths: result.strengths || [],
+            challenges: result.challenges || [],
+            recommendations: result.recommendations || [],
+            roleDistribution: result.roleDistribution || "",
+            timeline: result.timeline || "",
+            resources: result.resources || "",
+            kpis: result.kpis || "",
+            nextSteps: result.nextSteps || "",
+            detailedAnalysis: result.detailedAnalysis || "",
+          } : null,
+        });
+
+        return { slideContent, slideCount: slideContent.slideCount };
       }),
   }),
 

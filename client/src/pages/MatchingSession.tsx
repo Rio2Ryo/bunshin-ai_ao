@@ -6,7 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
 import { useParams, Link } from "wouter";
-import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, FileText, Users, Calendar, DollarSign, Target, Rocket } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, FileText, Users, Calendar, DollarSign, Target, Rocket, Presentation } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { toast } from "sonner";
 
@@ -61,6 +61,29 @@ export default function MatchingSession() {
     }
   };
 
+  const generatePresentationMutation = trpc.matching.generatePresentation.useMutation({
+    onSuccess: (data) => {
+      // Store the slide content and trigger the presentation generation
+      const slideContent = data.slideContent;
+      // Save to localStorage for the slides page to pick up
+      localStorage.setItem(`presentation-${sessionId}`, JSON.stringify({
+        markdown: slideContent.markdown,
+        slideCount: slideContent.slideCount,
+        sessionId,
+      }));
+      // Open presentation page
+      window.open(`/presentation/${sessionId}`, "_blank");
+      toast.success("プレゼン資料を生成しました");
+    },
+    onError: () => {
+      toast.error("プレゼン資料の生成に失敗しました");
+    },
+  });
+
+  const handleGeneratePresentation = () => {
+    generatePresentationMutation.mutate({ sessionId });
+  };
+
   if (isLoading) {
     return (
       <DashboardLayout>
@@ -107,7 +130,7 @@ export default function MatchingSession() {
           </div>
           
           {/* Export Buttons */}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -122,7 +145,7 @@ export default function MatchingSession() {
               HTML
             </Button>
             <Button
-              variant="default"
+              variant="outline"
               size="sm"
               onClick={handleExportPdf}
               disabled={isExporting}
@@ -133,6 +156,19 @@ export default function MatchingSession() {
                 <Download className="h-4 w-4 mr-2" />
               )}
               PDF印刷
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={handleGeneratePresentation}
+              disabled={generatePresentationMutation.isPending}
+            >
+              {generatePresentationMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Presentation className="h-4 w-4 mr-2" />
+              )}
+              プレゼン資料
             </Button>
           </div>
         </div>
