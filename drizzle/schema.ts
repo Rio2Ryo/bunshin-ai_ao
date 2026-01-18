@@ -223,10 +223,20 @@ export type InsertMatchingDialogue = typeof matchingDialogues.$inferInsert;
 /**
  * Matching analysis results
  */
+// スコア内訳の型定義
+export interface ScoreBreakdown {
+  skillMatch: { score: number; reason: string };
+  valueAlignment: { score: number; reason: string };
+  communicationStyle: { score: number; reason: string };
+  businessGoalFit: { score: number; reason: string };
+  complementaryStrengths: { score: number; reason: string };
+}
+
 export const matchingResults = mysqlTable("matching_results", {
   id: int("id").autoincrement().primaryKey(),
   sessionId: int("sessionId").notNull().unique(),
   compatibilityScore: decimal("compatibilityScore", { precision: 5, scale: 2 }),
+  scoreBreakdown: json("scoreBreakdown").$type<ScoreBreakdown>(), // スコア内訳
   collaborationPotential: text("collaborationPotential"),
   strengths: json("strengths").$type<string[]>(),
   challenges: json("challenges").$type<string[]>(),

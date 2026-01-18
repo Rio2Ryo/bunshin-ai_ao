@@ -1,0 +1,1 @@
+ALTER TABLE `matching_results` ADD `scoreBreakdown` json;

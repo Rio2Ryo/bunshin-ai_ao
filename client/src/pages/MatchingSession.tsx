@@ -114,18 +114,98 @@ export default function MatchingSession() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-6 md:grid-cols-2">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm text-muted-foreground">相性スコア</span>
-                    <span className="text-2xl font-bold text-primary">{compatibilityScore}%</span>
+              <div className="space-y-6">
+                <div className="grid gap-6 md:grid-cols-2">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm text-muted-foreground">相性スコア</span>
+                      <span className="text-2xl font-bold text-primary">{compatibilityScore}%</span>
+                    </div>
+                    <Progress value={compatibilityScore} className="h-3" />
                   </div>
-                  <Progress value={compatibilityScore} className="h-3" />
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-2">総合評価</p>
+                    <p className="font-medium">{result.summary}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-sm text-muted-foreground mb-2">総合評価</p>
-                  <p className="font-medium">{result.summary}</p>
-                </div>
+                
+                {/* Score Breakdown */}
+                {result.scoreBreakdown && (
+                  <div className="border-t pt-4">
+                    <h4 className="text-sm font-medium mb-4">スコア内訳（5つの観点×20点満点）</h4>
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      {/* Skill Match */}
+                      <div className="bg-muted/50 rounded-lg p-3">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm font-medium">スキルマッチ度</span>
+                          <span className="text-sm font-bold text-primary">
+                            {result.scoreBreakdown.skillMatch?.score || 0}/20
+                          </span>
+                        </div>
+                        <Progress value={(result.scoreBreakdown.skillMatch?.score || 0) * 5} className="h-2 mb-2" />
+                        <p className="text-xs text-muted-foreground">
+                          {result.scoreBreakdown.skillMatch?.reason || "データなし"}
+                        </p>
+                      </div>
+                      
+                      {/* Value Alignment */}
+                      <div className="bg-muted/50 rounded-lg p-3">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm font-medium">価値観の一致度</span>
+                          <span className="text-sm font-bold text-primary">
+                            {result.scoreBreakdown.valueAlignment?.score || 0}/20
+                          </span>
+                        </div>
+                        <Progress value={(result.scoreBreakdown.valueAlignment?.score || 0) * 5} className="h-2 mb-2" />
+                        <p className="text-xs text-muted-foreground">
+                          {result.scoreBreakdown.valueAlignment?.reason || "データなし"}
+                        </p>
+                      </div>
+                      
+                      {/* Communication Style */}
+                      <div className="bg-muted/50 rounded-lg p-3">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm font-medium">コミュニケーション</span>
+                          <span className="text-sm font-bold text-primary">
+                            {result.scoreBreakdown.communicationStyle?.score || 0}/20
+                          </span>
+                        </div>
+                        <Progress value={(result.scoreBreakdown.communicationStyle?.score || 0) * 5} className="h-2 mb-2" />
+                        <p className="text-xs text-muted-foreground">
+                          {result.scoreBreakdown.communicationStyle?.reason || "データなし"}
+                        </p>
+                      </div>
+                      
+                      {/* Business Goal Fit */}
+                      <div className="bg-muted/50 rounded-lg p-3">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm font-medium">ビジネス目標適合度</span>
+                          <span className="text-sm font-bold text-primary">
+                            {result.scoreBreakdown.businessGoalFit?.score || 0}/20
+                          </span>
+                        </div>
+                        <Progress value={(result.scoreBreakdown.businessGoalFit?.score || 0) * 5} className="h-2 mb-2" />
+                        <p className="text-xs text-muted-foreground">
+                          {result.scoreBreakdown.businessGoalFit?.reason || "データなし"}
+                        </p>
+                      </div>
+                      
+                      {/* Complementary Strengths */}
+                      <div className="bg-muted/50 rounded-lg p-3">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm font-medium">相互補完性</span>
+                          <span className="text-sm font-bold text-primary">
+                            {result.scoreBreakdown.complementaryStrengths?.score || 0}/20
+                          </span>
+                        </div>
+                        <Progress value={(result.scoreBreakdown.complementaryStrengths?.score || 0) * 5} className="h-2 mb-2" />
+                        <p className="text-xs text-muted-foreground">
+                          {result.scoreBreakdown.complementaryStrengths?.reason || "データなし"}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

@@ -722,7 +722,14 @@ ${input.rawInput}`,
               role: "system",
               content: `あなたはビジネスマッチングの専門家です。2人の分身AI同士の対話を分析し、具体的なビジネス協業のアクションプランを提案してください。
 
-重要: ふんわりした要約ではなく、以下の点を具体的に記載してください：
+【重要】マッチングスコアは以下の5つの観点から算出し、各観点の点数と理由を明示してください：
+1. スキルマッチ度（20点満点）: 両者のスキルが補完し合えるか
+2. 価値観の一致度（20点満点）: ビジネスに対する考え方や優先順位が合うか
+3. コミュニケーションスタイル（20点満点）: 対話のスタイルや進め方が合うか
+4. ビジネス目標の適合度（20点満点）: 目指す方向性や目標が合致するか
+5. 相互補完性（20点満点）: お互いの強みが弱みを補えるか
+
+【重要】ふんわりした要約ではなく、以下の点を具体的に記載してください：
 - 具体的な協業プロジェクト名と内容
 - 各自の役割分担（誰が何を担当するか）
 - 具体的なタイムライン（最初の1週間、最初の1ヶ月で何をするか）
@@ -749,13 +756,14 @@ ${friendTwin.personality || ""}
 ${dialogueText}
 
 上記の対話を踏まえて、以下を具体的に分析してください：
-1. この2人が協業する場合の具体的なプロジェクト名と内容
-2. 各自の役割分担（誰が何を担当するか）
-3. 具体的なタイムライン（Week1, Week2-4, Month2-3で何をするか）
-4. 必要なリソースや投資
-5. 期待される成果とKPI
-6. リスクとその対策
-7. 明日からできる具体的なアクション`,
+1. マッチングスコアの内訳（5つの観点それぞれの点数と理由）
+2. この2人が協業する場合の具体的なプロジェクト名と内容
+3. 各自の役割分担（誰が何を担当するか）
+4. 具体的なタイムライン（Week1, Week2-4, Month2-3で何をするか）
+5. 必要なリソースや投資
+6. 期待される成果とKPI
+7. リスクとその対策
+8. 明日からできる具体的なアクション`,
             },
           ],
           response_format: {
@@ -766,7 +774,60 @@ ${dialogueText}
               schema: {
                 type: "object",
                 properties: {
-                  compatibilityScore: { type: "number", description: "0-100の相性スコア" },
+                  compatibilityScore: { type: "number", description: "0-100の相性スコア（5つの観点の合計）" },
+                  scoreBreakdown: {
+                    type: "object",
+                    description: "スコアの内訳",
+                    properties: {
+                      skillMatch: {
+                        type: "object",
+                        properties: {
+                          score: { type: "number", description: "0-20のスコア" },
+                          reason: { type: "string", description: "具体的な理由" }
+                        },
+                        required: ["score", "reason"],
+                        additionalProperties: false
+                      },
+                      valueAlignment: {
+                        type: "object",
+                        properties: {
+                          score: { type: "number", description: "0-20のスコア" },
+                          reason: { type: "string", description: "具体的な理由" }
+                        },
+                        required: ["score", "reason"],
+                        additionalProperties: false
+                      },
+                      communicationStyle: {
+                        type: "object",
+                        properties: {
+                          score: { type: "number", description: "0-20のスコア" },
+                          reason: { type: "string", description: "具体的な理由" }
+                        },
+                        required: ["score", "reason"],
+                        additionalProperties: false
+                      },
+                      businessGoalFit: {
+                        type: "object",
+                        properties: {
+                          score: { type: "number", description: "0-20のスコア" },
+                          reason: { type: "string", description: "具体的な理由" }
+                        },
+                        required: ["score", "reason"],
+                        additionalProperties: false
+                      },
+                      complementaryStrengths: {
+                        type: "object",
+                        properties: {
+                          score: { type: "number", description: "0-20のスコア" },
+                          reason: { type: "string", description: "具体的な理由" }
+                        },
+                        required: ["score", "reason"],
+                        additionalProperties: false
+                      }
+                    },
+                    required: ["skillMatch", "valueAlignment", "communicationStyle", "businessGoalFit", "complementaryStrengths"],
+                    additionalProperties: false
+                  },
                   summary: { type: "string", description: "協業プロジェクトの具体的な内容（プロジェクト名、目的、期待成果を含む）" },
                   collaborationPotential: { type: "string", description: "協業の可能性と具体的な形態（共同開発、業務提携、合弁会社設立など）" },
                   strengths: { type: "array", items: { type: "string" }, description: "具体的なシナジー（例: 「Aさんの技術力×Bさんの営業網で新規顧客開拓可能」）" },
@@ -779,7 +840,7 @@ ${dialogueText}
                   nextSteps: { type: "string", description: "明日からできる具体的なアクション（3つ以上）" },
                   detailedAnalysis: { type: "string", description: "詳細な分析（対話から読み取れる具体的なポイント）" },
                 },
-                required: ["compatibilityScore", "summary", "collaborationPotential", "strengths", "challenges", "recommendations", "roleDistribution", "timeline", "resources", "kpis", "nextSteps", "detailedAnalysis"],
+                required: ["compatibilityScore", "scoreBreakdown", "summary", "collaborationPotential", "strengths", "challenges", "recommendations", "roleDistribution", "timeline", "resources", "kpis", "nextSteps", "detailedAnalysis"],
                 additionalProperties: false,
               },
             },
@@ -793,6 +854,7 @@ ${dialogueText}
           await createMatchingResult({
             sessionId,
             compatibilityScore: String(analysis.compatibilityScore),
+            scoreBreakdown: analysis.scoreBreakdown,
             summary: analysis.summary,
             collaborationPotential: analysis.collaborationPotential,
             strengths: analysis.strengths,
