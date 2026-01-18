@@ -27,8 +27,8 @@ import { invokeLLM } from "./_core/llm";
 import { nanoid } from "nanoid";
 import { notifyOwner } from "./_core/notification";
 import { generatePresentationContent, parseMarkdownToSlides, generateSlideContentFile } from "./services/presentationGenerator";
-import { analyzeBigFiveTraits, analyzeJudgmentThresholds, evaluateValueWaveform, calculatePersonalitySimilarity, calculateAccuracyScore, conductPersonalityInterview } from "./services/personalityEvaluator";
-import type { BigFiveTraits, JudgmentThresholds, ValueWaveform } from "../drizzle/schema";
+import { analyzeBigFiveTraits, analyzeJudgmentThresholds, evaluateValueWaveform, calculatePersonalitySimilarity, calculateAccuracyScore, conductPersonalityInterview, analyzeMBTI, conductMBTIInterview, runIntegratedPersonalityAnalysis } from "./services/personalityEvaluator";
+import type { BigFiveTraits, JudgmentThresholds, ValueWaveform, MBTIType } from "../drizzle/schema";
 
 export const appRouter = router({
   system: systemRouter,
@@ -456,6 +456,88 @@ ${input.rawInput}`,
         }
 
         return result;
+      }),
+
+    // MBTI性格診断インタビュー
+    mbtiInterview: protectedProcedure
+      .input(z.object({
+        previousMessages: z.array(z.object({
+          role: z.enum(["user", "assistant"]),
+          content: z.string()
+        })),
+        userResponse: z.string().optional()
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const result = await conductMBTIInterview(
+          input.previousMessages,
+          input.userResponse
+        );
+
+        // 診断が完了した場合、分身AIに保存
+        if (result.isComplete && result.mbtiType) {
+          const twin = await getDigitalTwinByUser(ctx.user.id);
+          if (twin) {
+            await updateDigitalTwin(twin.id, {
+              mbtiType: result.mbtiType
+            });
+          }
+        }
+
+        return result;
+      }),
+
+    // 統合性格分析（ビッグ・ファイブ + MBTI + 判断基準）
+    runIntegratedAnalysis: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+
+        if (!twin.rawInput) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "分身AIの情報が不足しています" });
+        }
+
+        const result = await runIntegratedPersonalityAnalysis(
+          twin.rawInput,
+          twin.personality,
+          twin.description
+        );
+
+        // 分身AIに保存
+        await updateDigitalTwin(twin.id, {
+          bigFiveTraits: result.bigFiveTraits,
+          mbtiType: result.mbtiType,
+          judgmentThresholds: result.judgmentThresholds,
+          trainingIterations: (twin.trainingIterations || 0) + 1
+        });
+
+        // 精度スコアを計算
+        const personalitySimilarity = calculatePersonalitySimilarity(
+          result.bigFiveTraits,
+          result.bigFiveTraits // 自己比較なので100%
+        );
+        const accuracyScore = calculateAccuracyScore(
+          personalitySimilarity,
+          twin.rawInput?.length || 0,
+          (twin.trainingIterations || 0) + 1,
+          true,
+          true,
+          true
+        );
+
+        await updateDigitalTwin(twin.id, {
+          personalitySimilarity: personalitySimilarity.toString(),
+          accuracyScore: accuracyScore.toString()
+        });
+
+        return {
+          bigFiveTraits: result.bigFiveTraits,
+          mbtiType: result.mbtiType,
+          judgmentThresholds: result.judgmentThresholds,
+          personalitySimilarity,
+          accuracyScore
+        };
       }),
   }),
 

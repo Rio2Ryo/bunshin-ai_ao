@@ -1,0 +1,1 @@
+ALTER TABLE `digital_twins` ADD `mbtiType` json;

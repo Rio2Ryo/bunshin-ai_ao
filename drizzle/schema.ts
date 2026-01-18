@@ -69,6 +69,22 @@ export interface JudgmentThresholds {
   rightWrong: number; // 正誤 (0-100: 0=曖昧さを許容, 100=正確さ重視)
 }
 
+// MBTI性格タイプの型定義
+export interface MBTIType {
+  type: string; // INTJ, ENFP, etc.
+  dimensions: {
+    EI: number; // -100 (Introvert) to +100 (Extravert)
+    SN: number; // -100 (Sensing) to +100 (iNtuition)
+    TF: number; // -100 (Thinking) to +100 (Feeling)
+    JP: number; // -100 (Judging) to +100 (Perceiving)
+  };
+  description: string;
+  strengths: string[];
+  weaknesses: string[];
+  compatibleTypes: string[];
+  careerSuggestions: string[];
+}
+
 // 徳波形・地雷波形の型定義
 export interface ValueWaveform {
   // 各評価者（他の分身AI）からの評価結果
@@ -102,6 +118,7 @@ export const digitalTwins = mysqlTable("digital_twins", {
   judgmentThresholds: json("judgmentThresholds").$type<JudgmentThresholds>(), // 9つの判断基準の閾値
   virtueWaveform: json("virtueWaveform").$type<ValueWaveform>(), // 徳波形 G+(U)
   mineWaveform: json("mineWaveform").$type<ValueWaveform>(), // 地雷波形 G-(U)
+  mbtiType: json("mbtiType").$type<MBTIType>(), // MBTI性格タイプ
   personalitySimilarity: decimal("personalitySimilarity", { precision: 5, scale: 2 }), // ユーザーとの性格類似度 (0-100%)
   accuracyScore: decimal("accuracyScore", { precision: 5, scale: 2 }), // 分身AIの精度スコア (0-100%)
   trainingIterations: int("trainingIterations").default(0).notNull(), // 学習回数

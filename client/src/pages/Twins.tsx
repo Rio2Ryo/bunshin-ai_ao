@@ -14,6 +14,7 @@ import { Bot, Edit, Loader2, MessageSquare, Save, Sparkles, User, Globe, Eye, Ey
 import { Progress } from "@/components/ui/progress";
 import { PersonalityRadarChart } from "@/components/PersonalityRadarChart";
 import { PersonalityInterview } from "@/components/PersonalityInterview";
+import { MBTIInterview } from "@/components/MBTIInterview";
 
 export default function MyTwin() {
   const { data: twin, isLoading, refetch } = trpc.myTwin.get.useQuery();
@@ -474,7 +475,54 @@ export default function MyTwin() {
                   </div>
                 )}
 
-                {!twin.bigFiveTraits && !twin.judgmentThresholds && (
+                {/* MBTIタイプ */}
+                {(twin as { mbtiType?: { type: string; dimensions: { EI: number; SN: number; TF: number; JP: number }; description: string; strengths: string[]; weaknesses: string[]; compatibleTypes: string[]; careerSuggestions: string[] } }).mbtiType && (
+                  <div>
+                    <h4 className="font-medium mb-3 flex items-center gap-2">
+                      <Sparkles className="h-4 w-4" />
+                      MBTI性格タイプ
+                    </h4>
+                    <div className="text-center mb-4">
+                      <Badge className="bg-purple-500 text-white text-xl px-4 py-1">
+                        {(twin as { mbtiType: { type: string } }).mbtiType.type}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground text-center mb-4">
+                      {(twin as { mbtiType: { description: string } }).mbtiType.description}
+                    </p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <h5 className="text-sm font-medium text-green-600 mb-2">強み</h5>
+                        <ul className="text-xs space-y-1">
+                          {(twin as { mbtiType: { strengths: string[] } }).mbtiType.strengths.slice(0, 3).map((s: string, i: number) => (
+                            <li key={i} className="flex items-center gap-1">
+                              <Sparkles className="h-3 w-3 text-green-500" />
+                              {s}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div>
+                        <h5 className="text-sm font-medium text-orange-600 mb-2">課題</h5>
+                        <ul className="text-xs space-y-1">
+                          {(twin as { mbtiType: { weaknesses: string[] } }).mbtiType.weaknesses.slice(0, 3).map((w: string, i: number) => (
+                            <li key={i} className="text-muted-foreground">• {w}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                    <div className="mt-4">
+                      <h5 className="text-sm font-medium mb-2">相性の良いタイプ</h5>
+                      <div className="flex flex-wrap gap-1">
+                        {(twin as { mbtiType: { compatibleTypes: string[] } }).mbtiType.compatibleTypes.map((t: string, i: number) => (
+                          <Badge key={i} variant="outline" className="text-xs">{t}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {!twin.bigFiveTraits && !twin.judgmentThresholds && !(twin as { mbtiType?: unknown }).mbtiType && (
                   <div className="text-center py-8 text-muted-foreground">
                     <Brain className="h-12 w-12 mx-auto mb-3 opacity-50" />
                     <p>まだ人格分析が実行されていません</p>
@@ -508,22 +556,43 @@ export default function MyTwin() {
               </Card>
             )}
 
-            {/* 性格診断インタビュー */}
-            <Card className="lg:col-span-2">
+            {/* ビッグ・ファイブ性格診断インタビュー */}
+            <Card>
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
                   <Brain className="h-5 w-5" />
-                  性格診断インタビュー
+                  ビッグ・ファイブ性格診断
                 </CardTitle>
                 <CardDescription>
-                  自由会話形式で質問に答えて、より正確な性格診断を行います
+                  5つの性格特性を診断します
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <PersonalityInterview
                   onComplete={() => {
                     refetch();
-                    toast.success("性格診断が完了しました！");
+                    toast.success("ビッグ・ファイブ診断が完了しました！");
+                  }}
+                />
+              </CardContent>
+            </Card>
+
+            {/* MBTI性格診断インタビュー */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Brain className="h-5 w-5" />
+                  MBTI性格診断
+                </CardTitle>
+                <CardDescription>
+                  16タイプの性格を診断します
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <MBTIInterview
+                  onComplete={() => {
+                    refetch();
+                    toast.success("MBTI診断が完了しました！");
                   }}
                 />
               </CardContent>
