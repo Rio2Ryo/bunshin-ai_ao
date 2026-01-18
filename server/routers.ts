@@ -27,6 +27,8 @@ import { invokeLLM } from "./_core/llm";
 import { nanoid } from "nanoid";
 import { notifyOwner } from "./_core/notification";
 import { generatePresentationContent, parseMarkdownToSlides, generateSlideContentFile } from "./services/presentationGenerator";
+import { analyzeBigFiveTraits, analyzeJudgmentThresholds, evaluateValueWaveform, calculatePersonalitySimilarity, calculateAccuracyScore, conductPersonalityInterview } from "./services/personalityEvaluator";
+import type { BigFiveTraits, JudgmentThresholds, ValueWaveform } from "../drizzle/schema";
 
 export const appRouter = router({
   system: systemRouter,
@@ -264,6 +266,168 @@ ${input.rawInput}`,
         }
         const user = await getUserById(twin.userId);
         return { twin, user };
+      }),
+
+    // ビッグ・ファイブ性格診断を実行
+    analyzeBigFive: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+        if (!twin.rawInput) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "分身AIの情報が不足しています" });
+        }
+
+        const bigFiveTraits = await analyzeBigFiveTraits(
+          twin.rawInput,
+          twin.personality,
+          twin.description
+        );
+
+        await updateDigitalTwin(twin.id, { bigFiveTraits });
+        return { bigFiveTraits };
+      }),
+
+    // 9つの判断基準の閾値分析
+    analyzeJudgmentThresholds: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+        if (!twin.rawInput) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "分身AIの情報が不足しています" });
+        }
+
+        const judgmentThresholds = await analyzeJudgmentThresholds(
+          twin.rawInput,
+          twin.personality,
+          twin.description
+        );
+
+        await updateDigitalTwin(twin.id, { judgmentThresholds });
+        return { judgmentThresholds };
+      }),
+
+    // 徳波形・地雷波形の生成（他の分身AIからの評価）
+    evaluateWaveform: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+
+        // 友達の分身AIを取得（評価者として使用）
+        const friends = await getFriends(ctx.user.id);
+        const evaluatorTwins: { id: number; name: string; personality: string | null; judgmentThresholds: JudgmentThresholds | null }[] = [];
+        
+        for (const friendData of friends.slice(0, 5)) { // 最大5人の友達から評価
+          const friendTwin = await getDigitalTwinByUser(friendData.friend.id);
+          if (friendTwin) {
+            evaluatorTwins.push({
+              id: friendTwin.id,
+              name: friendTwin.name,
+              personality: friendTwin.personality,
+              judgmentThresholds: friendTwin.judgmentThresholds as JudgmentThresholds | null
+            });
+          }
+        }
+
+        if (evaluatorTwins.length === 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "評価するための友達の分身AIがありません" });
+        }
+
+        const { virtueWaveform, mineWaveform } = await evaluateValueWaveform(
+          {
+            id: twin.id,
+            name: twin.name,
+            rawInput: twin.rawInput,
+            personality: twin.personality,
+            description: twin.description
+          },
+          evaluatorTwins
+        );
+
+        await updateDigitalTwin(twin.id, { virtueWaveform, mineWaveform });
+        return { virtueWaveform, mineWaveform };
+      }),
+
+    // 分身AIの精度スコアを計算
+    calculateAccuracy: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+
+        // 性格類似度の計算（ユーザーのビッグ・ファイブと分身AIのビッグ・ファイブを比較）
+        // 現時点では分身AIのビッグ・ファイブのみを使用
+        const personalitySimilarity = twin.bigFiveTraits ? 70 : 0; // ベースライン
+
+        const accuracyScore = calculateAccuracyScore(
+          personalitySimilarity,
+          (twin.rawInput || '').length,
+          twin.trainingIterations || 0,
+          !!twin.bigFiveTraits,
+          !!twin.judgmentThresholds,
+          !!twin.virtueWaveform
+        );
+
+        await updateDigitalTwin(twin.id, { 
+          personalitySimilarity: personalitySimilarity.toString(),
+          accuracyScore: accuracyScore.toString(),
+          trainingIterations: (twin.trainingIterations || 0) + 1
+        });
+
+        return { personalitySimilarity, accuracyScore };
+      }),
+
+    // 全分析を一括実行
+    runFullAnalysis: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+        if (!twin.rawInput) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "分身AIの情報が不足しています" });
+        }
+
+        // 1. ビッグ・ファイブ分析
+        const bigFiveTraits = await analyzeBigFiveTraits(
+          twin.rawInput,
+          twin.personality,
+          twin.description
+        );
+
+        // 2. 判断基準分析
+        const judgmentThresholds = await analyzeJudgmentThresholds(
+          twin.rawInput,
+          twin.personality,
+          twin.description
+        );
+
+        // 3. 精度スコア計算
+        const personalitySimilarity = 70; // ベースライン
+        const accuracyScore = calculateAccuracyScore(
+          personalitySimilarity,
+          twin.rawInput.length,
+          (twin.trainingIterations || 0) + 1,
+          true,
+          true,
+          false
+        );
+
+        await updateDigitalTwin(twin.id, {
+          bigFiveTraits,
+          judgmentThresholds,
+          personalitySimilarity: personalitySimilarity.toString(),
+          accuracyScore: accuracyScore.toString(),
+          trainingIterations: (twin.trainingIterations || 0) + 1
+        });
+
+        return { bigFiveTraits, judgmentThresholds, personalitySimilarity, accuracyScore };
       }),
   }),
 

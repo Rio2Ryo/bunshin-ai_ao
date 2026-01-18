@@ -47,6 +47,44 @@ export type InsertUserProfile = typeof userProfiles.$inferInsert;
 /**
  * Digital Twin AI (分身AI) - Each user has exactly ONE digital twin
  */
+// ビッグ・ファイブ性格特性の型定義
+export interface BigFiveTraits {
+  openness: number; // 開放性 (0-100)
+  conscientiousness: number; // 誠実性 (0-100)
+  extraversion: number; // 外向性 (0-100)
+  agreeableness: number; // 協調性 (0-100)
+  neuroticism: number; // 神経症的傾向 (0-100)
+}
+
+// 9つの判断基準の閾値型定義
+export interface JudgmentThresholds {
+  goodEvil: number; // 善悪 (0-100: 0=厄いことに寛容, 100=厄いことに厳しい)
+  likesDislike: number; // 好き嫌い (0-100: 0=何でもOK, 100=こだわりが強い)
+  profitLoss: number; // 損得 (0-100: 0=損得気にしない, 100=損得重視)
+  interest: number; // 利害 (0-100: 0=利害気にしない, 100=利害重視)
+  pleasurePain: number; // 苦楽 (0-100: 0=苦労をいとわない, 100=楽さ重視)
+  difficulty: number; // 難易 (0-100: 0=難しいことに挑戦, 100=簡単なことを好む)
+  possibility: number; // 可否 (0-100: 0=何でも試す, 100=確実なことのみ)
+  comfort: number; // 快不快 (0-100: 0=不快に寛容, 100=快適さ重視)
+  rightWrong: number; // 正誤 (0-100: 0=曖昧さを許容, 100=正確さ重視)
+}
+
+// 徳波形・地雷波形の型定義
+export interface ValueWaveform {
+  // 各評価者（他の分身AI）からの評価結果
+  evaluations: {
+    evaluatorId: number; // 評価した分身AIのID
+    evaluatorName: string; // 評価した分身AIの名前
+    virtueScore: number; // 徳スコア (0-100)
+    mineScore: number; // 地雷スコア (0-100)
+    reasons: string[]; // 評価理由
+  }[];
+  // 総合スコア
+  totalVirtueScore: number;
+  totalMineScore: number;
+  lastUpdated: string; // ISO date string
+}
+
 export const digitalTwins = mysqlTable("digital_twins", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull().unique(), // UNIQUE: 1 user = 1 twin
@@ -59,6 +97,14 @@ export const digitalTwins = mysqlTable("digital_twins", {
   isPublic: int("isPublic").default(0).notNull(), // 0 = private, 1 = public (searchable)
   publicBio: text("publicBio"), // Short bio for public profile
   tags: json("tags").$type<string[]>(), // Tags for search/discovery
+  // 人格評価システムのフィールド
+  bigFiveTraits: json("bigFiveTraits").$type<BigFiveTraits>(), // ビッグ・ファイブ性格特性
+  judgmentThresholds: json("judgmentThresholds").$type<JudgmentThresholds>(), // 9つの判断基準の閾値
+  virtueWaveform: json("virtueWaveform").$type<ValueWaveform>(), // 徳波形 G+(U)
+  mineWaveform: json("mineWaveform").$type<ValueWaveform>(), // 地雷波形 G-(U)
+  personalitySimilarity: decimal("personalitySimilarity", { precision: 5, scale: 2 }), // ユーザーとの性格類似度 (0-100%)
+  accuracyScore: decimal("accuracyScore", { precision: 5, scale: 2 }), // 分身AIの精度スコア (0-100%)
+  trainingIterations: int("trainingIterations").default(0).notNull(), // 学習回数
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

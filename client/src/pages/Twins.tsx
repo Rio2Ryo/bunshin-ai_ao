@@ -10,13 +10,30 @@ import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { Bot, Edit, Loader2, MessageSquare, Save, Sparkles, User, Globe, Eye, EyeOff, Tag, X } from "lucide-react";
+import { Bot, Edit, Loader2, MessageSquare, Save, Sparkles, User, Globe, Eye, EyeOff, Tag, X, Brain, Target, Zap, TrendingUp, BarChart3 } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
 
 export default function MyTwin() {
   const { data: twin, isLoading, refetch } = trpc.myTwin.get.useQuery();
   const upsertMutation = trpc.myTwin.upsert.useMutation();
   const updateMutation = trpc.myTwin.update.useMutation();
   const updatePublicMutation = trpc.myTwin.updatePublicSettings.useMutation();
+  const runFullAnalysisMutation = trpc.myTwin.runFullAnalysis.useMutation();
+
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  const handleRunAnalysis = async () => {
+    setIsAnalyzing(true);
+    try {
+      await runFullAnalysisMutation.mutateAsync();
+      toast.success("人格分析が完了しました");
+      refetch();
+    } catch (error) {
+      toast.error("分析中にエラーが発生しました");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
 
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState("");
@@ -343,6 +360,125 @@ export default function MyTwin() {
                   )}
                   公開設定を保存
                 </Button>
+              </CardContent>
+            </Card>
+
+            {/* 人格評価システム */}
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Brain className="h-5 w-5" />
+                      人格分析
+                    </CardTitle>
+                    <CardDescription>
+                      ビッグ・ファイブ性格診断・9つの判断基準・分身AI精度
+                    </CardDescription>
+                  </div>
+                  <Button 
+                    onClick={handleRunAnalysis} 
+                    disabled={isAnalyzing || !twin.rawInput}
+                    variant="outline"
+                  >
+                    {isAnalyzing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        分析中...
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="h-4 w-4 mr-2" />
+                        分析を実行
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* 精度スコア */}
+                <div className="bg-gradient-to-r from-primary/10 to-primary/5 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-medium flex items-center gap-2">
+                      <Target className="h-4 w-4" />
+                      分身AI精度
+                    </span>
+                    <span className="text-2xl font-bold text-primary">
+                      {twin.accuracyScore ? `${twin.accuracyScore}%` : "未分析"}
+                    </span>
+                  </div>
+                  <Progress value={Number(twin.accuracyScore) || 0} className="h-2" />
+                  <p className="text-sm text-muted-foreground mt-2">
+                    学習回数: {twin.trainingIterations || 0}回
+                  </p>
+                </div>
+
+                {/* ビッグ・ファイブ */}
+                {twin.bigFiveTraits && (
+                  <div>
+                    <h4 className="font-medium mb-3 flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4" />
+                      ビッグ・ファイブ性格特性
+                    </h4>
+                    <div className="grid gap-3">
+                      {[
+                        { key: 'openness', label: '開放性', desc: '新しい経験への関心' },
+                        { key: 'conscientiousness', label: '誠実性', desc: '計画性と責任感' },
+                        { key: 'extraversion', label: '外向性', desc: '社交性と積極性' },
+                        { key: 'agreeableness', label: '協調性', desc: '思いやりと協力性' },
+                        { key: 'neuroticism', label: '神経症的傾向', desc: '感情の安定性（逆転）' },
+                      ].map(({ key, label, desc }) => (
+                        <div key={key} className="space-y-1">
+                          <div className="flex justify-between text-sm">
+                            <span>{label}</span>
+                            <span className="text-muted-foreground">{((twin.bigFiveTraits as unknown) as Record<string, number>)[key]}%</span>
+                          </div>
+                          <Progress value={((twin.bigFiveTraits as unknown) as Record<string, number>)[key]} className="h-1.5" />
+                          <p className="text-xs text-muted-foreground">{desc}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 9つの判断基準 */}
+                {twin.judgmentThresholds && (
+                  <div>
+                    <h4 className="font-medium mb-3 flex items-center gap-2">
+                      <TrendingUp className="h-4 w-4" />
+                      9つの判断基準（価値観の閾値）
+                    </h4>
+                    <div className="grid grid-cols-3 gap-3">
+                      {[
+                        { key: 'goodEvil', label: '善悪', low: '寛容', high: '厳格' },
+                        { key: 'likesDislike', label: '好き嫌い', low: '何でもOK', high: 'こだわり' },
+                        { key: 'profitLoss', label: '損得', low: '気にしない', high: '重視' },
+                        { key: 'interest', label: '利害', low: '気にしない', high: '重視' },
+                        { key: 'pleasurePain', label: '苦楽', low: '苦労OK', high: '楽さ重視' },
+                        { key: 'difficulty', label: '難易', low: '挑戦的', high: '簡単好み' },
+                        { key: 'possibility', label: '可否', low: '何でも試す', high: '確実のみ' },
+                        { key: 'comfort', label: '快不快', low: '不快に寛容', high: '快適重視' },
+                        { key: 'rightWrong', label: '正誤', low: '曖昧OK', high: '正確さ重視' },
+                      ].map(({ key, label, low, high }) => (
+                        <div key={key} className="bg-muted/50 rounded-lg p-3 text-center">
+                          <p className="text-xs text-muted-foreground mb-1">{label}</p>
+                          <p className="text-lg font-bold">{((twin.judgmentThresholds as unknown) as Record<string, number>)[key]}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {((twin.judgmentThresholds as unknown) as Record<string, number>)[key] < 50 ? low : high}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {!twin.bigFiveTraits && !twin.judgmentThresholds && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Brain className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                    <p>まだ人格分析が実行されていません</p>
+                    <p className="text-sm">「分析を実行」ボタンをクリックしてください</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
