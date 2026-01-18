@@ -12,6 +12,8 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Bot, Edit, Loader2, MessageSquare, Save, Sparkles, User, Globe, Eye, EyeOff, Tag, X, Brain, Target, Zap, TrendingUp, BarChart3 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { PersonalityRadarChart } from "@/components/PersonalityRadarChart";
+import { PersonalityInterview } from "@/components/PersonalityInterview";
 
 export default function MyTwin() {
   const { data: twin, isLoading, refetch } = trpc.myTwin.get.useQuery();
@@ -476,9 +478,54 @@ export default function MyTwin() {
                   <div className="text-center py-8 text-muted-foreground">
                     <Brain className="h-12 w-12 mx-auto mb-3 opacity-50" />
                     <p>まだ人格分析が実行されていません</p>
-                    <p className="text-sm">「分析を実行」ボタンをクリックしてください</p>
+                    <p className="text-sm">「分析を実行」ボタンをクリックするか、下の性格診断インタビューをお試しください</p>
                   </div>
                 )}
+              </CardContent>
+            </Card>
+
+            {/* レーダーチャート表示 */}
+            {(twin.bigFiveTraits || twin.judgmentThresholds || twin.virtueWaveform || twin.mineWaveform) && (
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <BarChart3 className="h-5 w-5" />
+                    人格波形チャート
+                  </CardTitle>
+                  <CardDescription>
+                    あなたの分身AIの性格特性をレーダーチャートで可視化
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <PersonalityRadarChart
+                    bigFiveTraits={twin.bigFiveTraits as { openness: number; conscientiousness: number; extraversion: number; agreeableness: number; neuroticism: number } | null}
+                    judgmentThresholds={twin.judgmentThresholds as { goodEvil: number; likesDislike: number; profitLoss: number; interestConflict: number; pleasurePain: number; difficultyEase: number; possibilityImpossibility: number; comfortDiscomfort: number; rightWrong: number } | null}
+                    virtueWaveform={twin.virtueWaveform as { gratitude: number; praise: number; encouragement: number; cooperation: number; honesty: number; empathy: number; generosity: number; patience: number } | null}
+                    mineWaveform={twin.mineWaveform as { criticism: number; negativity: number; selfishness: number; dishonesty: number; impatience: number; indifference: number; arrogance: number; hostility: number } | null}
+                    size={220}
+                  />
+                </CardContent>
+              </Card>
+            )}
+
+            {/* 性格診断インタビュー */}
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Brain className="h-5 w-5" />
+                  性格診断インタビュー
+                </CardTitle>
+                <CardDescription>
+                  自由会話形式で質問に答えて、より正確な性格診断を行います
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <PersonalityInterview
+                  onComplete={() => {
+                    refetch();
+                    toast.success("性格診断が完了しました！");
+                  }}
+                />
               </CardContent>
             </Card>
 

@@ -1,5 +1,6 @@
 import { invokeLLM } from "../_core/llm";
 import { getAiApiConfigs, getOrchestrationRoles } from "../db";
+import { enhanceDialogueWithSearch, createSearchEnhancedPrompt, type WebSearchResponse } from "./webSearch";
 import type { AiApiConfig, OrchestrationRole, DigitalTwin, KnowledgeEntry } from "../../drizzle/schema";
 
 type AIProvider = "openai" | "gemini" | "anthropic" | "grok" | "builtin";
@@ -348,15 +349,16 @@ ${twin.systemPrompt}
   }
 
   /**
-   * ビジネスマッチング対話を生成（性格・考え方を強く反映）
+   * ビジネスマッチング対話を生成（性格・考え方を強く反映 + Web検索で情報強化）
    */
   async generateMatchingDialogue(
     otherTwin: DigitalTwin,
     otherKnowledge: KnowledgeEntry[],
     theme: string,
     previousDialogues: { speaker: string; content: string }[],
-    isFirstSpeaker: boolean
-  ): Promise<string> {
+    isFirstSpeaker: boolean,
+    enableWebSearch: boolean = true
+  ): Promise<{ content: string; searchResults?: WebSearchResponse[] }> {
     const { provider, model } = await this.selectProvider("matching");
 
     const myTwin = this.context.twin;
@@ -456,11 +458,35 @@ ${stageInstruction}
       });
     }
 
-    if (provider === "builtin") {
-      return this.invokeBuiltinLLM(messages);
+    // Web検索で情報を強化（中盤以降で実行）
+    let searchResults: WebSearchResponse[] | undefined;
+    if (enableWebSearch && dialogueCount >= 4 && dialogueCount % 4 === 0) {
+      try {
+        const searchData = await enhanceDialogueWithSearch(
+          previousDialogues,
+          theme,
+          myTwin?.name || "分身AI",
+          otherTwin.name
+        );
+        searchResults = searchData.searchResults;
+        
+        // 検索結果をシステムプロンプトに追加
+        if (searchResults && searchResults.length > 0) {
+          messages[0].content = createSearchEnhancedPrompt(messages[0].content, searchResults);
+        }
+      } catch (error) {
+        console.log("[AIOrchestrator] Web search failed, continuing without search results", error);
+      }
     }
 
-    return this.invokeExternalAI(provider, model, messages);
+    let content: string;
+    if (provider === "builtin") {
+      content = await this.invokeBuiltinLLM(messages);
+    } else {
+      content = await this.invokeExternalAI(provider, model, messages);
+    }
+
+    return { content, searchResults };
   }
 
   /**

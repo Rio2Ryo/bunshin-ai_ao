@@ -429,6 +429,34 @@ ${input.rawInput}`,
 
         return { bigFiveTraits, judgmentThresholds, personalitySimilarity, accuracyScore };
       }),
+
+    // 性格診断インタビュー（自由会話形式）
+    personalityInterview: protectedProcedure
+      .input(z.object({
+        previousMessages: z.array(z.object({
+          role: z.enum(["user", "assistant"]),
+          content: z.string()
+        })),
+        userResponse: z.string().optional()
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const result = await conductPersonalityInterview(
+          input.previousMessages,
+          input.userResponse
+        );
+
+        // 診断が完了した場合、分身AIに保存
+        if (result.isComplete && result.traits) {
+          const twin = await getDigitalTwinByUser(ctx.user.id);
+          if (twin) {
+            await updateDigitalTwin(twin.id, {
+              bigFiveTraits: result.traits
+            });
+          }
+        }
+
+        return result;
+      }),
   }),
 
   // ============ Friends ============
@@ -839,7 +867,7 @@ ${input.rawInput}`,
 
         for (let turn = 0; turn < input.turns; turn++) {
           // Twin1の発言
-          const response1 = await orchestrator1.generateMatchingDialogue(
+          const result1 = await orchestrator1.generateMatchingDialogue(
             friendTwin,
             knowledge2,
             input.theme,
@@ -847,17 +875,17 @@ ${input.rawInput}`,
             true,
           );
           
-          dialogues.push({ speaker: myTwin.name, content: response1 });
+          dialogues.push({ speaker: myTwin.name, content: result1.content });
           await addMatchingDialogue({
             sessionId,
             speakerTwinId: myTwin.id,
-            content: response1,
+            content: result1.content,
             aiProvider: "builtin",
             turnNumber: turn * 2,
           });
 
           // Twin2の発言
-          const response2 = await orchestrator2.generateMatchingDialogue(
+          const result2 = await orchestrator2.generateMatchingDialogue(
             myTwin,
             knowledge1,
             input.theme,
@@ -865,11 +893,11 @@ ${input.rawInput}`,
             false,
           );
           
-          dialogues.push({ speaker: friendTwin.name, content: response2 });
+          dialogues.push({ speaker: friendTwin.name, content: result2.content });
           await addMatchingDialogue({
             sessionId,
             speakerTwinId: friendTwin.id,
-            content: response2,
+            content: result2.content,
             aiProvider: "builtin",
             turnNumber: turn * 2 + 1,
           });
@@ -1079,7 +1107,7 @@ ${dialogueText}
 
         for (let turn = 0; turn < input.turns; turn++) {
           // Twin1の発言
-          const response1 = await orchestrator1.generateMatchingDialogue(
+          const result1 = await orchestrator1.generateMatchingDialogue(
             twin2,
             knowledge2,
             session.theme,
@@ -1087,17 +1115,17 @@ ${dialogueText}
             true,
           );
           
-          dialogues.push({ speaker: twin1.name, content: response1 });
+          dialogues.push({ speaker: twin1.name, content: result1.content });
           await addMatchingDialogue({
             sessionId: input.sessionId,
             speakerTwinId: twin1.id,
-            content: response1,
+            content: result1.content,
             aiProvider: "builtin",
             turnNumber: turn * 2,
           });
 
           // Twin2の発言
-          const response2 = await orchestrator2.generateMatchingDialogue(
+          const result2 = await orchestrator2.generateMatchingDialogue(
             twin1,
             knowledge1,
             session.theme,
@@ -1105,11 +1133,11 @@ ${dialogueText}
             false,
           );
           
-          dialogues.push({ speaker: twin2.name, content: response2 });
+          dialogues.push({ speaker: twin2.name, content: result2.content });
           await addMatchingDialogue({
             sessionId: input.sessionId,
             speakerTwinId: twin2.id,
-            content: response2,
+            content: result2.content,
             aiProvider: "builtin",
             turnNumber: turn * 2 + 1,
           });
