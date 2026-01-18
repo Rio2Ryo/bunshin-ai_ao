@@ -382,13 +382,19 @@ export async function conductPersonalityInterview(
 4. 協調性: 思いやりと協力性
 5. 神経症的傾向: 感情の安定性`;
 
-  const messages = [
-    { role: "system" as const, content: systemPrompt },
+  const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
+    { role: "system", content: systemPrompt },
     ...previousMessages.map(m => ({ role: m.role as "user" | "assistant", content: m.content }))
   ];
 
   if (userResponse) {
-    messages.push({ role: "user" as const, content: userResponse });
+    messages.push({ role: "user", content: userResponse });
+  }
+
+  // LLM APIにはシステムメッセージ以外のメッセージが必要
+  // 初回の場合はユーザーからの開始メッセージを追加
+  if (previousMessages.length === 0 && !userResponse) {
+    messages.push({ role: "user", content: "性格診断を開始してください。最初の質問をお願いします。" });
   }
 
   const response = await invokeLLM({
@@ -424,7 +430,13 @@ export async function conductPersonalityInterview(
     }
   });
 
-  const rawContent4 = response.choices[0]?.message?.content;
+  // エラーレスポンスをチェック
+  if ('error' in response) {
+    console.error("LLM API Error (personality):", response.error);
+    throw new Error(`性格診断の質問生成に失敗しました: ${(response.error as any)?.message || 'Unknown error'}`);
+  }
+
+  const rawContent4 = response.choices?.[0]?.message?.content;
   const content = typeof rawContent4 === 'string' ? rawContent4 : JSON.stringify(rawContent4);
   if (!content) {
     throw new Error("性格診断の質問生成に失敗しました");
@@ -616,13 +628,19 @@ J/P (判断/知覚):
 - 「旅行の計画を立てるとき、どの程度詳細に決めますか？」
 - 「締め切りがあるタスクに対して、どのように取り組みますか？」`;
 
-  const messages = [
-    { role: "system" as const, content: systemPrompt },
+  const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
+    { role: "system", content: systemPrompt },
     ...previousMessages.map(m => ({ role: m.role as "user" | "assistant", content: m.content }))
   ];
 
   if (userResponse) {
-    messages.push({ role: "user" as const, content: userResponse });
+    messages.push({ role: "user", content: userResponse });
+  }
+
+  // LLM APIにはシステムメッセージ以外のメッセージが必要
+  // 初回の場合はユーザーからの開始メッセージを追加
+  if (previousMessages.length === 0 && !userResponse) {
+    messages.push({ role: "user", content: "MBTI性格診断を開始してください。最初の質問をお願いします。" });
   }
 
   const response = await invokeLLM({
@@ -670,7 +688,13 @@ J/P (判断/知覚):
     }
   });
 
-  const rawContent = response.choices[0]?.message?.content;
+  // エラーレスポンスをチェック
+  if ('error' in response) {
+    console.error("LLM API Error (MBTI):", response.error);
+    throw new Error(`MBTI診断の質問生成に失敗しました: ${(response.error as any)?.message || 'Unknown error'}`);
+  }
+
+  const rawContent = response.choices?.[0]?.message?.content;
   const content = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
   if (!content) {
     throw new Error("MBTI診断の質問生成に失敗しました");
