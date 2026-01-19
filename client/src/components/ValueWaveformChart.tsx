@@ -417,15 +417,15 @@ export function ValueWaveformChart({
             価値観波形 G+(U) / G-(U)
           </CardTitle>
           <CardDescription>
-            友達の分身AIからの評価に基づく波形を生成します
+            性格診断結果から自分の徳波形・地雷波形を生成します
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="text-center py-8 text-muted-foreground">
-            <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p>まだ評価データがありません</p>
+            <TrendingUp className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p>まだ波形が生成されていません</p>
             <p className="text-sm mt-2">
-              友達を追加して「波形を生成」ボタンをクリックしてください
+              性格診断（ビッグファイブまたはMBTI）を完了してから「波形を生成」ボタンをクリックしてください
             </p>
             {onGenerate && (
               <button
@@ -464,7 +464,7 @@ export function ValueWaveformChart({
             価値観波形 G+(U) / G-(U)
           </CardTitle>
           <CardDescription>
-            特許ドキュメント準拠：複数の模倣人格（C1〜Cn-1）による多角的評価
+            性格診断結果に基づく自己波形分析
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">

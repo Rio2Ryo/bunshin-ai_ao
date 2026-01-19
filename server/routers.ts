@@ -27,7 +27,7 @@ import { invokeLLM } from "./_core/llm";
 import { nanoid } from "nanoid";
 import { notifyOwner } from "./_core/notification";
 import { generatePresentationContent, parseMarkdownToSlides, generateSlideContentFile } from "./services/presentationGenerator";
-import { analyzeBigFiveTraits, analyzeJudgmentThresholds, evaluateValueWaveform, calculatePersonalitySimilarity, calculateAccuracyScore, conductPersonalityInterview, analyzeMBTI, conductMBTIInterview, runIntegratedPersonalityAnalysis } from "./services/personalityEvaluator";
+import { analyzeBigFiveTraits, analyzeJudgmentThresholds, evaluateValueWaveform, calculatePersonalitySimilarity, calculateAccuracyScore, conductPersonalityInterview, analyzeMBTI, conductMBTIInterview, runIntegratedPersonalityAnalysis, generateSelfWaveform, calculateWaveformSimilarity, calculateVirtueMineCompatibility } from "./services/personalityEvaluator";
 import type { BigFiveTraits, JudgmentThresholds, ValueWaveform, MBTIType } from "../drizzle/schema";
 
 export const appRouter = router({
@@ -310,7 +310,38 @@ ${input.rawInput}`,
         return { judgmentThresholds };
       }),
 
-    // 徳波形・地雷波形の生成（他の分身AIからの評価）
+     // 自分の波形を生成（性格診断結果から自己波形を作成）
+    generateSelfWaveform: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+
+        // 性格診断が完了しているか確認
+        if (!twin.bigFiveTraits && !twin.mbtiType && !twin.judgmentThresholds) {
+          throw new TRPCError({ 
+            code: "BAD_REQUEST", 
+            message: "波形を生成するには、まず性格診断（ビッグファイブまたはMBTI）を完了してください" 
+          });
+        }
+
+        const { virtueWaveform, mineWaveform } = await generateSelfWaveform({
+          id: twin.id,
+          name: twin.name,
+          rawInput: twin.rawInput,
+          personality: twin.personality,
+          description: twin.description,
+          bigFiveTraits: twin.bigFiveTraits as BigFiveTraits | null,
+          mbtiType: twin.mbtiType as MBTIType | null,
+          judgmentThresholds: twin.judgmentThresholds as JudgmentThresholds | null
+        });
+
+        await updateDigitalTwin(twin.id, { virtueWaveform, mineWaveform });
+        return { virtueWaveform, mineWaveform };
+      }),
+
+    // 友達の分身AIから評価を受けて波形を更新
     evaluateWaveform: protectedProcedure
       .mutation(async ({ ctx }) => {
         const twin = await getDigitalTwinByUser(ctx.user.id);
@@ -605,6 +636,102 @@ ${input.rawInput}`,
       .mutation(async ({ ctx, input }) => {
         await removeFriend(ctx.user.id, input.friendId);
         return { success: true };
+      }),
+
+    // 友達との波形マッチング度を計算
+    getWaveformCompatibility: protectedProcedure
+      .input(z.object({ friendId: z.number() }))
+      .query(async ({ ctx, input }) => {
+        const myTwin = await getDigitalTwinByUser(ctx.user.id);
+        if (!myTwin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+
+        const friendTwin = await getDigitalTwinByUser(input.friendId);
+        if (!friendTwin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "友達の分身AIが見つかりません" });
+        }
+
+        const myWaveform = myTwin.virtueWaveform as ValueWaveform | null;
+        const friendWaveform = friendTwin.virtueWaveform as ValueWaveform | null;
+
+        if (!myWaveform) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "まず自分の波形を生成してください" });
+        }
+
+        if (!friendWaveform) {
+          return {
+            hasData: false,
+            message: "友達の波形がまだ生成されていません",
+            compatibility: null
+          };
+        }
+
+        const waveformSimilarity = calculateWaveformSimilarity(myWaveform, friendWaveform);
+        const compatibility = calculateVirtueMineCompatibility(myWaveform, friendWaveform);
+
+        return {
+          hasData: true,
+          waveformSimilarity,
+          ...compatibility,
+          friendName: friendTwin.name
+        };
+      }),
+
+    // 全友達とのマッチング度一覧を取得
+    getAllWaveformCompatibilities: protectedProcedure
+      .query(async ({ ctx }) => {
+        const myTwin = await getDigitalTwinByUser(ctx.user.id);
+        if (!myTwin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+
+        const myWaveform = myTwin.virtueWaveform as ValueWaveform | null;
+        if (!myWaveform) {
+          return {
+            hasMyWaveform: false,
+            message: "まず自分の波形を生成してください",
+            compatibilities: []
+          };
+        }
+
+        const friends = await getFriends(ctx.user.id);
+        const compatibilities = [];
+
+        for (const friendData of friends) {
+          const friendTwin = await getDigitalTwinByUser(friendData.friend.id);
+          if (friendTwin) {
+            const friendWaveform = friendTwin.virtueWaveform as ValueWaveform | null;
+            if (friendWaveform) {
+              const waveformSimilarity = calculateWaveformSimilarity(myWaveform, friendWaveform);
+              const compatibility = calculateVirtueMineCompatibility(myWaveform, friendWaveform);
+              compatibilities.push({
+                friendId: friendData.friend.id,
+                friendName: friendTwin.name,
+                waveformSimilarity,
+                ...compatibility
+              });
+            } else {
+              compatibilities.push({
+                friendId: friendData.friend.id,
+                friendName: friendTwin.name,
+                hasWaveform: false
+              });
+            }
+          }
+        }
+
+        // 総合相性順にソート
+        compatibilities.sort((a, b) => {
+          const aScore = 'overallCompatibility' in a ? a.overallCompatibility : 0;
+          const bScore = 'overallCompatibility' in b ? b.overallCompatibility : 0;
+          return bScore - aScore;
+        });
+
+        return {
+          hasMyWaveform: true,
+          compatibilities
+        };
       }),
   }),
 

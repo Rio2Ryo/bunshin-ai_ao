@@ -845,3 +845,286 @@ export async function runIntegratedPersonalityAnalysis(
     judgmentThresholds
   };
 }
+
+
+/**
+ * 自分の波形を生成する（自己評価ベース）
+ * 性格診断結果（ビッグファイブ、MBTI、判断基準）から自分の徳波形・地雷波形を生成
+ * 友達の評価に依存しない自己波形の作成
+ */
+export async function generateSelfWaveform(
+  twin: {
+    id: number;
+    name: string;
+    rawInput: string | null;
+    personality: string | null;
+    description: string | null;
+    bigFiveTraits: BigFiveTraits | null;
+    mbtiType: MBTIType | null;
+    judgmentThresholds: JudgmentThresholds | null;
+  }
+): Promise<{ virtueWaveform: ValueWaveform; mineWaveform: ValueWaveform }> {
+  // 性格情報を収集
+  const bigFiveInfo = twin.bigFiveTraits ? `
+【ビッグ・ファイブ性格特性】
+- 開放性: ${twin.bigFiveTraits.openness}/100
+- 誠実性: ${twin.bigFiveTraits.conscientiousness}/100
+- 外向性: ${twin.bigFiveTraits.extraversion}/100
+- 協調性: ${twin.bigFiveTraits.agreeableness}/100
+- 神経症的傾向: ${twin.bigFiveTraits.neuroticism}/100` : "";
+
+  const mbtiInfo = twin.mbtiType ? `
+【MBTIタイプ】
+- タイプ: ${twin.mbtiType.type}
+- E/I (外向/内向): ${twin.mbtiType.dimensions.EI}
+- S/N (感覚/直観): ${twin.mbtiType.dimensions.SN}
+- T/F (思考/感情): ${twin.mbtiType.dimensions.TF}
+- J/P (判断/知覚): ${twin.mbtiType.dimensions.JP}
+- 説明: ${twin.mbtiType.description}
+- 強み: ${twin.mbtiType.strengths?.join(', ') || 'なし'}
+- 弱み: ${twin.mbtiType.weaknesses?.join(', ') || 'なし'}` : "";
+
+  const judgmentInfo = twin.judgmentThresholds ? `
+【9つの判断基準の閾値】
+- 善悪: ${twin.judgmentThresholds.goodEvil}/100
+- 好き嫌い: ${twin.judgmentThresholds.likesDislike}/100
+- 損得: ${twin.judgmentThresholds.profitLoss}/100
+- 利害: ${twin.judgmentThresholds.interest}/100
+- 苦楽: ${twin.judgmentThresholds.pleasurePain}/100
+- 難易: ${twin.judgmentThresholds.difficulty}/100
+- 可否: ${twin.judgmentThresholds.possibility}/100
+- 快不快: ${twin.judgmentThresholds.comfort}/100
+- 正誤: ${twin.judgmentThresholds.rightWrong}/100` : "";
+
+  const prompt = `あなたは人格分析の専門家です。以下の人物「${twin.name}」の性格情報から、この人物の「徳波形（G+）」と「地雷波形（G-）」を分析してください。
+
+【${twin.name}の情報】
+${twin.rawInput || "情報なし"}
+${twin.personality ? `性格: ${twin.personality}` : ""}
+${twin.description ? `説明: ${twin.description}` : ""}
+${bigFiveInfo}
+${mbtiInfo}
+${judgmentInfo}
+
+【徳波形（G+）とは】
+この人物が他者から「徳がある」と評価されやすい特性・行動パターンです。
+- 感謝できる点、称賛できる点、共感できる点、肯定的な行為
+- 他者に好印象を与える傾向
+
+【地雷波形（G-）とは】
+この人物が他者から「地雷」と評価されやすい特性・行動パターンです。
+- 受け入れられにくい点、問題と感じられる点、警戒されやすい点
+- 他者に悪印象を与える可能性がある傾向
+
+【9つの判断基準で自己評価】
+各基準について-100～100で評価してください（マイナスはネガティブ傾向、プラスはポジティブ傾向）:
+- 善悪: この人の行動は善い傾向か悪い傾向か
+- 好き嫌い: この人は好かれやすいか嫌われやすいか
+- 損得: この人と関わることは得になりやすいか損になりやすいか
+- 利害: この人は利益をもたらしやすいか害をもたらしやすいか
+- 苦楽: この人との関係は楽しくなりやすいか苦しくなりやすいか
+- 難易: この人とのコミュニケーションは簡単か難しいか
+- 可否: この人との協力は可能になりやすいか不可能になりやすいか
+- 快不快: この人との交流は快適になりやすいか不快になりやすいか
+- 正誤: この人の考え方は正しい傾向か間違っている傾向か
+
+性格情報に基づいて、この人物の自己波形を分析してください。`;
+
+  const response = await invokeLLM({
+    messages: [
+      { role: "system", content: "あなたは人格分析の専門家です。性格情報から徳波形と地雷波形を分析します。" },
+      { role: "user", content: prompt }
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "self_waveform_analysis",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            virtueScore: { type: "number", description: "徳スコア G+(U) (0-100)" },
+            mineScore: { type: "number", description: "地雷スコア G-(U) (0-100)" },
+            virtueTraits: { 
+              type: "array", 
+              items: { type: "string" },
+              description: "徳と評価されやすい特性（5つ程度）" 
+            },
+            mineTraits: { 
+              type: "array", 
+              items: { type: "string" },
+              description: "地雷と評価されやすい特性（5つ程度）" 
+            },
+            judgmentScores: {
+              type: "object",
+              properties: {
+                goodEvil: { type: "number", description: "善悪 (-100～100)" },
+                likesDislike: { type: "number", description: "好き嫌い (-100～100)" },
+                profitLoss: { type: "number", description: "損得 (-100～100)" },
+                interest: { type: "number", description: "利害 (-100～100)" },
+                pleasurePain: { type: "number", description: "苦楽 (-100～100)" },
+                difficulty: { type: "number", description: "難易 (-100～100)" },
+                possibility: { type: "number", description: "可否 (-100～100)" },
+                comfort: { type: "number", description: "快不快 (-100～100)" },
+                rightWrong: { type: "number", description: "正誤 (-100～100)" }
+              },
+              required: ["goodEvil", "likesDislike", "profitLoss", "interest", "pleasurePain", "difficulty", "possibility", "comfort", "rightWrong"],
+              additionalProperties: false,
+              description: "9つの判断基準に基づく自己評価"
+            },
+            analysis: { type: "string", description: "総合分析コメント" }
+          },
+          required: ["virtueScore", "mineScore", "virtueTraits", "mineTraits", "judgmentScores", "analysis"],
+          additionalProperties: false
+        }
+      }
+    }
+  });
+
+  // エラーレスポンスをチェック
+  if ('error' in response) {
+    console.error("LLM API Error (self waveform):", response.error);
+    throw new Error(`自己波形の生成に失敗しました: ${(response.error as any)?.message || 'Unknown error'}`);
+  }
+
+  const rawContent = response.choices?.[0]?.message?.content;
+  const content = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
+  if (!content) {
+    throw new Error("自己波形の生成に失敗しました");
+  }
+
+  const result = JSON.parse(content);
+  const clamp = (val: number, min: number, max: number) => Math.min(max, Math.max(min, val));
+
+  // 自己評価を評価者として追加
+  const selfEvaluation = {
+    evaluatorId: twin.id,
+    evaluatorName: `${twin.name}（自己分析）`,
+    virtueScore: clamp(result.virtueScore, 0, 100),
+    mineScore: clamp(result.mineScore, 0, 100),
+    virtueReasons: result.virtueTraits || [],
+    mineReasons: result.mineTraits || [],
+    judgmentScores: {
+      goodEvil: clamp(result.judgmentScores?.goodEvil ?? 0, -100, 100),
+      likesDislike: clamp(result.judgmentScores?.likesDislike ?? 0, -100, 100),
+      profitLoss: clamp(result.judgmentScores?.profitLoss ?? 0, -100, 100),
+      interest: clamp(result.judgmentScores?.interest ?? 0, -100, 100),
+      pleasurePain: clamp(result.judgmentScores?.pleasurePain ?? 0, -100, 100),
+      difficulty: clamp(result.judgmentScores?.difficulty ?? 0, -100, 100),
+      possibility: clamp(result.judgmentScores?.possibility ?? 0, -100, 100),
+      comfort: clamp(result.judgmentScores?.comfort ?? 0, -100, 100),
+      rightWrong: clamp(result.judgmentScores?.rightWrong ?? 0, -100, 100)
+    }
+  };
+
+  const virtueWaveform: ValueWaveform = {
+    evaluations: [selfEvaluation],
+    totalVirtueScore: selfEvaluation.virtueScore,
+    totalMineScore: selfEvaluation.mineScore,
+    averageJudgmentScores: selfEvaluation.judgmentScores,
+    lastUpdated: new Date().toISOString()
+  };
+
+  const mineWaveform: ValueWaveform = {
+    evaluations: [selfEvaluation],
+    totalVirtueScore: selfEvaluation.virtueScore,
+    totalMineScore: selfEvaluation.mineScore,
+    averageJudgmentScores: selfEvaluation.judgmentScores,
+    lastUpdated: new Date().toISOString()
+  };
+
+  return {
+    virtueWaveform,
+    mineWaveform
+  };
+}
+
+/**
+ * 波形類似度を計算する
+ * 2つの波形の類似度を0-100のスコアで返す
+ */
+export function calculateWaveformSimilarity(
+  waveform1: ValueWaveform | null,
+  waveform2: ValueWaveform | null
+): number {
+  if (!waveform1 || !waveform2) {
+    return 0;
+  }
+
+  // 判断基準スコアがない場合は0を返す
+  if (!waveform1.averageJudgmentScores || !waveform2.averageJudgmentScores) {
+    return 0;
+  }
+
+  // 9つの判断基準のベクトルを作成
+  const v1 = [
+    waveform1.averageJudgmentScores.goodEvil,
+    waveform1.averageJudgmentScores.likesDislike,
+    waveform1.averageJudgmentScores.profitLoss,
+    waveform1.averageJudgmentScores.interest,
+    waveform1.averageJudgmentScores.pleasurePain,
+    waveform1.averageJudgmentScores.difficulty,
+    waveform1.averageJudgmentScores.possibility,
+    waveform1.averageJudgmentScores.comfort,
+    waveform1.averageJudgmentScores.rightWrong
+  ];
+
+  const v2 = [
+    waveform2.averageJudgmentScores.goodEvil,
+    waveform2.averageJudgmentScores.likesDislike,
+    waveform2.averageJudgmentScores.profitLoss,
+    waveform2.averageJudgmentScores.interest,
+    waveform2.averageJudgmentScores.pleasurePain,
+    waveform2.averageJudgmentScores.difficulty,
+    waveform2.averageJudgmentScores.possibility,
+    waveform2.averageJudgmentScores.comfort,
+    waveform2.averageJudgmentScores.rightWrong
+  ];
+
+  // コサイン類似度を計算
+  const dotProduct = v1.reduce((sum, val, i) => sum + val * v2[i], 0);
+  const magnitude1 = Math.sqrt(v1.reduce((sum, val) => sum + val * val, 0));
+  const magnitude2 = Math.sqrt(v2.reduce((sum, val) => sum + val * val, 0));
+
+  if (magnitude1 === 0 || magnitude2 === 0) {
+    return 0;
+  }
+
+  // コサイン類似度を0-100のスコアに変換
+  const cosineSimilarity = dotProduct / (magnitude1 * magnitude2);
+  // コサイン類似度は-1〜1なので、0〜100に変換
+  return Math.round((cosineSimilarity + 1) * 50);
+}
+
+/**
+ * 徳・地雷スコアの類似度を計算
+ */
+export function calculateVirtueMineCompatibility(
+  waveform1: ValueWaveform | null,
+  waveform2: ValueWaveform | null
+): { virtueCompatibility: number; mineCompatibility: number; overallCompatibility: number } {
+  if (!waveform1 || !waveform2) {
+    return { virtueCompatibility: 0, mineCompatibility: 0, overallCompatibility: 0 };
+  }
+
+  // 徳スコアの類似度（差が小さいほど高い）
+  const virtueDiff = Math.abs(waveform1.totalVirtueScore - waveform2.totalVirtueScore);
+  const virtueCompatibility = Math.max(0, 100 - virtueDiff);
+
+  // 地雷スコアの相補性（自分の地雷が相手の徳で補完されるか）
+  // 地雷スコアが低いほど良い、相手の徳スコアが高いほど良い
+  const mineCompatibility = Math.round(
+    (100 - waveform1.totalMineScore + waveform2.totalVirtueScore) / 2
+  );
+
+  // 総合相性
+  const overallCompatibility = Math.round(
+    (virtueCompatibility + mineCompatibility + calculateWaveformSimilarity(waveform1, waveform2)) / 3
+  );
+
+  return {
+    virtueCompatibility: Math.min(100, Math.max(0, virtueCompatibility)),
+    mineCompatibility: Math.min(100, Math.max(0, mineCompatibility)),
+    overallCompatibility: Math.min(100, Math.max(0, overallCompatibility))
+  };
+}

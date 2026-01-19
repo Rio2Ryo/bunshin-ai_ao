@@ -23,7 +23,7 @@ export default function MyTwin() {
   const updateMutation = trpc.myTwin.update.useMutation();
   const updatePublicMutation = trpc.myTwin.updatePublicSettings.useMutation();
   const runFullAnalysisMutation = trpc.myTwin.runFullAnalysis.useMutation();
-  const evaluateWaveformMutation = trpc.myTwin.evaluateWaveform.useMutation();
+  const generateSelfWaveformMutation = trpc.myTwin.generateSelfWaveform.useMutation();
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isGeneratingWaveform, setIsGeneratingWaveform] = useState(false);
@@ -31,8 +31,8 @@ export default function MyTwin() {
   const handleGenerateWaveform = async () => {
     setIsGeneratingWaveform(true);
     try {
-      await evaluateWaveformMutation.mutateAsync();
-      toast.success("徳波形・地雷波形を生成しました");
+      await generateSelfWaveformMutation.mutateAsync();
+      toast.success("自分の波形を生成しました");
       refetch();
     } catch (error: any) {
       toast.error(error.message || "波形の生成に失敗しました");
