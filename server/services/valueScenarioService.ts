@@ -1,7 +1,7 @@
 import { invokeLLM } from "../_core/llm";
 import { getDb } from "../db";
 import { valueScenarioResponses, valueEvaluations, cumulativeWaveforms, digitalTwins, friendships, users } from "../../drizzle/schema";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 
 // DBインスタンスを取得するヘルパー関数
 async function db() {
@@ -512,32 +512,16 @@ export async function conductValueScenarioInterview(
   };
 }
 
-// 友達の分身AIによる評価を実行
+// システム内の全分身AIからランダムに評価者を選択して評価を実行
+// 自分の分身AIも評価者として使用可能（自己評価）
 async function evaluateByFriendTwins(
   targetUserId: number,
   targetTwinId: number,
   scenarioText: string,
   userResponse: string
 ): Promise<void> {
-  // 友達を取得
-  const friendRelations = await (await db())
-    .select({
-      friendId: friendships.friendId,
-    })
-    .from(friendships)
-    .where(and(
-      eq(friendships.userId, targetUserId),
-      eq(friendships.status, "accepted")
-    ));
-
-  if (friendRelations.length === 0) {
-    return;
-  }
-
-  const friendIds = friendRelations.map((f: { friendId: number }) => f.friendId);
-
-  // 友達の分身AIを取得
-  const friendTwins = await (await db())
+  // システム内の全分身AIを取得（自分も含む）
+  const allTwins = await (await db())
     .select({
       id: digitalTwins.id,
       userId: digitalTwins.userId,
@@ -545,7 +529,15 @@ async function evaluateByFriendTwins(
       personality: digitalTwins.personality,
     })
     .from(digitalTwins)
-    .where(inArray(digitalTwins.userId, friendIds));
+    .where(sql`${digitalTwins.personality} IS NOT NULL`);
+
+  if (allTwins.length === 0) {
+    return;
+  }
+
+  // ランダムに5人まで選択（全員が5人未満なら全員）
+  const shuffled = allTwins.sort(() => Math.random() - 0.5);
+  const friendTwins = shuffled.slice(0, Math.min(5, shuffled.length));
 
   // 各友達の分身AIによる評価を実行
   for (const twin of friendTwins) {
@@ -573,8 +565,8 @@ async function evaluateByFriendTwins(
   }
 }
 
-// 累積波形を更新
-async function updateCumulativeWaveform(userId: number, twinId: number): Promise<void> {
+// 累積波形を更新（エクスポート）
+export async function updateCumulativeWaveform(userId: number, twinId: number): Promise<void> {
   // すべての評価を取得
   const evaluations = await (await db())
     .select()
@@ -718,6 +710,112 @@ async function updateCumulativeWaveform(userId: number, twinId: number): Promise
   }
 }
 
+// 既存のシナリオ回答に対して評価を再実行する
+export async function reevaluateExistingResponses(
+  userId: number,
+  twinId: number
+): Promise<{
+  evaluatedCount: number;
+  totalResponses: number;
+}> {
+  // 既存の回答を取得
+  const existingResponses = await (await db())
+    .select()
+    .from(valueScenarioResponses)
+    .where(and(
+      eq(valueScenarioResponses.userId, userId),
+      eq(valueScenarioResponses.twinId, twinId)
+    ));
+
+  if (existingResponses.length === 0) {
+    return { evaluatedCount: 0, totalResponses: 0 };
+  }
+
+  // 既存の評価を削除（再評価のため）
+  await (await db())
+    .delete(valueEvaluations)
+    .where(and(
+      eq(valueEvaluations.targetUserId, userId),
+      eq(valueEvaluations.targetTwinId, twinId)
+    ));
+
+  // 各回答に対して評価を実行
+  let evaluatedCount = 0;
+  for (const response of existingResponses) {
+    try {
+      await evaluateByFriendTwinsExported(
+        userId,
+        twinId,
+        response.scenarioText,
+        response.userResponse
+      );
+      evaluatedCount++;
+    } catch (error) {
+      console.error(`Error evaluating response ${response.id}:`, error);
+    }
+  }
+
+  // 累積波形を更新
+  await updateCumulativeWaveform(userId, twinId);
+
+  return {
+    evaluatedCount,
+    totalResponses: existingResponses.length,
+  };
+}
+
+// システム内の全分身AIからランダムに評価者を選択して評価を実行（エクスポート版）
+export async function evaluateByFriendTwinsExported(
+  targetUserId: number,
+  targetTwinId: number,
+  scenarioText: string,
+  userResponse: string
+): Promise<void> {
+  // システム内の全分身AIを取得（自分も含む）
+  const allTwins = await (await db())
+    .select({
+      id: digitalTwins.id,
+      userId: digitalTwins.userId,
+      name: digitalTwins.name,
+      personality: digitalTwins.personality,
+    })
+    .from(digitalTwins)
+    .where(sql`${digitalTwins.personality} IS NOT NULL`);
+
+  if (allTwins.length === 0) {
+    return;
+  }
+
+  // ランダムに5人まで選択（全員が5人未満なら全員）
+  const shuffled = allTwins.sort(() => Math.random() - 0.5);
+  const friendTwins = shuffled.slice(0, Math.min(5, shuffled.length));
+
+  // 各友達の分身AIによる評価を実行
+  for (const twin of friendTwins) {
+    if (!twin.personality) continue;
+
+    const evaluation = await evaluateByTwin(
+      twin.id,
+      twin.name,
+      twin.personality,
+      userResponse,
+      scenarioText
+    );
+
+    // 評価を保存
+    await (await db()).insert(valueEvaluations).values({
+      targetUserId,
+      targetTwinId,
+      evaluatorTwinId: twin.id,
+      evaluatorUserId: twin.userId,
+      verdict: evaluation.verdict,
+      judgmentScores: evaluation.judgmentScores,
+      reason: evaluation.reason,
+      confidence: evaluation.confidence.toString(),
+    });
+  }
+}
+
 // 累積波形を取得
 export async function getCumulativeWaveform(userId: number, twinId: number) {
   const waveform = await (await db())
@@ -747,4 +845,202 @@ export async function getScenarioProgress(userId: number, twinId: number) {
     total: VALUE_SCENARIOS.length,
     completedScenarioIds: completedResponses.map((r: { scenarioId: string }) => r.scenarioId),
   };
+}
+
+
+// チャットメッセージをランダムな模倣人格で評価する（通常の会話でも波形を累積）
+export async function evaluateChatMessage(
+  userId: number,
+  twinId: number,
+  userMessage: string,
+  assistantResponse: string
+): Promise<{
+  evaluated: boolean;
+  evaluatorName?: string;
+  verdict?: string;
+}> {
+  // システム内の全分身AIを取得（自分以外）
+  const allTwins = await (await db())
+    .select({
+      id: digitalTwins.id,
+      name: digitalTwins.name,
+      personality: digitalTwins.personality,
+      bigFiveTraits: digitalTwins.bigFiveTraits,
+    })
+    .from(digitalTwins)
+    .where(sql`${digitalTwins.id} != ${twinId} AND ${digitalTwins.status} = 'active'`)
+    .limit(100);
+
+  if (allTwins.length === 0) {
+    return { evaluated: false };
+  }
+
+  // ランダムに1つの模倣人格を選択
+  const randomTwin = allTwins[Math.floor(Math.random() * allTwins.length)];
+
+  // メッセージの内容が価値観に関連するかどうかを判断
+  const relevanceCheck = await invokeLLM({
+    messages: [
+      {
+        role: "system",
+        content: `あなたは会話の内容が価値観評価に適しているかを判断するアシスタントです。
+以下のような内容は価値観評価に適しています：
+- 意見や考えを述べている
+- 判断や選択について話している
+- 行動の理由を説明している
+- 倫理的・道徳的な話題
+- 人間関係や社会問題についての見解
+
+以下のような内容は価値観評価に適していません：
+- 単なる挨拶や雑談
+- 事実の確認や質問
+- 技術的な質問や回答
+- 短すぎる返答（10文字未満）
+
+JSON形式で回答してください: { "isRelevant": true/false, "reason": "理由" }`
+      },
+      {
+        role: "user",
+        content: `ユーザーのメッセージ: ${userMessage}`
+      }
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "relevance_check",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            isRelevant: { type: "boolean" },
+            reason: { type: "string" }
+          },
+          required: ["isRelevant", "reason"],
+          additionalProperties: false
+        }
+      }
+    }
+  });
+
+  const relevanceContent = relevanceCheck.choices[0]?.message?.content;
+  if (!relevanceContent || typeof relevanceContent !== 'string') {
+    return { evaluated: false };
+  }
+
+  const relevance = JSON.parse(relevanceContent);
+  if (!relevance.isRelevant) {
+    return { evaluated: false };
+  }
+
+  // 模倣人格による評価を実行
+  const evaluation = await evaluateByTwin(
+    randomTwin.id,
+    randomTwin.name,
+    randomTwin.personality || "",
+    userMessage,
+    `会話の文脈: ${assistantResponse}`
+  );
+
+  // 評価結果を保存
+  // 評価者のユーザーIDを取得
+  const evaluatorTwin = await (await db())
+    .select({ userId: digitalTwins.userId })
+    .from(digitalTwins)
+    .where(eq(digitalTwins.id, randomTwin.id))
+    .limit(1);
+  
+  const evaluatorUserId = evaluatorTwin[0]?.userId || 0;
+
+  await (await db()).insert(valueEvaluations).values({
+    targetUserId: userId,
+    targetTwinId: twinId,
+    evaluatorTwinId: randomTwin.id,
+    evaluatorUserId,
+    verdict: evaluation.verdict,
+    judgmentScores: evaluation.judgmentScores,
+    reason: evaluation.reason,
+    confidence: String(evaluation.confidence),
+  });
+
+  // 累積波形を更新
+  await updateCumulativeWaveform(userId, twinId);
+
+  return {
+    evaluated: true,
+    evaluatorName: randomTwin.name,
+    verdict: evaluation.verdict,
+  };
+}
+
+// サンプルが少ない時に波形を補間する関数
+export function interpolateWaveform(
+  evaluatorBreakdown: Record<string, {
+    evaluatorName: string;
+    virtueCount: number;
+    mineCount: number;
+    neutralCount: number;
+    judgmentScores: Record<string, { sum: number; count: number }>;
+  }>,
+  targetCount: number = 10
+): Array<{
+  id: string;
+  data: {
+    evaluatorName: string;
+    virtueCount: number;
+    mineCount: number;
+    neutralCount: number;
+    judgmentScores: Record<string, { sum: number; count: number }>;
+  };
+}> {
+  const evaluators = Object.entries(evaluatorBreakdown).map(([id, data]) => ({ id, data }));
+  
+  if (evaluators.length === 0) {
+    return [];
+  }
+
+  if (evaluators.length >= targetCount) {
+    return evaluators;
+  }
+
+  // サンプルが少ない場合、既存のデータを補間して波形を滑らかにする
+  const result: typeof evaluators = [];
+  const step = evaluators.length / targetCount;
+
+  for (let i = 0; i < targetCount; i++) {
+    const index = Math.min(Math.floor(i * step), evaluators.length - 1);
+    const nextIndex = Math.min(index + 1, evaluators.length - 1);
+    const t = (i * step) - index;
+
+    const current = evaluators[index];
+    const next = evaluators[nextIndex];
+
+    if (index === nextIndex || t === 0) {
+      result.push(current);
+    } else {
+      // 線形補間
+      const interpolated = {
+        id: `interpolated_${i}`,
+        data: {
+          evaluatorName: `${current.data.evaluatorName}〜${next.data.evaluatorName}`,
+          virtueCount: Math.round(current.data.virtueCount * (1 - t) + next.data.virtueCount * t),
+          mineCount: Math.round(current.data.mineCount * (1 - t) + next.data.mineCount * t),
+          neutralCount: Math.round(current.data.neutralCount * (1 - t) + next.data.neutralCount * t),
+          judgmentScores: {} as Record<string, { sum: number; count: number }>,
+        },
+      };
+
+      for (const key of JUDGMENT_CRITERIA) {
+        const currentScore = current.data.judgmentScores[key] || { sum: 0, count: 0 };
+        const nextScore = next.data.judgmentScores[key] || { sum: 0, count: 0 };
+        interpolated.data.judgmentScores[key] = {
+          sum: Math.round(currentScore.sum * (1 - t) + nextScore.sum * t),
+          count: Math.round(currentScore.count * (1 - t) + nextScore.count * t),
+        };
+      }
+
+      result.push(interpolated);
+    }
+  }
+
+  return result;
 }

@@ -28,7 +28,7 @@ import { nanoid } from "nanoid";
 import { notifyOwner } from "./_core/notification";
 import { generatePresentationContent, parseMarkdownToSlides, generateSlideContentFile } from "./services/presentationGenerator";
 import { analyzeBigFiveTraits, analyzeJudgmentThresholds, evaluateValueWaveform, calculatePersonalitySimilarity, calculateAccuracyScore, conductPersonalityInterview, analyzeMBTI, conductMBTIInterview, runIntegratedPersonalityAnalysis, generateSelfWaveform, calculateWaveformSimilarity, calculateVirtueMineCompatibility } from "./services/personalityEvaluator";
-import { conductValueScenarioInterview, getCumulativeWaveform, getScenarioProgress, VALUE_SCENARIOS, SCENARIO_CATEGORIES } from "./services/valueScenarioService";
+import { conductValueScenarioInterview, getCumulativeWaveform, getScenarioProgress, VALUE_SCENARIOS, SCENARIO_CATEGORIES, evaluateChatMessage, reevaluateExistingResponses, updateCumulativeWaveform } from "./services/valueScenarioService";
 import type { BigFiveTraits, JudgmentThresholds, ValueWaveform, MBTIType } from "../drizzle/schema";
 
 export const appRouter = router({
@@ -73,7 +73,18 @@ export const appRouter = router({
   // ============ My Digital Twin (1 user = 1 twin) ============
   myTwin: router({
     get: protectedProcedure.query(async ({ ctx }) => {
-      return getDigitalTwinByUser(ctx.user.id);
+      const twin = await getDigitalTwinByUser(ctx.user.id);
+      if (!twin) return null;
+      
+      // 累積波形とシナリオ進捗を取得
+      const cumulativeWaveform = await getCumulativeWaveform(ctx.user.id, twin.id);
+      const scenarioProgress = await getScenarioProgress(ctx.user.id, twin.id);
+      
+      return {
+        ...twin,
+        cumulativeWaveform,
+        scenarioProgress,
+      };
     }),
 
     upsert: protectedProcedure
@@ -385,6 +396,36 @@ ${input.rawInput}`,
         return { virtueWaveform, mineWaveform };
       }),
 
+    // 既存のシナリオ回答に対して評価を再実行し、累積波形を更新
+    reevaluateAndUpdateWaveform: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+
+        // 既存の回答に対して評価を再実行
+        const result = await reevaluateExistingResponses(ctx.user.id, twin.id);
+
+        return {
+          success: true,
+          evaluatedCount: result.evaluatedCount,
+          totalResponses: result.totalResponses,
+        };
+      }),
+
+    // 累積波形のみを更新（評価が既に存在する場合）
+    refreshCumulativeWaveform: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+
+        await updateCumulativeWaveform(ctx.user.id, twin.id);
+        return { success: true };
+      }),
+
     // 分身AIの精度スコアを計算
     calculateAccuracy: protectedProcedure
       .mutation(async ({ ctx }) => {
@@ -627,6 +668,7 @@ ${input.rawInput}`,
           categories: SCENARIO_CATEGORIES
         };
       }),
+
   }),
 
   // ============ Friends ============
@@ -1043,6 +1085,15 @@ ${input.rawInput}`,
           role: "assistant",
           content: response,
         });
+
+        // チャットメッセージをランダムな模倣人格で評価して波形を累積更新
+        // 非同期で実行（ユーザー体験に影響しないように）
+        evaluateChatMessage(
+          ctx.user.id,
+          twin.id,
+          input.content,
+          response
+        ).catch(err => console.error("Chat evaluation error:", err));
 
         return { messageId, response };
       }),

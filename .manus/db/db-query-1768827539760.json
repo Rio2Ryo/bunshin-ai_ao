@@ -1,0 +1,20 @@
+{
+  "query": "SELECT id, name, LENGTH(personality) as personality_length FROM digital_twins;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT id, name, LENGTH(personality) as personality_length FROM digital_twins;",
+  "rows": [
+    {
+      "id": "1",
+      "name": "カタオモイ松浦",
+      "personality_length": "248"
+    },
+    {
+      "id": "3",
+      "name": "障害者松浦",
+      "personality_length": "288"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\tpersonality_length\n1\tカタオモイ松浦\t248\n3\t障害者松浦\t288\n",
+  "stderr": "",
+  "execution_time_ms": 1489
+}

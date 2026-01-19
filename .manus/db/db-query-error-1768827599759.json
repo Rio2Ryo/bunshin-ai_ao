@@ -1,0 +1,8 @@
+{
+  "query": "DELETE FROM value_scenario_responses WHERE user_id = 1;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute DELETE FROM value_scenario_responses WHERE user_id = 1;",
+  "returncode": 1,
+  "logs": [
+    "ERROR 1054 (42S22) at line 1: Unknown column 'user_id' in 'where clause'"
+  ]
+}

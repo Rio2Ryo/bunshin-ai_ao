@@ -17,6 +17,7 @@ import { PersonalityInterview } from "@/components/PersonalityInterview";
 import { MBTIInterview } from "@/components/MBTIInterview";
 import { ValueWaveformChart } from "@/components/ValueWaveformChart";
 import { ValueScenarioInterview } from "@/components/ValueScenarioInterview";
+import { CumulativeWaveformChart } from "@/components/CumulativeWaveformChart";
 
 export default function MyTwin() {
   const { data: twin, isLoading, refetch } = trpc.myTwin.get.useQuery();
@@ -25,18 +26,24 @@ export default function MyTwin() {
   const updatePublicMutation = trpc.myTwin.updatePublicSettings.useMutation();
   const runFullAnalysisMutation = trpc.myTwin.runFullAnalysis.useMutation();
   const generateSelfWaveformMutation = trpc.myTwin.generateSelfWaveform.useMutation();
+  const reevaluateWaveformMutation = trpc.myTwin.reevaluateAndUpdateWaveform.useMutation();
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isGeneratingWaveform, setIsGeneratingWaveform] = useState(false);
 
+  // 価値観シナリオの回答に対して評価を実行し、累積波形を更新
   const handleGenerateWaveform = async () => {
     setIsGeneratingWaveform(true);
     try {
-      await generateSelfWaveformMutation.mutateAsync();
-      toast.success("自分の波形を生成しました");
+      const result = await reevaluateWaveformMutation.mutateAsync();
+      if (result.totalResponses === 0) {
+        toast.info("価値観シナリオに回答してから波形を更新してください");
+      } else {
+        toast.success(`${result.evaluatedCount}件の回答を評価し、波形を更新しました`);
+      }
       refetch();
     } catch (error: any) {
-      toast.error(error.message || "波形の生成に失敗しました");
+      toast.error(error.message || "波形の更新に失敗しました");
     } finally {
       setIsGeneratingWaveform(false);
     }
@@ -571,14 +578,13 @@ export default function MyTwin() {
               </Card>
             )}
 
-            {/* 徳波形・地雷波形表示（特許ドキュメント準拠） */}
+            {/* 累積価値観波形（特許図7準拠） */}
             <div className="lg:col-span-2">
-              <ValueWaveformChart
-                virtueWaveform={twin.virtueWaveform as any}
-                mineWaveform={twin.mineWaveform as any}
-                showDetails={true}
+              <CumulativeWaveformChart
+                waveform={twin.cumulativeWaveform as any}
                 onGenerate={handleGenerateWaveform}
                 isGenerating={isGeneratingWaveform}
+                scenarioProgress={twin.scenarioProgress as any}
               />
             </div>
 

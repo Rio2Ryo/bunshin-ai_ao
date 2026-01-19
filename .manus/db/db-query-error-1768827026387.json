@@ -1,0 +1,8 @@
+{
+  "query": "SELECT id, user_id, name, personality IS NOT NULL as has_personality FROM digital_twins LIMIT 20;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT id, user_id, name, personality IS NOT NULL as has_personality FROM digital_twins LIMIT 20;",
+  "returncode": 1,
+  "logs": [
+    "ERROR 1054 (42S22) at line 1: Unknown column 'user_id' in 'field list'"
+  ]
+}

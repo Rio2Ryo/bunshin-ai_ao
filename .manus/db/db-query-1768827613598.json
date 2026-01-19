@@ -1,0 +1,37 @@
+{
+  "query": "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'value_scenario_responses';",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'value_scenario_responses';",
+  "rows": [
+    {
+      "COLUMN_NAME": "id"
+    },
+    {
+      "COLUMN_NAME": "userId"
+    },
+    {
+      "COLUMN_NAME": "twinId"
+    },
+    {
+      "COLUMN_NAME": "scenarioId"
+    },
+    {
+      "COLUMN_NAME": "scenarioCategory"
+    },
+    {
+      "COLUMN_NAME": "scenarioText"
+    },
+    {
+      "COLUMN_NAME": "userResponse"
+    },
+    {
+      "COLUMN_NAME": "analysisResult"
+    },
+    {
+      "COLUMN_NAME": "createdAt"
+    }
+  ],
+  "messages": [],
+  "stdout": "COLUMN_NAME\nid\nuserId\ntwinId\nscenarioId\nscenarioCategory\nscenarioText\nuserResponse\nanalysisResult\ncreatedAt\n",
+  "stderr": "",
+  "execution_time_ms": 1548
+}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -63,11 +63,17 @@ export function MBTIInterview({ onComplete }: MBTIInterviewProps) {
   const [userInput, setUserInput] = useState("");
   const [isComplete, setIsComplete] = useState(false);
   const [mbtiType, setMbtiType] = useState<MBTIType | null>(null);
+  const questionRef = useRef<HTMLDivElement>(null);
 
   const interviewMutation = trpc.myTwin.mbtiInterview.useMutation({
     onSuccess: (data) => {
       // AIの質問を追加
       setMessages(prev => [...prev, { role: "assistant", content: data.question }]);
+      
+      // 次の質問に自動スクロール
+      setTimeout(() => {
+        questionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 100);
       
       if (data.isComplete && data.mbtiType) {
         setIsComplete(true);
@@ -261,24 +267,14 @@ export function MBTIInterview({ onComplete }: MBTIInterviewProps) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* メッセージ履歴 */}
-        <div className="space-y-3 max-h-80 overflow-y-auto">
-          {messages.map((msg, i) => (
-            <div
-              key={i}
-              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-            >
-              <div
-                className={`max-w-[80%] rounded-lg px-4 py-2 ${
-                  msg.role === "user"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted"
-                }`}
-              >
-                {msg.content}
-              </div>
+        {/* 最新の質問のみ表示（1つずつ） */}
+        <div ref={questionRef} className="space-y-3">
+          {messages.length > 0 && (
+            <div className="bg-muted rounded-lg px-4 py-3">
+              <p className="text-sm text-muted-foreground mb-1">質問 {messages.filter(m => m.role === "assistant").length}</p>
+              <p>{messages.filter(m => m.role === "assistant").slice(-1)[0]?.content}</p>
             </div>
-          ))}
+          )}
           {interviewMutation.isPending && (
             <div className="flex justify-start">
               <div className="bg-muted rounded-lg px-4 py-2">

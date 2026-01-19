@@ -1,0 +1,22 @@
+{
+  "query": "SELECT id, userId, name, personality IS NOT NULL as has_personality FROM digital_twins LIMIT 20;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT id, userId, name, personality IS NOT NULL as has_personality FROM digital_twins LIMIT 20;",
+  "rows": [
+    {
+      "id": "1",
+      "userId": "1",
+      "name": "カタオモイ松浦",
+      "has_personality": "1"
+    },
+    {
+      "id": "3",
+      "userId": "30065",
+      "name": "障害者松浦",
+      "has_personality": "1"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tuserId\tname\thas_personality\n1\t1\tカタオモイ松浦\t1\n3\t30065\t障害者松浦\t1\n",
+  "stderr": "",
+  "execution_time_ms": 1541
+}

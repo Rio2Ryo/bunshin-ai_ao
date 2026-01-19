@@ -1,0 +1,178 @@
+{
+  "query": "DESCRIBE digital_twins;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute DESCRIBE digital_twins;",
+  "rows": [
+    {
+      "Field": "id",
+      "Type": "int(11)",
+      "Null": "NO",
+      "Key": "PRI",
+      "Default": "NULL",
+      "Extra": "auto_increment"
+    },
+    {
+      "Field": "userId",
+      "Type": "int(11)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "name",
+      "Type": "varchar(255)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "description",
+      "Type": "text",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "personality",
+      "Type": "text",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "systemPrompt",
+      "Type": "text",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "status",
+      "Type": "enum('active','inactive','training')",
+      "Null": "NO",
+      "Key": "",
+      "Default": "inactive",
+      "Extra": ""
+    },
+    {
+      "Field": "createdAt",
+      "Type": "timestamp",
+      "Null": "NO",
+      "Key": "",
+      "Default": "CURRENT_TIMESTAMP",
+      "Extra": ""
+    },
+    {
+      "Field": "updatedAt",
+      "Type": "timestamp",
+      "Null": "NO",
+      "Key": "",
+      "Default": "CURRENT_TIMESTAMP",
+      "Extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP"
+    },
+    {
+      "Field": "rawInput",
+      "Type": "text",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "isPublic",
+      "Type": "int(11)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "publicBio",
+      "Type": "text",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "tags",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "bigFiveTraits",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "judgmentThresholds",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "virtueWaveform",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "mineWaveform",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "personalitySimilarity",
+      "Type": "decimal(5,2)",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "accuracyScore",
+      "Type": "decimal(5,2)",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "trainingIterations",
+      "Type": "int(11)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "mbtiType",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    }
+  ],
+  "messages": [],
+  "stdout": "Field\tType\tNull\tKey\tDefault\tExtra\nid\tint(11)\tNO\tPRI\tNULL\tauto_increment\nuserId\tint(11)\tNO\t\tNULL\t\nname\tvarchar(255)\tNO\t\tNULL\t\ndescription\ttext\tYES\t\tNULL\t\npersonality\ttext\tYES\t\tNULL\t\nsystemPrompt\ttext\tYES\t\tNULL\t\nstatus\tenum('active','inactive','training')\tNO\t\tinactive\t\ncreatedAt\ttimestamp\tNO\t\tCURRENT_TIMESTAMP\t\nupdatedAt\ttimestamp\tNO\t\tCURRENT_TIMESTAMP\tDEFAULT_GENERATED on update CURRENT_TIMESTAMP\nrawInput\ttext\tYES\t\tNULL\t\nisPublic\tint(11)\tNO\t\t0\t\npublicBio\ttext\tYES\t\tNULL\t\ntags\tjson\tYES\t\tNULL\t\nbigFiveTraits\tjson\tYES\t\tNULL\t\njudgmentThresholds\tjson\tYES\t\tNULL\t\nvirtueWaveform\tjson\tYES\t\tNULL\t\nmineWaveform\tjson\tYES\t\tNULL\t\npersonalitySimilarity\tdecimal(5,2)\tYES\t\tNULL\t\naccuracyScore\tdecimal(5,2)\tYES\t\tNULL\t\ntrainingIterations\tint(11)\tNO\t\t0\t\nmbtiType\tjson\tYES\t\tNULL\t\n",
+  "stderr": "",
+  "execution_time_ms": 1539
+}

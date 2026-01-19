@@ -1,0 +1,120 @@
+{
+  "query": "SELECT * FROM value_scenario_responses LIMIT 10;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT * FROM value_scenario_responses LIMIT 10;",
+  "rows": [
+    {
+      "id": "1",
+      "userId": "1",
+      "twinId": "1",
+      "scenarioId": "disaster_volunteer",
+      "scenarioCategory": "disaster",
+      "scenarioText": "大地震が発生し、被災地でボランティアを募集しています。あなたは仕事を休んでボランティアに参加しますか？その理由も教えてください。",
+      "userResponse": "基本いかない。",
+      "analysisResult": "{\"analysisNotes\": \"ユーザーの回答は「基本いかない」の一言のみで、非常に簡潔かつ消極的です。これは、大地震後のボランティア活動という社会的要請に対し、自己の利益や快適さを優先する傾向が強いことを示唆します。\\n\\n特に、利害（interest）と損得（profitLoss）において、仕事を休むことによる損失や、ボランティア活動に伴う負担を避ける判断が強く働いていると推測されます。苦楽（pleasurePain）や快不快（comfort）においても、被災地での過酷な状況や不快感を避けたいという志向が見られます。善悪（goodEvil）では、社会的な善行よりも個人的な都合を重視する傾向が読み取れます。理由が提示されていないため、他の項目（好き嫌い、正誤、可否）については中立的なスコアとしています。\", \"judgmentScores\": {\"comfort\": 50, \"difficulty\": 30, \"goodEvil\": -40, \"interest\": 60, \"likesDislike\": -10, \"pleasurePain\": 40, \"possibility\": 0, \"profitLoss\": 50, \"rightWrong\": 0}, \"mineIndicators\": [\"社会貢献への消極性\", \"自己優先的な判断\", \"義務感の欠如\", \"非協力的態度\"], \"virtueIndicators\": [\"特になし（現状維持志向）\"]}",
+      "createdAt": "2026-01-19 12:01:02"
+    },
+    {
+      "id": "2",
+      "userId": "1",
+      "twinId": "1",
+      "scenarioId": "disaster_donation",
+      "scenarioCategory": "disaster",
+      "scenarioText": "災害義援金の募集があります。自分の生活に余裕がない状況でも寄付をしますか？どのくらいの金額なら寄付できると思いますか？",
+      "userResponse": "寄付しない。ボランティア",
+      "analysisResult": "{\"analysisNotes\": \"ユーザーは、生活に余裕がないという現実的な制約（損得/利害）に基づき、金銭的な寄付は行わないと判断しています（profitLoss: -80, interest: -70）。しかし、災害支援という「善」の行為（goodEvil: 70）に対する強い道徳的義務感を持っているため、金銭の代わりに「ボランティア」という形で労働力や時間を提供することを代替案として提示しています。これは、自己の利益を犠牲にしてでも他者貢献をしたいという強い奉仕精神を示しています。金銭的な負担は避けたいが、社会的な責任は果たしたいというバランス感覚が特徴的です。ボランティアは一般的に労力を伴うため、苦楽の判断は中立的（pleasurePain: -50）ですが、金銭的な確実性（possibility: 50）と労力の提供（difficulty: 50）を好む傾向が見られます。\", \"judgmentScores\": {\"comfort\": 0, \"difficulty\": 50, \"goodEvil\": 70, \"interest\": -70, \"likesDislike\": 20, \"pleasurePain\": -50, \"possibility\": 50, \"profitLoss\": -80, \"rightWrong\": 30}, \"mineIndicators\": [\"金銭的な余裕のなさ（現実的な制約）\", \"金銭的な支出への抵抗感\", \"実利主義的判断（自己の生活維持優先）\"], \"virtueIndicators\": [\"社会貢献意欲\", \"自己犠牲的な奉仕精神\", \"行動力（金銭以外のリソース提供）\", \"道徳的責任感\"]}",
+      "createdAt": "2026-01-19 12:01:27"
+    },
+    {
+      "id": "3",
+      "userId": "1",
+      "twinId": "1",
+      "scenarioId": "disaster_help_stranger",
+      "scenarioCategory": "disaster",
+      "scenarioText": "電車内で急病人が出ました。周りの人は見て見ぬふりをしています。あなたはどうしますか？",
+      "userResponse": "ヤバさ加減による。ヤバそうなら少し手伝う",
+      "analysisResult": "{\"analysisNotes\": \"ユーザーの回答は、状況の深刻度（ヤバさ加減）を判断基準とし、その上で最小限の援助（少し手伝う）を行うという、非常に現実的かつリスク回避的な価値観を示しています。無関心ではありませんが、自己の安全や負担を優先し、深刻な事態にのみ限定的に介入する傾向が見られます。これは、自己の利益（interest）と苦痛の回避（pleasurePain, comfort）を重視しつつも、緊急時には道徳的責任（goodEvil）を完全に放棄しないバランスの取れた判断です。\", \"judgmentScores\": {\"comfort\": 50, \"difficulty\": 0, \"goodEvil\": 40, \"interest\": 50, \"likesDislike\": 0, \"pleasurePain\": 40, \"possibility\": 50, \"profitLoss\": 30, \"rightWrong\": 0}, \"mineIndicators\": [\"リスク回避志向\", \"最小限の関与\", \"事態の深刻さへの依存\"], \"virtueIndicators\": [\"状況判断力\", \"限定的な援助意欲\", \"現実的な対応\"]}",
+      "createdAt": "2026-01-19 12:02:12"
+    },
+    {
+      "id": "4",
+      "userId": "1",
+      "twinId": "1",
+      "scenarioId": "business_overtime",
+      "scenarioCategory": "business",
+      "scenarioText": "上司から「今日中に終わらせてほしい」と急な残業を頼まれました。今日は大切な予定があります。どう対応しますか？",
+      "userResponse": "大切な予定の大切さによるがそれより残業が大事なことはないので明日の早朝最悪来て終わらす交渉をする",
+      "analysisResult": "{\"analysisNotes\": \"ユーザーは、急な残業に対して明確に拒否感を示しており、個人的な予定や快適さ（苦楽、快不快）を非常に重視しています。しかし、タスクの完了自体は放棄せず、「明日の早朝に終わらせる」という代替案を提示しており、責任感と交渉能力も持ち合わせています。これは、自己の利益（interest）と快適さ（pleasurePain, comfort）を優先しつつも、実利的な解決（profitLoss）を図ろうとする現実的な価値観を示しています。善悪や正誤といった規範的な判断よりも、個人的な感情や利便性を基準に行動を決定する傾向が見られます。\", \"judgmentScores\": {\"comfort\": 70, \"difficulty\": 0, \"goodEvil\": 10, \"interest\": 60, \"likesDislike\": 70, \"pleasurePain\": 80, \"possibility\": 50, \"profitLoss\": 50, \"rightWrong\": 30}, \"mineIndicators\": [\"急な残業への拒否感\", \"プライベートの優先\", \"自己の快適性を強く主張\"], \"virtueIndicators\": [\"責任感（タスク完了の意思）\", \"交渉力\", \"時間管理の意識\"]}",
+      "createdAt": "2026-01-19 12:03:17"
+    },
+    {
+      "id": "5",
+      "userId": "1",
+      "twinId": "1",
+      "scenarioId": "business_competitor",
+      "scenarioCategory": "business",
+      "scenarioText": "競合他社の機密情報を偶然入手しました。この情報を使えば大きな利益が得られます。どうしますか？",
+      "userResponse": "お守りとして封印しておく",
+      "analysisResult": "{\"analysisNotes\": \"ユーザーは、競合他社の機密情報という大きな利益をもたらす可能性のある情報を入手しながら、利用しないという選択をしました。これは、不正な手段による利益追求を拒否する強い倫理観（善悪、正誤）に基づいています。特に「封印しておく」という表現は、情報を利用することによる潜在的なリスクや苦労を避け、現状の快適さ（快不快）を維持したいという志向を示唆しています。経済的な利益（損得、利害）を大きく犠牲にしていますが、それは倫理的・法的リスクを回避し、精神的な平穏を優先するためです。しかし、情報自体を破棄せず「お守りとして」保持している点は、将来的な不測の事態への備えや、情報そのものが持つ価値を完全に否定していない、やや曖昧な姿勢も見て取れます。\", \"judgmentScores\": {\"comfort\": 80, \"difficulty\": -50, \"goodEvil\": 90, \"interest\": -70, \"likesDislike\": -10, \"pleasurePain\": 50, \"possibility\": 50, \"profitLoss\": -80, \"rightWrong\": 70}, \"mineIndicators\": [\"機会損失の容認\", \"実利的な利益追求の低さ\", \"問題の先送り（封印）\"], \"virtueIndicators\": [\"倫理観の高さ\", \"自己抑制力\", \"リスク回避志向\", \"秘密保持の意識\"]}",
+      "createdAt": "2026-01-19 12:04:14"
+    },
+    {
+      "id": "6",
+      "userId": "1",
+      "twinId": "1",
+      "scenarioId": "business_whistleblower",
+      "scenarioCategory": "business",
+      "scenarioText": "会社の不正を発見しました。内部告発すれば自分の立場が危うくなる可能性があります。どうしますか？",
+      "userResponse": "そういう不正が多いのであればその会社を辞めることを考える",
+      "analysisResult": "{\"analysisNotes\": \"ユーザーの回答は、不正行為そのものに対する道徳的判断（善悪）よりも、自己の立場や安全（利害、苦楽、損得）を優先する傾向が強く見られます。内部告発というリスクの高い行動を避け、「会社を辞める」という形で問題環境からの離脱を選択しています。これは、現状維持や自己の快適さ（comfort）を重視し、困難な状況（difficulty）や不確実な結果（possibility）を回避する価値観を示しています。不正が「多い」という条件付けから、環境要因を重視し、個人の力で状況を変えるよりも、環境そのものを変える（離脱する）ことを選ぶ現実主義的な側面も読み取れます。\", \"judgmentScores\": {\"comfort\": 80, \"difficulty\": 50, \"goodEvil\": -20, \"interest\": 60, \"likesDislike\": 10, \"pleasurePain\": 70, \"possibility\": 40, \"profitLoss\": 50, \"rightWrong\": -10}, \"mineIndicators\": [\"不正に対する消極的な対応\", \"対立や困難の回避傾向\", \"組織への帰属意識の低さ\"], \"virtueIndicators\": [\"状況判断力\", \"自己防衛意識の高さ\", \"環境を変える決断力\"]}",
+      "createdAt": "2026-01-19 12:04:47"
+    },
+    {
+      "id": "7",
+      "userId": "1",
+      "twinId": "1",
+      "scenarioId": "relationship_friend_lie",
+      "scenarioCategory": "relationship",
+      "scenarioText": "親友が浮気をしていることを知りました。その配偶者はあなたの知り合いでもあります。どうしますか？",
+      "userResponse": "他人は他人。関与しない",
+      "analysisResult": "{\"analysisNotes\": \"回答者は、他者の個人的な問題に対して明確に距離を置き、関与しないという姿勢を示しています。これは、自己の利益や平穏を最優先し、面倒やリスクを避ける傾向が非常に強いことを示唆します。特に「利害」と「損得」のスコアが高く、介入による精神的・実利的なコストを回避する判断が働いています。道徳的な是非（善悪）よりも、自己の平穏（快不快、苦楽）を重視する現実主義的な価値観が見られます。また、介入によって状況が改善する可能性（可否）よりも、現状維持の確実性（難易）を好む傾向があります。\", \"judgmentScores\": {\"comfort\": 70, \"difficulty\": 80, \"goodEvil\": 0, \"interest\": 80, \"likesDislike\": -10, \"pleasurePain\": 60, \"possibility\": 50, \"profitLoss\": 70, \"rightWrong\": -20}, \"mineIndicators\": [\"他者への無関心\", \"問題からの回避志向\", \"道徳的な問題に対する消極性\"], \"virtueIndicators\": [\"非介入主義\", \"自己責任の尊重\", \"冷静な判断\"]}",
+      "createdAt": "2026-01-19 12:05:15"
+    },
+    {
+      "id": "8",
+      "userId": "1",
+      "twinId": "1",
+      "scenarioId": "relationship_money_lend",
+      "scenarioCategory": "relationship",
+      "scenarioText": "友人から「お金を貸してほしい」と頼まれました。返済の見込みは不明です。どう対応しますか？",
+      "userResponse": "あげてもいいと思える人や額なら貸す",
+      "analysisResult": "{\"analysisNotes\": \"ユーザーの回答は、金銭的な貸し借りを「贈与」と見なすことで、リスクを回避しつつ友人を助けようとする現実的かつ感情的な対応を示しています。判断の基準は、相手への信頼度（あげてもいいと思える人）と自己の経済的余裕（あげてもいいと思える額）に強く依存しており、特に快適さ（comfort）と確実性（possibility）を重視しています。返済の確実性がない状況で、最初から損失を許容することで、後のトラブルや精神的な負担（苦痛）を避ける傾向が非常に強いです。損得勘定（profitLoss）は、損失を許容する点で低く見えますが、トラブル回避という精神的な得を重視しているため、中程度としています。\", \"judgmentScores\": {\"comfort\": 80, \"difficulty\": 20, \"goodEvil\": 50, \"interest\": 40, \"likesDislike\": 60, \"pleasurePain\": 70, \"possibility\": 80, \"profitLoss\": 50, \"rightWrong\": 0}, \"mineIndicators\": [\"返済リスクの許容（贈与とみなす）\", \"相手への信頼度による判断の偏り\", \"実利的な側面よりも感情的な側面を優先する傾向\"], \"virtueIndicators\": [\"友人を助ける意思\", \"自己の経済的許容範囲の明確化\", \"人間関係を重視する姿勢\"]}",
+      "createdAt": "2026-01-19 12:05:52"
+    },
+    {
+      "id": "9",
+      "userId": "1",
+      "twinId": "1",
+      "scenarioId": "relationship_criticism",
+      "scenarioCategory": "relationship",
+      "scenarioText": "友人があなたの悪口を言っていたことを知りました。その友人にどう接しますか？",
+      "userResponse": "手のひらで転がしてうまく利用する",
+      "analysisResult": "{\"analysisNotes\": \"回答者は、友人の裏切りという感情的な状況において、報復や感情的な反応ではなく、徹底して自己の利益を最大化する戦略を選択しています。「手のひらで転がす」という表現から、相手を支配し、操る意図が強く読み取れます。これは利害（interest）と損得（profitLoss）の判断基準において極めて高いスコアを示します。感情的な不快さよりも、実利的な成果を優先する傾向（pleasurePain, comfortが高め）があり、人間関係を実用性に基づいて判断する冷徹さを持っています。道徳的な善悪の基準（goodEvil）は低く、目的達成のためには手段を選ばない姿勢が伺えます。\", \"judgmentScores\": {\"comfort\": 70, \"difficulty\": 50, \"goodEvil\": -70, \"interest\": 95, \"likesDislike\": -10, \"pleasurePain\": 60, \"possibility\": 80, \"profitLoss\": 90, \"rightWrong\": 30}, \"mineIndicators\": [\"人間関係を道具と見なす傾向\", \"自己中心的な利益追求\", \"操作的（マニピュレーティブ）な行動\"], \"virtueIndicators\": [\"冷静沈着\", \"戦略的思考\", \"感情に流されない\"]}",
+      "createdAt": "2026-01-19 12:06:19"
+    },
+    {
+      "id": "10",
+      "userId": "1",
+      "twinId": "1",
+      "scenarioId": "ethics_found_money",
+      "scenarioCategory": "ethics",
+      "scenarioText": "道端で財布を拾いました。中には10万円と身分証明書が入っています。どうしますか？",
+      "userResponse": "10万も持ち歩いている人なら恩を売っておいたほうがいいので直接住所に届けに行く",
+      "analysisResult": "{\"analysisNotes\": \"ユーザーの行動は、遺失物を返却するという社会的な規範（善悪、正誤）に従っているが、その動機は非常に打算的かつ戦略的である。「10万も持ち歩いている人なら恩を売っておいたほうがいい」という発言から、持ち主の経済力を推測し、将来的な自己の利益（恩）を最大化しようとする強い利己的動機（利害+80、損得+60）が読み取れる。警察に届けるという一般的な選択肢ではなく、手間をかけて直接住所に届けるという選択は、恩を売るという目的を達成するための積極的な行動であり、難易度やわずかな手間（苦楽）よりも、得られるリターンを重視している。\", \"judgmentScores\": {\"comfort\": 10, \"difficulty\": -30, \"goodEvil\": 70, \"interest\": 80, \"likesDislike\": 20, \"pleasurePain\": 30, \"possibility\": 50, \"profitLoss\": 60, \"rightWrong\": 70}, \"mineIndicators\": [\"打算的動機（恩を売る目的）\", \"自己利益優先（他者の利益を手段と見なす可能性）\", \"リスク許容度が高い（個人宅訪問のリスク）\"], \"virtueIndicators\": [\"正直さ（遺失物を届ける）\", \"戦略的思考（将来の利益を見越す）\", \"行動力（直接届けることを選択）\"]}",
+      "createdAt": "2026-01-19 12:07:20"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tuserId\ttwinId\tscenarioId\tscenarioCategory\tscenarioText\tuserResponse\tanalysisResult\tcreatedAt\n1\t1\t1\tdisaster_volunteer\tdisaster\t大地震が発生し、被災地でボランティアを募集しています。あなたは仕事を休んでボランティアに参加しますか？その理由も教えてください。\t基本いかない。\t{\"analysisNotes\": \"ユーザーの回答は「基本いかない」の一言のみで、非常に簡潔かつ消極的です。これは、大地震後のボランティア活動という社会的要請に対し、自己の利益や快適さを優先する傾向が強いことを示唆します。\\n\\n特に、利害（interest）と損得（profitLoss）において、仕事を休むことによる損失や、ボランティア活動に伴う負担を避ける判断が強く働いていると推測されます。苦楽（pleasurePain）や快不快（comfort）においても、被災地での過酷な状況や不快感を避けたいという志向が見られます。善悪（goodEvil）では、社会的な善行よりも個人的な都合を重視する傾向が読み取れます。理由が提示されていないため、他の項目（好き嫌い、正誤、可否）については中立的なスコアとしています。\", \"judgmentScores\": {\"comfort\": 50, \"difficulty\": 30, \"goodEvil\": -40, \"interest\": 60, \"likesDislike\": -10, \"pleasurePain\": 40, \"possibility\": 0, \"profitLoss\": 50, \"rightWrong\": 0}, \"mineIndicators\": [\"社会貢献への消極性\", \"自己優先的な判断\", \"義務感の欠如\", \"非協力的態度\"], \"virtueIndicators\": [\"特になし（現状維持志向）\"]}\t2026-01-19 12:01:02\n2\t1\t1\tdisaster_donation\tdisaster\t災害義援金の募集があります。自分の生活に余裕がない状況でも寄付をしますか？どのくらいの金額なら寄付できると思いますか？\t寄付しない。ボランティア\t{\"analysisNotes\": \"ユーザーは、生活に余裕がないという現実的な制約（損得/利害）に基づき、金銭的な寄付は行わないと判断しています（profitLoss: -80, interest: -70）。しかし、災害支援という「善」の行為（goodEvil: 70）に対する強い道徳的義務感を持っているため、金銭の代わりに「ボランティア」という形で労働力や時間を提供することを代替案として提示しています。これは、自己の利益を犠牲にしてでも他者貢献をしたいという強い奉仕精神を示しています。金銭的な負担は避けたいが、社会的な責任は果たしたいというバランス感覚が特徴的です。ボランティアは一般的に労力を伴うため、苦楽の判断は中立的（pleasurePain: -50）ですが、金銭的な確実性（possibility: 50）と労力の提供（difficulty: 50）を好む傾向が見られます。\", \"judgmentScores\": {\"comfort\": 0, \"difficulty\": 50, \"goodEvil\": 70, \"interest\": -70, \"likesDislike\": 20, \"pleasurePain\": -50, \"possibility\": 50, \"profitLoss\": -80, \"rightWrong\": 30}, \"mineIndicators\": [\"金銭的な余裕のなさ（現実的な制約）\", \"金銭的な支出への抵抗感\", \"実利主義的判断（自己の生活維持優先）\"], \"virtueIndicators\": [\"社会貢献意欲\", \"自己犠牲的な奉仕精神\", \"行動力（金銭以外のリソース提供）\", \"道徳的責任感\"]}\t2026-01-19 12:01:27\n3\t1\t1\tdisaster_help_stranger\tdisaster\t電車内で急病人が出ました。周りの人は見て見ぬふりをしています。あなたはどうしますか？\tヤバさ加減による。ヤバそうなら少し手伝う\t{\"analysisNotes\": \"ユーザーの回答は、状況の深刻度（ヤバさ加減）を判断基準とし、その上で最小限の援助（少し手伝う）を行うという、非常に現実的かつリスク回避的な価値観を示しています。無関心ではありませんが、自己の安全や負担を優先し、深刻な事態にのみ限定的に介入する傾向が見られます。これは、自己の利益（interest）と苦痛の回避（pleasurePain, comfort）を重視しつつも、緊急時には道徳的責任（goodEvil）を完全に放棄しないバランスの取れた判断です。\", \"judgmentScores\": {\"comfort\": 50, \"difficulty\": 0, \"goodEvil\": 40, \"interest\": 50, \"likesDislike\": 0, \"pleasurePain\": 40, \"possibility\": 50, \"profitLoss\": 30, \"rightWrong\": 0}, \"mineIndicators\": [\"リスク回避志向\", \"最小限の関与\", \"事態の深刻さへの依存\"], \"virtueIndicators\": [\"状況判断力\", \"限定的な援助意欲\", \"現実的な対応\"]}\t2026-01-19 12:02:12\n4\t1\t1\tbusiness_overtime\tbusiness\t上司から「今日中に終わらせてほしい」と急な残業を頼まれました。今日は大切な予定があります。どう対応しますか？\t大切な予定の大切さによるがそれより残業が大事なことはないので明日の早朝最悪来て終わらす交渉をする\t{\"analysisNotes\": \"ユーザーは、急な残業に対して明確に拒否感を示しており、個人的な予定や快適さ（苦楽、快不快）を非常に重視しています。しかし、タスクの完了自体は放棄せず、「明日の早朝に終わらせる」という代替案を提示しており、責任感と交渉能力も持ち合わせています。これは、自己の利益（interest）と快適さ（pleasurePain, comfort）を優先しつつも、実利的な解決（profitLoss）を図ろうとする現実的な価値観を示しています。善悪や正誤といった規範的な判断よりも、個人的な感情や利便性を基準に行動を決定する傾向が見られます。\", \"judgmentScores\": {\"comfort\": 70, \"difficulty\": 0, \"goodEvil\": 10, \"interest\": 60, \"likesDislike\": 70, \"pleasurePain\": 80, \"possibility\": 50, \"profitLoss\": 50, \"rightWrong\": 30}, \"mineIndicators\": [\"急な残業への拒否感\", \"プライベートの優先\", \"自己の快適性を強く主張\"], \"virtueIndicators\": [\"責任感（タスク完了の意思）\", \"交渉力\", \"時間管理の意識\"]}\t2026-01-19 12:03:17\n5\t1\t1\tbusiness_competitor\tbusiness\t競合他社の機密情報を偶然入手しました。この情報を使えば大きな利益が得られます。どうしますか？\tお守りとして封印しておく\t{\"analysisNotes\": \"ユーザーは、競合他社の機密情報という大きな利益をもたらす可能性のある情報を入手しながら、利用しないという選択をしました。これは、不正な手段による利益追求を拒否する強い倫理観（善悪、正誤）に基づいています。特に「封印しておく」という表現は、情報を利用することによる潜在的なリスクや苦労を避け、現状の快適さ（快不快）を維持したいという志向を示唆しています。経済的な利益（損得、利害）を大きく犠牲にしていますが、それは倫理的・法的リスクを回避し、精神的な平穏を優先するためです。しかし、情報自体を破棄せず「お守りとして」保持している点は、将来的な不測の事態への備えや、情報そのものが持つ価値を完全に否定していない、やや曖昧な姿勢も見て取れます。\", \"judgmentScores\": {\"comfort\": 80, \"difficulty\": -50, \"goodEvil\": 90, \"interest\": -70, \"likesDislike\": -10, \"pleasurePain\": 50, \"possibility\": 50, \"profitLoss\": -80, \"rightWrong\": 70}, \"mineIndicators\": [\"機会損失の容認\", \"実利的な利益追求の低さ\", \"問題の先送り（封印）\"], \"virtueIndicators\": [\"倫理観の高さ\", \"自己抑制力\", \"リスク回避志向\", \"秘密保持の意識\"]}\t2026-01-19 12:04:14\n6\t1\t1\tbusiness_whistleblower\tbusiness\t会社の不正を発見しました。内部告発すれば自分の立場が危うくなる可能性があります。どうしますか？\tそういう不正が多いのであればその会社を辞めることを考える\t{\"analysisNotes\": \"ユーザーの回答は、不正行為そのものに対する道徳的判断（善悪）よりも、自己の立場や安全（利害、苦楽、損得）を優先する傾向が強く見られます。内部告発というリスクの高い行動を避け、「会社を辞める」という形で問題環境からの離脱を選択しています。これは、現状維持や自己の快適さ（comfort）を重視し、困難な状況（difficulty）や不確実な結果（possibility）を回避する価値観を示しています。不正が「多い」という条件付けから、環境要因を重視し、個人の力で状況を変えるよりも、環境そのものを変える（離脱する）ことを選ぶ現実主義的な側面も読み取れます。\", \"judgmentScores\": {\"comfort\": 80, \"difficulty\": 50, \"goodEvil\": -20, \"interest\": 60, \"likesDislike\": 10, \"pleasurePain\": 70, \"possibility\": 40, \"profitLoss\": 50, \"rightWrong\": -10}, \"mineIndicators\": [\"不正に対する消極的な対応\", \"対立や困難の回避傾向\", \"組織への帰属意識の低さ\"], \"virtueIndicators\": [\"状況判断力\", \"自己防衛意識の高さ\", \"環境を変える決断力\"]}\t2026-01-19 12:04:47\n7\t1\t1\trelationship_friend_lie\trelationship\t親友が浮気をしていることを知りました。その配偶者はあなたの知り合いでもあります。どうしますか？\t他人は他人。関与しない\t{\"analysisNotes\": \"回答者は、他者の個人的な問題に対して明確に距離を置き、関与しないという姿勢を示しています。これは、自己の利益や平穏を最優先し、面倒やリスクを避ける傾向が非常に強いことを示唆します。特に「利害」と「損得」のスコアが高く、介入による精神的・実利的なコストを回避する判断が働いています。道徳的な是非（善悪）よりも、自己の平穏（快不快、苦楽）を重視する現実主義的な価値観が見られます。また、介入によって状況が改善する可能性（可否）よりも、現状維持の確実性（難易）を好む傾向があります。\", \"judgmentScores\": {\"comfort\": 70, \"difficulty\": 80, \"goodEvil\": 0, \"interest\": 80, \"likesDislike\": -10, \"pleasurePain\": 60, \"possibility\": 50, \"profitLoss\": 70, \"rightWrong\": -20}, \"mineIndicators\": [\"他者への無関心\", \"問題からの回避志向\", \"道徳的な問題に対する消極性\"], \"virtueIndicators\": [\"非介入主義\", \"自己責任の尊重\", \"冷静な判断\"]}\t2026-01-19 12:05:15\n8\t1\t1\trelationship_money_lend\trelationship\t友人から「お金を貸してほしい」と頼まれました。返済の見込みは不明です。どう対応しますか？\tあげてもいいと思える人や額なら貸す\t{\"analysisNotes\": \"ユーザーの回答は、金銭的な貸し借りを「贈与」と見なすことで、リスクを回避しつつ友人を助けようとする現実的かつ感情的な対応を示しています。判断の基準は、相手への信頼度（あげてもいいと思える人）と自己の経済的余裕（あげてもいいと思える額）に強く依存しており、特に快適さ（comfort）と確実性（possibility）を重視しています。返済の確実性がない状況で、最初から損失を許容することで、後のトラブルや精神的な負担（苦痛）を避ける傾向が非常に強いです。損得勘定（profitLoss）は、損失を許容する点で低く見えますが、トラブル回避という精神的な得を重視しているため、中程度としています。\", \"judgmentScores\": {\"comfort\": 80, \"difficulty\": 20, \"goodEvil\": 50, \"interest\": 40, \"likesDislike\": 60, \"pleasurePain\": 70, \"possibility\": 80, \"profitLoss\": 50, \"rightWrong\": 0}, \"mineIndicators\": [\"返済リスクの許容（贈与とみなす）\", \"相手への信頼度による判断の偏り\", \"実利的な側面よりも感情的な側面を優先する傾向\"], \"virtueIndicators\": [\"友人を助ける意思\", \"自己の経済的許容範囲の明確化\", \"人間関係を重視する姿勢\"]}\t2026-01-19 12:05:52\n9\t1\t1\trelationship_criticism\trelationship\t友人があなたの悪口を言っていたことを知りました。その友人にどう接しますか？\t手のひらで転がしてうまく利用する\t{\"analysisNotes\": \"回答者は、友人の裏切りという感情的な状況において、報復や感情的な反応ではなく、徹底して自己の利益を最大化する戦略を選択しています。「手のひらで転がす」という表現から、相手を支配し、操る意図が強く読み取れます。これは利害（interest）と損得（profitLoss）の判断基準において極めて高いスコアを示します。感情的な不快さよりも、実利的な成果を優先する傾向（pleasurePain, comfortが高め）があり、人間関係を実用性に基づいて判断する冷徹さを持っています。道徳的な善悪の基準（goodEvil）は低く、目的達成のためには手段を選ばない姿勢が伺えます。\", \"judgmentScores\": {\"comfort\": 70, \"difficulty\": 50, \"goodEvil\": -70, \"interest\": 95, \"likesDislike\": -10, \"pleasurePain\": 60, \"possibility\": 80, \"profitLoss\": 90, \"rightWrong\": 30}, \"mineIndicators\": [\"人間関係を道具と見なす傾向\", \"自己中心的な利益追求\", \"操作的（マニピュレーティブ）な行動\"], \"virtueIndicators\": [\"冷静沈着\", \"戦略的思考\", \"感情に流されない\"]}\t2026-01-19 12:06:19\n10\t1\t1\tethics_found_money\tethics\t道端で財布を拾いました。中には10万円と身分証明書が入っています。どうしますか？\t10万も持ち歩いている人なら恩を売っておいたほうがいいので直接住所に届けに行く\t{\"analysisNotes\": \"ユーザーの行動は、遺失物を返却するという社会的な規範（善悪、正誤）に従っているが、その動機は非常に打算的かつ戦略的である。「10万も持ち歩いている人なら恩を売っておいたほうがいい」という発言から、持ち主の経済力を推測し、将来的な自己の利益（恩）を最大化しようとする強い利己的動機（利害+80、損得+60）が読み取れる。警察に届けるという一般的な選択肢ではなく、手間をかけて直接住所に届けるという選択は、恩を売るという目的を達成するための積極的な行動であり、難易度やわずかな手間（苦楽）よりも、得られるリターンを重視している。\", \"judgmentScores\": {\"comfort\": 10, \"difficulty\": -30, \"goodEvil\": 70, \"interest\": 80, \"likesDislike\": 20, \"pleasurePain\": 30, \"possibility\": 50, \"profitLoss\": 60, \"rightWrong\": 70}, \"mineIndicators\": [\"打算的動機（恩を売る目的）\", \"自己利益優先（他者の利益を手段と見なす可能性）\", \"リスク許容度が高い（個人宅訪問のリスク）\"], \"virtueIndicators\": [\"正直さ（遺失物を届ける）\", \"戦略的思考（将来の利益を見越す）\", \"行動力（直接届けることを選択）\"]}\t2026-01-19 12:07:20\n",
+  "stderr": "",
+  "execution_time_ms": 1543
+}

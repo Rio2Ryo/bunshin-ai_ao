@@ -1,0 +1,9 @@
+{
+  "query": "DELETE FROM value_scenario_responses WHERE userId = 1;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute DELETE FROM value_scenario_responses WHERE userId = 1;",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1516
+}
