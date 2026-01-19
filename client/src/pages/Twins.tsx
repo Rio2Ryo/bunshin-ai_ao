@@ -16,6 +16,7 @@ import { PersonalityRadarChart } from "@/components/PersonalityRadarChart";
 import { PersonalityInterview } from "@/components/PersonalityInterview";
 import { MBTIInterview } from "@/components/MBTIInterview";
 import { ValueWaveformChart } from "@/components/ValueWaveformChart";
+import { ValueScenarioInterview } from "@/components/ValueScenarioInterview";
 
 export default function MyTwin() {
   const { data: twin, isLoading, refetch } = trpc.myTwin.get.useQuery();
@@ -618,6 +619,27 @@ export default function MyTwin() {
                   onComplete={() => {
                     refetch();
                     toast.success("MBTI診断が完了しました！");
+                  }}
+                />
+              </CardContent>
+            </Card>
+
+            {/* 価値観シナリオインタビュー */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Target className="h-5 w-5 text-orange-500" />
+                  価値観シナリオインタビュー
+                </CardTitle>
+                <CardDescription>
+                  具体的な状況に対するあなたの考えを教えてください。友達の分身AIがあなたの価値観を評価し、徳波形・地雷波形を動的に生成します。
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ValueScenarioInterview
+                  onComplete={() => {
+                    refetch();
+                    toast.success("価値観シナリオが完了しました！");
                   }}
                 />
               </CardContent>

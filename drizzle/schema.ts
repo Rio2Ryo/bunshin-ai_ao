@@ -396,3 +396,121 @@ export const usageTracking = mysqlTable("usage_tracking", {
 
 export type UsageTracking = typeof usageTracking.$inferSelect;
 export type InsertUsageTracking = typeof usageTracking.$inferInsert;
+
+/**
+ * Value scenario responses - ユーザーの価値観シナリオへの回答
+ * 具体的な状況に対するユーザーの反応を記録
+ */
+export const valueScenarioResponses = mysqlTable("value_scenario_responses", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  twinId: int("twinId").notNull(), // ユーザーの分身AI
+  scenarioId: varchar("scenarioId", { length: 100 }).notNull(), // シナリオの識別子
+  scenarioCategory: varchar("scenarioCategory", { length: 100 }).notNull(), // カテゴリ（災害、ビジネス、人間関係など）
+  scenarioText: text("scenarioText").notNull(), // シナリオの内容
+  userResponse: text("userResponse").notNull(), // ユーザーの回答
+  // AIによる分析結果
+  analysisResult: json("analysisResult").$type<{
+    judgmentScores: {
+      goodEvil: number; // 善悪 (-100～100)
+      likesDislike: number; // 好き嫌い (-100～100)
+      profitLoss: number; // 損得 (-100～100)
+      interest: number; // 利害 (-100～100)
+      pleasurePain: number; // 苦楽 (-100～100)
+      difficulty: number; // 難易 (-100～100)
+      possibility: number; // 可否 (-100～100)
+      comfort: number; // 快不快 (-100～100)
+      rightWrong: number; // 正誤 (-100～100)
+    };
+    virtueIndicators: string[]; // 徳の指標
+    mineIndicators: string[]; // 地雷の指標
+    analysisNotes: string; // 分析メモ
+  }>(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ValueScenarioResponse = typeof valueScenarioResponses.$inferSelect;
+export type InsertValueScenarioResponse = typeof valueScenarioResponses.$inferInsert;
+
+/**
+ * Value evaluations - 他の分身AIによる価値観評価
+ * 複数の模倣人格がユーザーの言動を評価した結果
+ */
+export const valueEvaluations = mysqlTable("value_evaluations", {
+  id: int("id").autoincrement().primaryKey(),
+  targetUserId: int("targetUserId").notNull(), // 評価対象のユーザー
+  targetTwinId: int("targetTwinId").notNull(), // 評価対象の分身AI
+  evaluatorTwinId: int("evaluatorTwinId").notNull(), // 評価した分身AI
+  evaluatorUserId: int("evaluatorUserId").notNull(), // 評価した分身AIの所有者
+  scenarioResponseId: int("scenarioResponseId"), // 評価対象のシナリオ回答（オプション）
+  // 評価結果
+  verdict: mysqlEnum("verdict", ["virtue", "mine", "neutral"]).notNull(), // 徳/地雷/問題なし
+  judgmentScores: json("judgmentScores").$type<{
+    goodEvil: number;
+    likesDislike: number;
+    profitLoss: number;
+    interest: number;
+    pleasurePain: number;
+    difficulty: number;
+    possibility: number;
+    comfort: number;
+    rightWrong: number;
+  }>(),
+  reason: text("reason"), // 評価理由
+  confidence: decimal("confidence", { precision: 5, scale: 2 }), // 評価の確信度 (0-100)
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ValueEvaluation = typeof valueEvaluations.$inferSelect;
+export type InsertValueEvaluation = typeof valueEvaluations.$inferInsert;
+
+/**
+ * Cumulative value waveform - 累積価値観波形
+ * 各ユーザーの徳波形・地雷波形の累積データ
+ */
+export const cumulativeWaveforms = mysqlTable("cumulative_waveforms", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  twinId: int("twinId").notNull(),
+  // 累積スコア
+  totalVirtueCount: int("totalVirtueCount").default(0).notNull(), // 徳評価の累積回数
+  totalMineCount: int("totalMineCount").default(0).notNull(), // 地雷評価の累積回数
+  totalNeutralCount: int("totalNeutralCount").default(0).notNull(), // 問題なし評価の累積回数
+  // 9つの判断基準の累積スコア
+  cumulativeJudgmentScores: json("cumulativeJudgmentScores").$type<{
+    goodEvil: { sum: number; count: number };
+    likesDislike: { sum: number; count: number };
+    profitLoss: { sum: number; count: number };
+    interest: { sum: number; count: number };
+    pleasurePain: { sum: number; count: number };
+    difficulty: { sum: number; count: number };
+    possibility: { sum: number; count: number };
+    comfort: { sum: number; count: number };
+    rightWrong: { sum: number; count: number };
+  }>(),
+  // 評価者ごとの累積データ
+  evaluatorBreakdown: json("evaluatorBreakdown").$type<{
+    [evaluatorTwinId: string]: {
+      evaluatorName: string;
+      virtueCount: number;
+      mineCount: number;
+      neutralCount: number;
+      judgmentScores: {
+        goodEvil: { sum: number; count: number };
+        likesDislike: { sum: number; count: number };
+        profitLoss: { sum: number; count: number };
+        interest: { sum: number; count: number };
+        pleasurePain: { sum: number; count: number };
+        difficulty: { sum: number; count: number };
+        possibility: { sum: number; count: number };
+        comfort: { sum: number; count: number };
+        rightWrong: { sum: number; count: number };
+      };
+    };
+  }>(),
+  lastUpdated: timestamp("lastUpdated").defaultNow().onUpdateNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CumulativeWaveform = typeof cumulativeWaveforms.$inferSelect;
+export type InsertCumulativeWaveform = typeof cumulativeWaveforms.$inferInsert;

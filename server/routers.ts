@@ -28,6 +28,7 @@ import { nanoid } from "nanoid";
 import { notifyOwner } from "./_core/notification";
 import { generatePresentationContent, parseMarkdownToSlides, generateSlideContentFile } from "./services/presentationGenerator";
 import { analyzeBigFiveTraits, analyzeJudgmentThresholds, evaluateValueWaveform, calculatePersonalitySimilarity, calculateAccuracyScore, conductPersonalityInterview, analyzeMBTI, conductMBTIInterview, runIntegratedPersonalityAnalysis, generateSelfWaveform, calculateWaveformSimilarity, calculateVirtueMineCompatibility } from "./services/personalityEvaluator";
+import { conductValueScenarioInterview, getCumulativeWaveform, getScenarioProgress, VALUE_SCENARIOS, SCENARIO_CATEGORIES } from "./services/valueScenarioService";
 import type { BigFiveTraits, JudgmentThresholds, ValueWaveform, MBTIType } from "../drizzle/schema";
 
 export const appRouter = router({
@@ -568,6 +569,62 @@ ${input.rawInput}`,
           judgmentThresholds: result.judgmentThresholds,
           personalitySimilarity,
           accuracyScore
+        };
+      }),
+
+    // 価値観シナリオインタビュー（動的な波形生成）
+    valueScenarioInterview: protectedProcedure
+      .input(z.object({
+        previousMessages: z.array(z.object({
+          role: z.enum(["user", "assistant"]),
+          content: z.string()
+        })),
+        userResponse: z.string().optional()
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+
+        const result = await conductValueScenarioInterview(
+          ctx.user.id,
+          twin.id,
+          input.previousMessages,
+          input.userResponse
+        );
+
+        return result;
+      }),
+
+    // 価値観シナリオの進捗を取得
+    getScenarioProgress: protectedProcedure
+      .query(async ({ ctx }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+
+        return getScenarioProgress(ctx.user.id, twin.id);
+      }),
+
+    // 累積波形を取得
+    getCumulativeWaveform: protectedProcedure
+      .query(async ({ ctx }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+
+        return getCumulativeWaveform(ctx.user.id, twin.id);
+      }),
+
+    // 利用可能なシナリオ一覧を取得
+    getAvailableScenarios: protectedProcedure
+      .query(async () => {
+        return {
+          scenarios: VALUE_SCENARIOS,
+          categories: SCENARIO_CATEGORIES
         };
       }),
   }),
