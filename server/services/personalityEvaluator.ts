@@ -182,8 +182,12 @@ ${description ? `【説明】\n${description}` : ""}
 }
 
 /**
- * 徳波形・地雷波形を生成
- * 他の分身AIの視点から評価を行う
+ * 徳波形・G+(U)・地雷波形・G-(U)を生成
+ * 特許ドキュメントに基づく実装:
+ * - 複数の模倣人格（C1～Cn-1）がユーザーの言動を監視・評価
+ * - 各言動項目について「徳」「地雷」「問題なし」を判定
+ * - 9つの判断基準（善悪、好き嫌い、損得等）に基づく評価
+ * - 評価の累積による波形生成
  */
 export async function evaluateValueWaveform(
   targetTwin: {
@@ -203,37 +207,65 @@ export async function evaluateValueWaveform(
   const evaluations: ValueWaveform["evaluations"] = [];
 
   for (const evaluator of evaluatorTwins) {
+    // 評価者の判断基準をプロンプトに反映
+    const thresholdsInfo = evaluator.judgmentThresholds 
+      ? `
+【あなたの判断基準の閾値】
+- 善悪の判断基準: ${evaluator.judgmentThresholds.goodEvil}/100
+- 好き嫌いの判断基準: ${evaluator.judgmentThresholds.likesDislike}/100
+- 損得の判断基準: ${evaluator.judgmentThresholds.profitLoss}/100
+- 利害の判断基準: ${evaluator.judgmentThresholds.interest}/100
+- 苦楽の判断基準: ${evaluator.judgmentThresholds.pleasurePain}/100
+- 難易の判断基準: ${evaluator.judgmentThresholds.difficulty}/100
+- 可否の判断基準: ${evaluator.judgmentThresholds.possibility}/100
+- 快不快の判断基準: ${evaluator.judgmentThresholds.comfort}/100
+- 正誤の判断基準: ${evaluator.judgmentThresholds.rightWrong}/100`
+      : "";
+
     const prompt = `あなたは「${evaluator.name}」という人物です。
 ${evaluator.personality ? `あなたの性格: ${evaluator.personality}` : ""}
+${thresholdsInfo}
 
-以下の人物「${targetTwin.name}」について、あなたの価値観から評価してください。
+以下の人物「${targetTwin.name}」について、あなたの価値観と判断基準から評価してください。
 
 【${targetTwin.name}の情報】
 ${targetTwin.rawInput || "情報なし"}
 ${targetTwin.personality ? `性格: ${targetTwin.personality}` : ""}
 ${targetTwin.description ? `説明: ${targetTwin.description}` : ""}
 
-【評価基準】
-- 徳（プラス評価）: 感謝できる点、称賛できる点、共感できる点
-- 地雷（マイナス評価）: 受け入れられない点、問題と感じる点、警戒すべき点
+【評価の観点】
+1. 徳（G+）: 感謝できる点、称賛できる点、共感できる点、肯定的な行為
+2. 地雷（G-）: 受け入れられない点、問題と感じる点、警戒すべき点、否定的な行為
 
-あなたの価値観に基づいて、この人物を0-100で評価してください。`;
+【9つの判断基準で評価】
+各基準について-100～100で評価してください（マイナスはネガティブ、プラスはポジティブ）:
+- 善悪: この人の行動は善いか悪いか
+- 好き嫌い: この人を好きになれるか
+- 損得: この人と関わることは得か損か
+- 利害: この人は利益をもたらすか害をもたらすか
+- 苦楽: この人との関係は楽しいか苦しいか
+- 難易: この人とのコミュニケーションは簡単か難しいか
+- 可否: この人との協力は可能か不可能か
+- 快不快: この人との交流は快適か不快か
+- 正誤: この人の考え方は正しいか間違っているか
+
+あなたの価値観に基づいて、この人物を評価してください。`;
 
     const response = await invokeLLM({
       messages: [
-        { role: "system", content: `あなたは「${evaluator.name}」として、他者を評価します。` },
+        { role: "system", content: `あなたは「${evaluator.name}」として、他者を評価します。あなた独自の価値観・判断基準に基づいて評価してください。` },
         { role: "user", content: prompt }
       ],
       response_format: {
         type: "json_schema",
         json_schema: {
-          name: "value_evaluation",
+          name: "value_waveform_evaluation",
           strict: true,
           schema: {
             type: "object",
             properties: {
-              virtueScore: { type: "number", description: "徳スコア (0-100)" },
-              mineScore: { type: "number", description: "地雷スコア (0-100)" },
+              virtueScore: { type: "number", description: "徳スコア G+(U) (0-100)" },
+              mineScore: { type: "number", description: "地雷スコア G-(U) (0-100)" },
               virtueReasons: { 
                 type: "array", 
                 items: { type: "string" },
@@ -243,26 +275,67 @@ ${targetTwin.description ? `説明: ${targetTwin.description}` : ""}
                 type: "array", 
                 items: { type: "string" },
                 description: "地雷と評価した理由（3つ程度）" 
+              },
+              judgmentScores: {
+                type: "object",
+                properties: {
+                  goodEvil: { type: "number", description: "善悪 (-100～100)" },
+                  likesDislike: { type: "number", description: "好き嫌い (-100～100)" },
+                  profitLoss: { type: "number", description: "損得 (-100～100)" },
+                  interest: { type: "number", description: "利害 (-100～100)" },
+                  pleasurePain: { type: "number", description: "苦楽 (-100～100)" },
+                  difficulty: { type: "number", description: "難易 (-100～100)" },
+                  possibility: { type: "number", description: "可否 (-100～100)" },
+                  comfort: { type: "number", description: "快不快 (-100～100)" },
+                  rightWrong: { type: "number", description: "正誤 (-100～100)" }
+                },
+                required: ["goodEvil", "likesDislike", "profitLoss", "interest", "pleasurePain", "difficulty", "possibility", "comfort", "rightWrong"],
+                additionalProperties: false,
+                description: "9つの判断基準に基づく評価"
               }
             },
-            required: ["virtueScore", "mineScore", "virtueReasons", "mineReasons"],
+            required: ["virtueScore", "mineScore", "virtueReasons", "mineReasons", "judgmentScores"],
             additionalProperties: false
           }
         }
       }
     });
 
-    const rawContent3 = response.choices[0]?.message?.content;
+    // エラーレスポンスをチェック
+    if ('error' in response) {
+      console.error("LLM API Error (waveform):", response.error);
+      continue; // エラーがあっても他の評価者の評価を続行
+    }
+
+    const rawContent3 = response.choices?.[0]?.message?.content;
     const content = typeof rawContent3 === 'string' ? rawContent3 : JSON.stringify(rawContent3);
     if (content) {
-      const result = JSON.parse(content);
-      evaluations.push({
-        evaluatorId: evaluator.id,
-        evaluatorName: evaluator.name,
-        virtueScore: Math.min(100, Math.max(0, result.virtueScore)),
-        mineScore: Math.min(100, Math.max(0, result.mineScore)),
-        reasons: [...(result.virtueReasons || []), ...(result.mineReasons || [])]
-      });
+      try {
+        const result = JSON.parse(content);
+        const clamp = (val: number, min: number, max: number) => Math.min(max, Math.max(min, val));
+        
+        evaluations.push({
+          evaluatorId: evaluator.id,
+          evaluatorName: evaluator.name,
+          virtueScore: clamp(result.virtueScore, 0, 100),
+          mineScore: clamp(result.mineScore, 0, 100),
+          virtueReasons: result.virtueReasons || [],
+          mineReasons: result.mineReasons || [],
+          judgmentScores: {
+            goodEvil: clamp(result.judgmentScores?.goodEvil ?? 0, -100, 100),
+            likesDislike: clamp(result.judgmentScores?.likesDislike ?? 0, -100, 100),
+            profitLoss: clamp(result.judgmentScores?.profitLoss ?? 0, -100, 100),
+            interest: clamp(result.judgmentScores?.interest ?? 0, -100, 100),
+            pleasurePain: clamp(result.judgmentScores?.pleasurePain ?? 0, -100, 100),
+            difficulty: clamp(result.judgmentScores?.difficulty ?? 0, -100, 100),
+            possibility: clamp(result.judgmentScores?.possibility ?? 0, -100, 100),
+            comfort: clamp(result.judgmentScores?.comfort ?? 0, -100, 100),
+            rightWrong: clamp(result.judgmentScores?.rightWrong ?? 0, -100, 100)
+          }
+        });
+      } catch (e) {
+        console.error("Failed to parse evaluation result:", e);
+      }
     }
   }
 
@@ -274,16 +347,39 @@ ${targetTwin.description ? `説明: ${targetTwin.description}` : ""}
     ? evaluations.reduce((sum, e) => sum + e.mineScore, 0) / evaluations.length
     : 0;
 
-  const waveform: ValueWaveform = {
+  // 9つの判断基準の平均スコアを計算
+  const averageJudgmentScores = evaluations.length > 0 ? {
+    goodEvil: evaluations.reduce((sum, e) => sum + e.judgmentScores.goodEvil, 0) / evaluations.length,
+    likesDislike: evaluations.reduce((sum, e) => sum + e.judgmentScores.likesDislike, 0) / evaluations.length,
+    profitLoss: evaluations.reduce((sum, e) => sum + e.judgmentScores.profitLoss, 0) / evaluations.length,
+    interest: evaluations.reduce((sum, e) => sum + e.judgmentScores.interest, 0) / evaluations.length,
+    pleasurePain: evaluations.reduce((sum, e) => sum + e.judgmentScores.pleasurePain, 0) / evaluations.length,
+    difficulty: evaluations.reduce((sum, e) => sum + e.judgmentScores.difficulty, 0) / evaluations.length,
+    possibility: evaluations.reduce((sum, e) => sum + e.judgmentScores.possibility, 0) / evaluations.length,
+    comfort: evaluations.reduce((sum, e) => sum + e.judgmentScores.comfort, 0) / evaluations.length,
+    rightWrong: evaluations.reduce((sum, e) => sum + e.judgmentScores.rightWrong, 0) / evaluations.length
+  } : undefined;
+
+  // 徳波形と地雷波形を別々に生成
+  const virtueWaveform: ValueWaveform = {
     evaluations,
     totalVirtueScore,
     totalMineScore,
+    averageJudgmentScores,
+    lastUpdated: new Date().toISOString()
+  };
+
+  const mineWaveform: ValueWaveform = {
+    evaluations,
+    totalVirtueScore,
+    totalMineScore,
+    averageJudgmentScores,
     lastUpdated: new Date().toISOString()
   };
 
   return {
-    virtueWaveform: waveform,
-    mineWaveform: waveform
+    virtueWaveform,
+    mineWaveform
   };
 }
 

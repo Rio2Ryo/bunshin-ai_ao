@@ -85,7 +85,7 @@ export interface MBTIType {
   careerSuggestions: string[];
 }
 
-// 徳波形・地雷波形の型定義
+// 徳波形・地雷波形の型定義（特許ドキュメント準拠）
 export interface ValueWaveform {
   // 各評価者（他の分身AI）からの評価結果
   evaluations: {
@@ -93,11 +93,36 @@ export interface ValueWaveform {
     evaluatorName: string; // 評価した分身AIの名前
     virtueScore: number; // 徳スコア (0-100)
     mineScore: number; // 地雷スコア (0-100)
-    reasons: string[]; // 評価理由
+    virtueReasons: string[]; // 徳と評価した理由
+    mineReasons: string[]; // 地雷と評価した理由
+    // 9つの判断基準に基づく評価
+    judgmentScores: {
+      goodEvil: number; // 善悪 (-100～100)
+      likesDislike: number; // 好き嫌い (-100～100)
+      profitLoss: number; // 損得 (-100～100)
+      interest: number; // 利害 (-100～100)
+      pleasurePain: number; // 苦楽 (-100～100)
+      difficulty: number; // 難易 (-100～100)
+      possibility: number; // 可否 (-100～100)
+      comfort: number; // 快不快 (-100～100)
+      rightWrong: number; // 正誤 (-100～100)
+    };
   }[];
   // 総合スコア
   totalVirtueScore: number;
   totalMineScore: number;
+  // 9つの判断基準の平均スコア
+  averageJudgmentScores?: {
+    goodEvil: number;
+    likesDislike: number;
+    profitLoss: number;
+    interest: number;
+    pleasurePain: number;
+    difficulty: number;
+    possibility: number;
+    comfort: number;
+    rightWrong: number;
+  };
   lastUpdated: string; // ISO date string
 }
 

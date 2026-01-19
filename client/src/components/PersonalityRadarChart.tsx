@@ -12,41 +12,17 @@ interface JudgmentThresholds {
   goodEvil: number;
   likesDislike: number;
   profitLoss: number;
-  interestConflict: number;
+  interest: number;
   pleasurePain: number;
-  difficultyEase: number;
-  possibilityImpossibility: number;
-  comfortDiscomfort: number;
+  difficulty: number;
+  possibility: number;
+  comfort: number;
   rightWrong: number;
-}
-
-interface VirtueWaveform {
-  gratitude: number;
-  praise: number;
-  encouragement: number;
-  cooperation: number;
-  honesty: number;
-  empathy: number;
-  generosity: number;
-  patience: number;
-}
-
-interface MineWaveform {
-  criticism: number;
-  negativity: number;
-  selfishness: number;
-  dishonesty: number;
-  impatience: number;
-  indifference: number;
-  arrogance: number;
-  hostility: number;
 }
 
 interface PersonalityRadarChartProps {
   bigFiveTraits?: BigFiveTraits | null;
   judgmentThresholds?: JudgmentThresholds | null;
-  virtueWaveform?: VirtueWaveform | null;
-  mineWaveform?: MineWaveform | null;
   size?: number;
   showLabels?: boolean;
 }
@@ -173,8 +149,6 @@ function RadarChart({
 export function PersonalityRadarChart({
   bigFiveTraits,
   judgmentThresholds,
-  virtueWaveform,
-  mineWaveform,
   size = 200
 }: PersonalityRadarChartProps) {
   return (
@@ -204,55 +178,15 @@ export function PersonalityRadarChart({
             judgmentThresholds.goodEvil,
             judgmentThresholds.likesDislike,
             judgmentThresholds.profitLoss,
-            judgmentThresholds.interestConflict,
+            judgmentThresholds.interest,
             judgmentThresholds.pleasurePain,
-            judgmentThresholds.difficultyEase,
-            judgmentThresholds.possibilityImpossibility,
-            judgmentThresholds.comfortDiscomfort,
+            judgmentThresholds.difficulty,
+            judgmentThresholds.possibility,
+            judgmentThresholds.comfort,
             judgmentThresholds.rightWrong
           ]}
           labels={["善悪", "好嫌", "損得", "利害", "苦楽", "難易", "可否", "快不快", "正誤"]}
           color="#10b981"
-          size={size}
-        />
-      )}
-
-      {/* 徳波形 */}
-      {virtueWaveform && (
-        <RadarChart
-          title="徳波形（G+）"
-          data={[
-            virtueWaveform.gratitude,
-            virtueWaveform.praise,
-            virtueWaveform.encouragement,
-            virtueWaveform.cooperation,
-            virtueWaveform.honesty,
-            virtueWaveform.empathy,
-            virtueWaveform.generosity,
-            virtueWaveform.patience
-          ]}
-          labels={["感謝", "称賛", "励まし", "協力", "誠実", "共感", "寛容", "忍耐"]}
-          color="#22c55e"
-          size={size}
-        />
-      )}
-
-      {/* 地雷波形 */}
-      {mineWaveform && (
-        <RadarChart
-          title="地雷波形（G-）"
-          data={[
-            mineWaveform.criticism,
-            mineWaveform.negativity,
-            mineWaveform.selfishness,
-            mineWaveform.dishonesty,
-            mineWaveform.impatience,
-            mineWaveform.indifference,
-            mineWaveform.arrogance,
-            mineWaveform.hostility
-          ]}
-          labels={["批判", "否定", "利己", "不誠実", "短気", "無関心", "傲慢", "敵意"]}
-          color="#ef4444"
           size={size}
         />
       )}

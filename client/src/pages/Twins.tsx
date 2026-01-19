@@ -15,6 +15,7 @@ import { Progress } from "@/components/ui/progress";
 import { PersonalityRadarChart } from "@/components/PersonalityRadarChart";
 import { PersonalityInterview } from "@/components/PersonalityInterview";
 import { MBTIInterview } from "@/components/MBTIInterview";
+import { ValueWaveformChart } from "@/components/ValueWaveformChart";
 
 export default function MyTwin() {
   const { data: twin, isLoading, refetch } = trpc.myTwin.get.useQuery();
@@ -22,8 +23,23 @@ export default function MyTwin() {
   const updateMutation = trpc.myTwin.update.useMutation();
   const updatePublicMutation = trpc.myTwin.updatePublicSettings.useMutation();
   const runFullAnalysisMutation = trpc.myTwin.runFullAnalysis.useMutation();
+  const evaluateWaveformMutation = trpc.myTwin.evaluateWaveform.useMutation();
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isGeneratingWaveform, setIsGeneratingWaveform] = useState(false);
+
+  const handleGenerateWaveform = async () => {
+    setIsGeneratingWaveform(true);
+    try {
+      await evaluateWaveformMutation.mutateAsync();
+      toast.success("徳波形・地雷波形を生成しました");
+      refetch();
+    } catch (error: any) {
+      toast.error(error.message || "波形の生成に失敗しました");
+    } finally {
+      setIsGeneratingWaveform(false);
+    }
+  };
 
   const handleRunAnalysis = async () => {
     setIsAnalyzing(true);
@@ -533,12 +549,12 @@ export default function MyTwin() {
             </Card>
 
             {/* レーダーチャート表示 */}
-            {(twin.bigFiveTraits || twin.judgmentThresholds || twin.virtueWaveform || twin.mineWaveform) && (
+            {(twin.bigFiveTraits || twin.judgmentThresholds) && (
               <Card className="lg:col-span-2">
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <BarChart3 className="h-5 w-5" />
-                    人格波形チャート
+                    人格レーダーチャート
                   </CardTitle>
                   <CardDescription>
                     あなたの分身AIの性格特性をレーダーチャートで可視化
@@ -547,14 +563,23 @@ export default function MyTwin() {
                 <CardContent>
                   <PersonalityRadarChart
                     bigFiveTraits={twin.bigFiveTraits as { openness: number; conscientiousness: number; extraversion: number; agreeableness: number; neuroticism: number } | null}
-                    judgmentThresholds={twin.judgmentThresholds as { goodEvil: number; likesDislike: number; profitLoss: number; interestConflict: number; pleasurePain: number; difficultyEase: number; possibilityImpossibility: number; comfortDiscomfort: number; rightWrong: number } | null}
-                    virtueWaveform={twin.virtueWaveform as { gratitude: number; praise: number; encouragement: number; cooperation: number; honesty: number; empathy: number; generosity: number; patience: number } | null}
-                    mineWaveform={twin.mineWaveform as { criticism: number; negativity: number; selfishness: number; dishonesty: number; impatience: number; indifference: number; arrogance: number; hostility: number } | null}
+                    judgmentThresholds={twin.judgmentThresholds as { goodEvil: number; likesDislike: number; profitLoss: number; interest: number; pleasurePain: number; difficulty: number; possibility: number; comfort: number; rightWrong: number } | null}
                     size={220}
                   />
                 </CardContent>
               </Card>
             )}
+
+            {/* 徳波形・地雷波形表示（特許ドキュメント準拠） */}
+            <div className="lg:col-span-2">
+              <ValueWaveformChart
+                virtueWaveform={twin.virtueWaveform as any}
+                mineWaveform={twin.mineWaveform as any}
+                showDetails={true}
+                onGenerate={handleGenerateWaveform}
+                isGenerating={isGeneratingWaveform}
+              />
+            </div>
 
             {/* ビッグ・ファイブ性格診断インタビュー */}
             <Card>
