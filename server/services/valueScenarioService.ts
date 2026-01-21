@@ -710,7 +710,7 @@ export async function updateCumulativeWaveform(userId: number, twinId: number): 
   }
 }
 
-// 既存のシナリオ回答に対して評価を再実行する
+// 既存のシナリオ回答に対して評価を再実行する（ランダム5人）
 export async function reevaluateExistingResponses(
   userId: number,
   twinId: number
@@ -761,6 +761,109 @@ export async function reevaluateExistingResponses(
   return {
     evaluatedCount,
     totalResponses: existingResponses.length,
+  };
+}
+
+// 既存のシナリオ回答に対して全ての模倣AIが評価を実行する
+export async function evaluateByAllTwins(
+  userId: number,
+  twinId: number
+): Promise<{
+  evaluatedCount: number;
+  totalResponses: number;
+  totalEvaluators: number;
+  totalEvaluations: number;
+}> {
+  // 既存の回答を取得
+  const existingResponses = await (await db())
+    .select()
+    .from(valueScenarioResponses)
+    .where(and(
+      eq(valueScenarioResponses.userId, userId),
+      eq(valueScenarioResponses.twinId, twinId)
+    ));
+
+  if (existingResponses.length === 0) {
+    return { evaluatedCount: 0, totalResponses: 0, totalEvaluators: 0, totalEvaluations: 0 };
+  }
+
+  // 既存の評価を削除（再評価のため）
+  await (await db())
+    .delete(valueEvaluations)
+    .where(and(
+      eq(valueEvaluations.targetUserId, userId),
+      eq(valueEvaluations.targetTwinId, twinId)
+    ));
+
+  // システム内の全分身AIを取得（性格が設定されているもの）
+  const allTwins = await (await db())
+    .select({
+      id: digitalTwins.id,
+      userId: digitalTwins.userId,
+      name: digitalTwins.name,
+      personality: digitalTwins.personality,
+    })
+    .from(digitalTwins)
+    .where(sql`${digitalTwins.personality} IS NOT NULL`);
+
+  if (allTwins.length === 0) {
+    return { evaluatedCount: 0, totalResponses: existingResponses.length, totalEvaluators: 0, totalEvaluations: 0 };
+  }
+
+  console.log(`[evaluateByAllTwins] Starting evaluation with ${allTwins.length} evaluators for ${existingResponses.length} responses`);
+
+  // 各回答に対して全ての模倣AIが評価を実行
+  let evaluatedCount = 0;
+  let totalEvaluations = 0;
+
+  for (const response of existingResponses) {
+    console.log(`[evaluateByAllTwins] Evaluating response ${response.id}: ${response.scenarioId}`);
+    
+    for (const twin of allTwins) {
+      if (!twin.personality) continue;
+
+      try {
+        console.log(`[evaluateByAllTwins] Evaluator: ${twin.name} (ID: ${twin.id})`);
+        
+        const evaluation = await evaluateByTwin(
+          twin.id,
+          twin.name,
+          twin.personality,
+          response.userResponse,
+          response.scenarioText
+        );
+
+        // 評価を保存
+        await (await db()).insert(valueEvaluations).values({
+          targetUserId: userId,
+          targetTwinId: twinId,
+          evaluatorTwinId: twin.id,
+          evaluatorUserId: twin.userId,
+          verdict: evaluation.verdict,
+          judgmentScores: evaluation.judgmentScores,
+          reason: evaluation.reason,
+          confidence: evaluation.confidence.toString(),
+        });
+
+        totalEvaluations++;
+        console.log(`[evaluateByAllTwins] ${twin.name} evaluated as: ${evaluation.verdict}`);
+      } catch (error) {
+        console.error(`[evaluateByAllTwins] Error evaluating by ${twin.name}:`, error);
+      }
+    }
+    evaluatedCount++;
+  }
+
+  // 累積波形を更新
+  await updateCumulativeWaveform(userId, twinId);
+
+  console.log(`[evaluateByAllTwins] Completed: ${evaluatedCount} responses, ${totalEvaluations} evaluations`);
+
+  return {
+    evaluatedCount,
+    totalResponses: existingResponses.length,
+    totalEvaluators: allTwins.length,
+    totalEvaluations,
   };
 }
 

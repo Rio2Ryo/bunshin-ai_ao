@@ -1,0 +1,82 @@
+{
+  "query": "SELECT \n  d.id,\n  d.name,\n  d.mbtiType->'$.type' as mbti,\n  LEFT(d.personality, 30) as personality_preview\nFROM digital_twins d\nWHERE d.personality IS NOT NULL\nORDER BY d.id;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT \n  d.id,\n  d.name,\n  d.mbtiType->'$.type' as mbti,\n  LEFT(d.personality, 30) as personality_preview\nFROM digital_twins d\nWHERE d.personality IS NOT NULL\nORDER BY d.id;",
+  "rows": [
+    {
+      "id": "1",
+      "name": "カタオモイ松浦",
+      "mbti": "\"INTP\"",
+      "personality_preview": "最新のデジタル名刺技術に精通し、顧客のビジネスニーズを深く理"
+    },
+    {
+      "id": "3",
+      "name": "障害者松浦",
+      "mbti": "NULL",
+      "personality_preview": "変革推進力と教育スキルに優れており、特に障害を持つ人々の専門"
+    },
+    {
+      "id": "30001",
+      "name": "田中太郎",
+      "mbti": "\"INTJ\"",
+      "personality_preview": "論理的で分析力が高いINTJタイプ。データに基づいた判断を好"
+    },
+    {
+      "id": "30002",
+      "name": "佐藤花子",
+      "mbti": "\"ENFP\"",
+      "personality_preview": "共感力が高く創造的なENFPタイプ。人の気持ちを理解すること"
+    },
+    {
+      "id": "30003",
+      "name": "鈴木一郎",
+      "mbti": "\"ENTJ\"",
+      "personality_preview": "リーダーシップと決断力が高いENTJタイプ。目標達成に向けて"
+    },
+    {
+      "id": "30004",
+      "name": "高橋美咲",
+      "mbti": "\"ISTJ\"",
+      "personality_preview": "細部に注意を払い完璧主義的なISTJタイプ。責任感が強く、約"
+    },
+    {
+      "id": "30005",
+      "name": "伊藤健太",
+      "mbti": "\"ENTP\"",
+      "personality_preview": "好奇心旺盛で挑戦を楽しむENTPタイプ。新しいことに挑戦する"
+    },
+    {
+      "id": "30006",
+      "name": "渡辺愛",
+      "mbti": "\"ISFJ\"",
+      "personality_preview": "思いやりがあり献身的なISFJタイプ。他者のために尽くすこと"
+    },
+    {
+      "id": "30007",
+      "name": "山本大輔",
+      "mbti": "\"INFP\"",
+      "personality_preview": "独立心が強く内省的なINFPタイプ。深く考えることが好きで、"
+    },
+    {
+      "id": "30008",
+      "name": "中村さくら",
+      "mbti": "\"ESFP\"",
+      "personality_preview": "社交的でエネルギッシュなESFPタイプ。人を楽しませることが"
+    },
+    {
+      "id": "30009",
+      "name": "小林誠",
+      "mbti": "\"INTP\"",
+      "personality_preview": "分析的で論理的なINTPタイプ。問題の本質を見抜く力があり、"
+    },
+    {
+      "id": "30010",
+      "name": "加藤由美",
+      "mbti": "\"ESFJ\"",
+      "personality_preview": "調和と協調を大切にするESFJタイプ。グループの一体感を重視"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\tmbti\tpersonality_preview\n1\tカタオモイ松浦\t\"INTP\"\t最新のデジタル名刺技術に精通し、顧客のビジネスニーズを深く理\n3\t障害者松浦\tNULL\t変革推進力と教育スキルに優れており、特に障害を持つ人々の専門\n30001\t田中太郎\t\"INTJ\"\t論理的で分析力が高いINTJタイプ。データに基づいた判断を好\n30002\t佐藤花子\t\"ENFP\"\t共感力が高く創造的なENFPタイプ。人の気持ちを理解すること\n30003\t鈴木一郎\t\"ENTJ\"\tリーダーシップと決断力が高いENTJタイプ。目標達成に向けて\n30004\t高橋美咲\t\"ISTJ\"\t細部に注意を払い完璧主義的なISTJタイプ。責任感が強く、約\n30005\t伊藤健太\t\"ENTP\"\t好奇心旺盛で挑戦を楽しむENTPタイプ。新しいことに挑戦する\n30006\t渡辺愛\t\"ISFJ\"\t思いやりがあり献身的なISFJタイプ。他者のために尽くすこと\n30007\t山本大輔\t\"INFP\"\t独立心が強く内省的なINFPタイプ。深く考えることが好きで、\n30008\t中村さくら\t\"ESFP\"\t社交的でエネルギッシュなESFPタイプ。人を楽しませることが\n30009\t小林誠\t\"INTP\"\t分析的で論理的なINTPタイプ。問題の本質を見抜く力があり、\n30010\t加藤由美\t\"ESFJ\"\t調和と協調を大切にするESFJタイプ。グループの一体感を重視\n",
+  "stderr": "",
+  "execution_time_ms": 1527
+}

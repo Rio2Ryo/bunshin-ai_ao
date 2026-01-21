@@ -1,0 +1,70 @@
+{
+  "query": "SELECT \n  d.name,\n  d.mbtiType->'$.type' as mbti,\n  d.publicBio,\n  LEFT(d.personality, 50) as personality_preview\nFROM digital_twins d\nJOIN users u ON d.userId = u.id\nWHERE u.openId LIKE 'test_user_%'\nORDER BY d.id;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT \n  d.name,\n  d.mbtiType->'$.type' as mbti,\n  d.publicBio,\n  LEFT(d.personality, 50) as personality_preview\nFROM digital_twins d\nJOIN users u ON d.userId = u.id\nWHERE u.openId LIKE 'test_user_%'\nORDER BY d.id;",
+  "rows": [
+    {
+      "name": "田中太郎",
+      "mbti": "\"INTJ\"",
+      "publicBio": "論理的思考が得意なエンジニア",
+      "personality_preview": "論理的で分析力が高いINTJタイプ。データに基づいた判断を好み、感情よりも事実を重視する。新しい技術"
+    },
+    {
+      "name": "佐藤花子",
+      "mbti": "\"ENFP\"",
+      "publicBio": "共感力の高いクリエイティブデザイナー",
+      "personality_preview": "共感力が高く創造的なENFPタイプ。人の気持ちを理解することが得意で、芸術的なセンスがある。美しいも"
+    },
+    {
+      "name": "鈴木一郎",
+      "mbti": "\"ENTJ\"",
+      "publicBio": "目標達成型の営業リーダー",
+      "personality_preview": "リーダーシップと決断力が高いENTJタイプ。目標達成に向けて粘り強く取り組み、チームを率いる力がある"
+    },
+    {
+      "name": "高橋美咲",
+      "mbti": "\"ISTJ\"",
+      "publicBio": "正確さを重視する経理のプロ",
+      "personality_preview": "細部に注意を払い完璧主義的なISTJタイプ。責任感が強く、約束を必ず守る。慎重で計画的に物事を進め、"
+    },
+    {
+      "name": "伊藤健太",
+      "mbti": "\"ENTP\"",
+      "publicBio": "挑戦を楽しむスタートアップ起業家",
+      "personality_preview": "好奇心旺盛で挑戦を楽しむENTPタイプ。新しいことに挑戦するのが好きで、柔軟な思考を持つ。変化を楽し"
+    },
+    {
+      "name": "渡辺愛",
+      "mbti": "\"ISFJ\"",
+      "publicBio": "思いやりのある看護師",
+      "personality_preview": "思いやりがあり献身的なISFJタイプ。他者のために尽くすことに喜びを感じ、穏やかで争いを避ける。直感"
+    },
+    {
+      "name": "山本大輔",
+      "mbti": "\"INFP\"",
+      "publicBio": "内省的なフリーランスライター",
+      "personality_preview": "独立心が強く内省的なINFPタイプ。深く考えることが好きで、哲学的な議論を楽しむ。自己成長を重視し、"
+    },
+    {
+      "name": "中村さくら",
+      "mbti": "\"ESFP\"",
+      "publicBio": "エネルギッシュなイベントプランナー",
+      "personality_preview": "社交的でエネルギッシュなESFPタイプ。人を楽しませることが好きで、今この瞬間を大切にする。行動力が"
+    },
+    {
+      "name": "小林誠",
+      "mbti": "\"INTP\"",
+      "publicBio": "分析力の高いデータサイエンティスト",
+      "personality_preview": "分析的で論理的なINTPタイプ。問題の本質を見抜く力があり、独立した思考を持つ。効率を重視し、知識を"
+    },
+    {
+      "name": "加藤由美",
+      "mbti": "\"ESFJ\"",
+      "publicBio": "調和を重視する人事のプロ",
+      "personality_preview": "調和と協調を大切にするESFJタイプ。グループの一体感を重視し、忠実で信頼できる。伝統的な価値観を持"
+    }
+  ],
+  "messages": [],
+  "stdout": "name\tmbti\tpublicBio\tpersonality_preview\n田中太郎\t\"INTJ\"\t論理的思考が得意なエンジニア\t論理的で分析力が高いINTJタイプ。データに基づいた判断を好み、感情よりも事実を重視する。新しい技術\n佐藤花子\t\"ENFP\"\t共感力の高いクリエイティブデザイナー\t共感力が高く創造的なENFPタイプ。人の気持ちを理解することが得意で、芸術的なセンスがある。美しいも\n鈴木一郎\t\"ENTJ\"\t目標達成型の営業リーダー\tリーダーシップと決断力が高いENTJタイプ。目標達成に向けて粘り強く取り組み、チームを率いる力がある\n高橋美咲\t\"ISTJ\"\t正確さを重視する経理のプロ\t細部に注意を払い完璧主義的なISTJタイプ。責任感が強く、約束を必ず守る。慎重で計画的に物事を進め、\n伊藤健太\t\"ENTP\"\t挑戦を楽しむスタートアップ起業家\t好奇心旺盛で挑戦を楽しむENTPタイプ。新しいことに挑戦するのが好きで、柔軟な思考を持つ。変化を楽し\n渡辺愛\t\"ISFJ\"\t思いやりのある看護師\t思いやりがあり献身的なISFJタイプ。他者のために尽くすことに喜びを感じ、穏やかで争いを避ける。直感\n山本大輔\t\"INFP\"\t内省的なフリーランスライター\t独立心が強く内省的なINFPタイプ。深く考えることが好きで、哲学的な議論を楽しむ。自己成長を重視し、\n中村さくら\t\"ESFP\"\tエネルギッシュなイベントプランナー\t社交的でエネルギッシュなESFPタイプ。人を楽しませることが好きで、今この瞬間を大切にする。行動力が\n小林誠\t\"INTP\"\t分析力の高いデータサイエンティスト\t分析的で論理的なINTPタイプ。問題の本質を見抜く力があり、独立した思考を持つ。効率を重視し、知識を\n加藤由美\t\"ESFJ\"\t調和を重視する人事のプロ\t調和と協調を大切にするESFJタイプ。グループの一体感を重視し、忠実で信頼できる。伝統的な価値観を持\n",
+  "stderr": "",
+  "execution_time_ms": 1498
+}

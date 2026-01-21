@@ -1,0 +1,14 @@
+{
+  "query": "SELECT COUNT(*) as total, COUNT(DISTINCT evaluatorTwinId) as evaluators FROM value_evaluations;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT COUNT(*) as total, COUNT(DISTINCT evaluatorTwinId) as evaluators FROM value_evaluations;",
+  "rows": [
+    {
+      "total": "72",
+      "evaluators": "12"
+    }
+  ],
+  "messages": [],
+  "stdout": "total\tevaluators\n72\t12\n",
+  "stderr": "",
+  "execution_time_ms": 1507
+}

@@ -1,0 +1,16 @@
+{
+  "query": "SELECT \n  (SELECT COUNT(*) FROM value_scenario_responses) as total_responses,\n  (SELECT COUNT(*) FROM value_evaluations) as total_evaluations,\n  (SELECT COUNT(*) FROM cumulative_waveforms) as total_waveforms,\n  (SELECT COUNT(*) FROM digital_twins WHERE personality IS NOT NULL) as total_twins_with_personality;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT \n  (SELECT COUNT(*) FROM value_scenario_responses) as total_responses,\n  (SELECT COUNT(*) FROM value_evaluations) as total_evaluations,\n  (SELECT COUNT(*) FROM cumulative_waveforms) as total_waveforms,\n  (SELECT COUNT(*) FROM digital_twins WHERE personality IS NOT NULL) as total_twins_with_personality;",
+  "rows": [
+    {
+      "total_responses": "6",
+      "total_evaluations": "12",
+      "total_waveforms": "1",
+      "total_twins_with_personality": "12"
+    }
+  ],
+  "messages": [],
+  "stdout": "total_responses\ttotal_evaluations\ttotal_waveforms\ttotal_twins_with_personality\n6\t12\t1\t12\n",
+  "stderr": "",
+  "execution_time_ms": 1527
+}

@@ -28,7 +28,7 @@ import { nanoid } from "nanoid";
 import { notifyOwner } from "./_core/notification";
 import { generatePresentationContent, parseMarkdownToSlides, generateSlideContentFile } from "./services/presentationGenerator";
 import { analyzeBigFiveTraits, analyzeJudgmentThresholds, evaluateValueWaveform, calculatePersonalitySimilarity, calculateAccuracyScore, conductPersonalityInterview, analyzeMBTI, conductMBTIInterview, runIntegratedPersonalityAnalysis, generateSelfWaveform, calculateWaveformSimilarity, calculateVirtueMineCompatibility } from "./services/personalityEvaluator";
-import { conductValueScenarioInterview, getCumulativeWaveform, getScenarioProgress, VALUE_SCENARIOS, SCENARIO_CATEGORIES, evaluateChatMessage, reevaluateExistingResponses, updateCumulativeWaveform } from "./services/valueScenarioService";
+import { conductValueScenarioInterview, getCumulativeWaveform, getScenarioProgress, VALUE_SCENARIOS, SCENARIO_CATEGORIES, evaluateChatMessage, reevaluateExistingResponses, updateCumulativeWaveform, evaluateByAllTwins } from "./services/valueScenarioService";
 import type { BigFiveTraits, JudgmentThresholds, ValueWaveform, MBTIType } from "../drizzle/schema";
 
 export const appRouter = router({
@@ -424,6 +424,26 @@ ${input.rawInput}`,
 
         await updateCumulativeWaveform(ctx.user.id, twin.id);
         return { success: true };
+      }),
+
+    // 全ての模倣AIによる評価を実行して波形を構築
+    evaluateByAllTwins: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+
+        // 全ての模倣AIによる評価を実行
+        const result = await evaluateByAllTwins(ctx.user.id, twin.id);
+
+        return {
+          success: true,
+          evaluatedCount: result.evaluatedCount,
+          totalResponses: result.totalResponses,
+          totalEvaluators: result.totalEvaluators,
+          totalEvaluations: result.totalEvaluations,
+        };
       }),
 
     // 分身AIの精度スコアを計算

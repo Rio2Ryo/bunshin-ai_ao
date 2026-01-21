@@ -1,0 +1,58 @@
+{
+  "query": "SELECT \n  vsr.id,\n  vsr.userId,\n  vsr.twinId,\n  vsr.scenarioId,\n  vsr.userResponse,\n  u.name as user_name\nFROM value_scenario_responses vsr\nJOIN users u ON vsr.userId = u.id\nORDER BY vsr.id;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT \n  vsr.id,\n  vsr.userId,\n  vsr.twinId,\n  vsr.scenarioId,\n  vsr.userResponse,\n  u.name as user_name\nFROM value_scenario_responses vsr\nJOIN users u ON vsr.userId = u.id\nORDER BY vsr.id;",
+  "rows": [
+    {
+      "id": "30001",
+      "userId": "1",
+      "twinId": "1",
+      "scenarioId": "disaster_volunteer",
+      "userResponse": "いかない。無理してボランティアはやるものではないと思っています。あと必ずしも必要かどうかは現地の人の声とかにも耳を傾けたい",
+      "user_name": "共通用GIFT"
+    },
+    {
+      "id": "30002",
+      "userId": "1",
+      "twinId": "1",
+      "scenarioId": "disaster_donation",
+      "userResponse": "余裕がないときに募金はできない",
+      "user_name": "共通用GIFT"
+    },
+    {
+      "id": "30003",
+      "userId": "1",
+      "twinId": "1",
+      "scenarioId": "disaster_help_stranger",
+      "userResponse": "その人のヤバさによる。めっちゃヤバそうならなにかする",
+      "user_name": "共通用GIFT"
+    },
+    {
+      "id": "30004",
+      "userId": "1",
+      "twinId": "1",
+      "scenarioId": "business_overtime",
+      "userResponse": "明日の早朝でもよいか交渉する。大事な用事があるので",
+      "user_name": "共通用GIFT"
+    },
+    {
+      "id": "30005",
+      "userId": "1",
+      "twinId": "1",
+      "scenarioId": "business_competitor",
+      "userResponse": "お守りとして何処かに封印しておく",
+      "user_name": "共通用GIFT"
+    },
+    {
+      "id": "30006",
+      "userId": "1",
+      "twinId": "1",
+      "scenarioId": "business_whistleblower",
+      "userResponse": "辞める準備をする。",
+      "user_name": "共通用GIFT"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tuserId\ttwinId\tscenarioId\tuserResponse\tuser_name\n30001\t1\t1\tdisaster_volunteer\tいかない。無理してボランティアはやるものではないと思っています。あと必ずしも必要かどうかは現地の人の声とかにも耳を傾けたい\t共通用GIFT\n30002\t1\t1\tdisaster_donation\t余裕がないときに募金はできない\t共通用GIFT\n30003\t1\t1\tdisaster_help_stranger\tその人のヤバさによる。めっちゃヤバそうならなにかする\t共通用GIFT\n30004\t1\t1\tbusiness_overtime\t明日の早朝でもよいか交渉する。大事な用事があるので\t共通用GIFT\n30005\t1\t1\tbusiness_competitor\tお守りとして何処かに封印しておく\t共通用GIFT\n30006\t1\t1\tbusiness_whistleblower\t辞める準備をする。\t共通用GIFT\n",
+  "stderr": "",
+  "execution_time_ms": 1509
+}

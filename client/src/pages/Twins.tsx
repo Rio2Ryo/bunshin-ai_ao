@@ -26,20 +26,20 @@ export default function MyTwin() {
   const updatePublicMutation = trpc.myTwin.updatePublicSettings.useMutation();
   const runFullAnalysisMutation = trpc.myTwin.runFullAnalysis.useMutation();
   const generateSelfWaveformMutation = trpc.myTwin.generateSelfWaveform.useMutation();
-  const reevaluateWaveformMutation = trpc.myTwin.reevaluateAndUpdateWaveform.useMutation();
+  const evaluateByAllTwinsMutation = trpc.myTwin.evaluateByAllTwins.useMutation();
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isGeneratingWaveform, setIsGeneratingWaveform] = useState(false);
 
-  // 価値観シナリオの回答に対して評価を実行し、累積波形を更新
+  // 全ての模倣AIによる評価を実行して累積波形を更新
   const handleGenerateWaveform = async () => {
     setIsGeneratingWaveform(true);
     try {
-      const result = await reevaluateWaveformMutation.mutateAsync();
+      const result = await evaluateByAllTwinsMutation.mutateAsync();
       if (result.totalResponses === 0) {
         toast.info("価値観シナリオに回答してから波形を更新してください");
       } else {
-        toast.success(`${result.evaluatedCount}件の回答を評価し、波形を更新しました`);
+        toast.success(`${result.totalEvaluators}人の模倣AIが${result.evaluatedCount}件の回答を評価しました（合計${result.totalEvaluations}件の評価）`);
       }
       refetch();
     } catch (error: any) {
