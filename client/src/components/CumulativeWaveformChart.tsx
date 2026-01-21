@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { TrendingUp, TrendingDown, Users, Target, Activity } from "lucide-react";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { TrendingUp, TrendingDown, Users, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
 
@@ -116,61 +116,89 @@ function sortEvaluatorsBySimilarity(
   return sorted;
 }
 
-// 波形グラフコンポーネント（特許図7準拠）
-function WaveformGraph({
-  evaluators,
-  type,
-  color
+// 上下対称の波形グラフコンポーネント（特許図7準拠）
+// 上半分: 徳（+方向）、下半分: 地雷（-方向）
+function CombinedWaveformGraph({
+  evaluators
 }: {
   evaluators: Array<{ id: string; data: EvaluatorBreakdown }>;
-  type: "virtue" | "mine";
-  color: string;
 }) {
-  const width = 500;
-  const height = 220;
-  const padding = { top: 30, right: 30, bottom: 50, left: 50 };
+  const width = 600;
+  const height = 400;
+  const padding = { top: 40, right: 40, bottom: 60, left: 60 };
   const graphWidth = width - padding.left - padding.right;
   const graphHeight = height - padding.top - padding.bottom;
+  const centerY = padding.top + graphHeight / 2;
 
-  // 累積値を計算
-  const cumulativeValues = useMemo(() => {
-    let cumulative = 0;
-    return evaluators.map(e => {
-      const value = type === "virtue" ? e.data.virtueCount : e.data.mineCount;
-      cumulative += value;
-      return cumulative;
-    });
-  }, [evaluators, type]);
+  // 各評価者の徳と地雷の値
+  const values = useMemo(() => {
+    return evaluators.map(e => ({
+      virtue: e.data.virtueCount,
+      mine: e.data.mineCount,
+      name: e.data.evaluatorName
+    }));
+  }, [evaluators]);
 
-  const maxValue = Math.max(...cumulativeValues, 10);
+  // 最大値を計算（上下対称にするため、徳と地雷の最大値のうち大きい方を使用）
+  const maxValue = useMemo(() => {
+    const maxVirtue = Math.max(...values.map(v => v.virtue), 1);
+    const maxMine = Math.max(...values.map(v => v.mine), 1);
+    return Math.max(maxVirtue, maxMine, 5);
+  }, [values]);
 
-  const points = useMemo(() => {
+  // 徳の波形ポイント（上方向）
+  const virtuePoints = useMemo(() => {
     if (evaluators.length === 0) return "";
     const step = graphWidth / Math.max(evaluators.length - 1, 1);
-    return cumulativeValues.map((value, i) => {
+    return values.map((v, i) => {
       const x = padding.left + i * step;
-      const y = padding.top + graphHeight - (value / maxValue) * graphHeight;
+      const y = centerY - (v.virtue / maxValue) * (graphHeight / 2);
       return `${x},${y}`;
     }).join(" ");
-  }, [evaluators, cumulativeValues, graphWidth, graphHeight, maxValue]);
+  }, [evaluators, values, graphWidth, graphHeight, maxValue, centerY]);
 
-  const areaPoints = useMemo(() => {
+  // 地雷の波形ポイント（下方向）
+  const minePoints = useMemo(() => {
     if (evaluators.length === 0) return "";
     const step = graphWidth / Math.max(evaluators.length - 1, 1);
-    const baseY = padding.top + graphHeight;
-    const topPoints = cumulativeValues.map((value, i) => {
+    return values.map((v, i) => {
       const x = padding.left + i * step;
-      const y = padding.top + graphHeight - (value / maxValue) * graphHeight;
+      const y = centerY + (v.mine / maxValue) * (graphHeight / 2);
+      return `${x},${y}`;
+    }).join(" ");
+  }, [evaluators, values, graphWidth, graphHeight, maxValue, centerY]);
+
+  // 徳のエリア（塗りつぶし用）
+  const virtueAreaPoints = useMemo(() => {
+    if (evaluators.length === 0) return "";
+    const step = graphWidth / Math.max(evaluators.length - 1, 1);
+    const topPoints = values.map((v, i) => {
+      const x = padding.left + i * step;
+      const y = centerY - (v.virtue / maxValue) * (graphHeight / 2);
       return `${x},${y}`;
     }).join(" ");
     const firstX = padding.left;
     const lastX = padding.left + (evaluators.length - 1) * step;
-    return `${firstX},${baseY} ${topPoints} ${lastX},${baseY}`;
-  }, [evaluators, cumulativeValues, graphWidth, graphHeight, maxValue]);
+    return `${firstX},${centerY} ${topPoints} ${lastX},${centerY}`;
+  }, [evaluators, values, graphWidth, graphHeight, maxValue, centerY]);
+
+  // 地雷のエリア（塗りつぶし用）
+  const mineAreaPoints = useMemo(() => {
+    if (evaluators.length === 0) return "";
+    const step = graphWidth / Math.max(evaluators.length - 1, 1);
+    const bottomPoints = values.map((v, i) => {
+      const x = padding.left + i * step;
+      const y = centerY + (v.mine / maxValue) * (graphHeight / 2);
+      return `${x},${y}`;
+    }).join(" ");
+    const firstX = padding.left;
+    const lastX = padding.left + (evaluators.length - 1) * step;
+    return `${firstX},${centerY} ${bottomPoints} ${lastX},${centerY}`;
+  }, [evaluators, values, graphWidth, graphHeight, maxValue, centerY]);
 
   if (evaluators.length === 0) {
     return (
-      <div className="flex items-center justify-center h-[220px] text-muted-foreground">
+      <div className="flex items-center justify-center h-[400px] text-muted-foreground">
         評価データがありません
       </div>
     );
@@ -178,12 +206,44 @@ function WaveformGraph({
 
   return (
     <svg width={width} height={height} className="w-full" viewBox={`0 0 ${width} ${height}`}>
-      {/* グリッドライン */}
-      {[0, 0.25, 0.5, 0.75, 1].map((level) => {
-        const y = padding.top + graphHeight - level * graphHeight;
+      {/* 背景グラデーション */}
+      <defs>
+        <linearGradient id="virtueGradient" x1="0%" y1="100%" x2="0%" y2="0%">
+          <stop offset="0%" stopColor="#22c55e" stopOpacity="0.1" />
+          <stop offset="100%" stopColor="#22c55e" stopOpacity="0.3" />
+        </linearGradient>
+        <linearGradient id="mineGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor="#ef4444" stopOpacity="0.1" />
+          <stop offset="100%" stopColor="#ef4444" stopOpacity="0.3" />
+        </linearGradient>
+      </defs>
+
+      {/* 上半分の背景（徳エリア） */}
+      <rect
+        x={padding.left}
+        y={padding.top}
+        width={graphWidth}
+        height={graphHeight / 2}
+        fill="#22c55e"
+        fillOpacity={0.05}
+      />
+      
+      {/* 下半分の背景（地雷エリア） */}
+      <rect
+        x={padding.left}
+        y={centerY}
+        width={graphWidth}
+        height={graphHeight / 2}
+        fill="#ef4444"
+        fillOpacity={0.05}
+      />
+
+      {/* グリッドライン（上半分：徳） */}
+      {[0.25, 0.5, 0.75, 1].map((level) => {
+        const y = centerY - level * (graphHeight / 2);
         const value = Math.round(maxValue * level);
         return (
-          <g key={level}>
+          <g key={`virtue-${level}`}>
             <line
               x1={padding.left}
               y1={y}
@@ -194,31 +254,94 @@ function WaveformGraph({
               strokeDasharray="4,4"
             />
             <text
-              x={padding.left - 8}
+              x={padding.left - 10}
               y={y}
               textAnchor="end"
               dominantBaseline="middle"
-              className="text-[10px] fill-muted-foreground"
+              className="text-[10px] fill-green-600"
             >
-              {value}
+              +{value}
             </text>
           </g>
         );
       })}
 
-      {/* 波形エリア */}
+      {/* グリッドライン（下半分：地雷） */}
+      {[0.25, 0.5, 0.75, 1].map((level) => {
+        const y = centerY + level * (graphHeight / 2);
+        const value = Math.round(maxValue * level);
+        return (
+          <g key={`mine-${level}`}>
+            <line
+              x1={padding.left}
+              y1={y}
+              x2={width - padding.right}
+              y2={y}
+              stroke="currentColor"
+              strokeOpacity={0.1}
+              strokeDasharray="4,4"
+            />
+            <text
+              x={padding.left - 10}
+              y={y}
+              textAnchor="end"
+              dominantBaseline="middle"
+              className="text-[10px] fill-red-600"
+            >
+              -{value}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* 中心線（0ライン） */}
+      <line
+        x1={padding.left}
+        y1={centerY}
+        x2={width - padding.right}
+        y2={centerY}
+        stroke="currentColor"
+        strokeOpacity={0.3}
+        strokeWidth={2}
+      />
+      <text
+        x={padding.left - 10}
+        y={centerY}
+        textAnchor="end"
+        dominantBaseline="middle"
+        className="text-[11px] fill-muted-foreground font-medium"
+      >
+        0
+      </text>
+
+      {/* 徳の波形エリア */}
       <polygon
-        points={areaPoints}
-        fill={color}
-        fillOpacity={0.2}
+        points={virtueAreaPoints}
+        fill="url(#virtueGradient)"
       />
 
-      {/* 波形ライン */}
+      {/* 地雷の波形エリア */}
+      <polygon
+        points={mineAreaPoints}
+        fill="url(#mineGradient)"
+      />
+
+      {/* 徳の波形ライン */}
       <polyline
-        points={points}
+        points={virtuePoints}
         fill="none"
-        stroke={color}
-        strokeWidth={2.5}
+        stroke="#22c55e"
+        strokeWidth={3}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+
+      {/* 地雷の波形ライン */}
+      <polyline
+        points={minePoints}
+        fill="none"
+        stroke="#ef4444"
+        strokeWidth={3}
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -227,72 +350,126 @@ function WaveformGraph({
       {evaluators.map((evaluator, i) => {
         const step = graphWidth / Math.max(evaluators.length - 1, 1);
         const x = padding.left + i * step;
-        const y = padding.top + graphHeight - (cumulativeValues[i] / maxValue) * graphHeight;
-        const individualValue = type === "virtue" ? evaluator.data.virtueCount : evaluator.data.mineCount;
+        const virtueY = centerY - (values[i].virtue / maxValue) * (graphHeight / 2);
+        const mineY = centerY + (values[i].mine / maxValue) * (graphHeight / 2);
         
         return (
           <g key={i}>
-            {/* データポイント */}
+            {/* 垂直の接続線 */}
+            <line
+              x1={x}
+              y1={virtueY}
+              x2={x}
+              y2={mineY}
+              stroke="currentColor"
+              strokeOpacity={0.15}
+              strokeWidth={1}
+              strokeDasharray="2,2"
+            />
+
+            {/* 徳のデータポイント */}
             <circle
               cx={x}
-              cy={y}
-              r={6}
-              fill={color}
+              cy={virtueY}
+              r={7}
+              fill="#22c55e"
+              stroke="white"
+              strokeWidth={2}
               className="cursor-pointer"
             />
-            {/* 個別値のラベル */}
+            {/* 徳の値ラベル */}
             <text
               x={x}
-              y={y - 12}
+              y={virtueY - 14}
               textAnchor="middle"
-              className="text-[9px] fill-current font-medium"
-              fill={color}
+              className="text-[10px] font-bold"
+              fill="#22c55e"
             >
-              +{individualValue}
+              +{values[i].virtue}
             </text>
+
+            {/* 地雷のデータポイント */}
+            <circle
+              cx={x}
+              cy={mineY}
+              r={7}
+              fill="#ef4444"
+              stroke="white"
+              strokeWidth={2}
+              className="cursor-pointer"
+            />
+            {/* 地雷の値ラベル */}
+            <text
+              x={x}
+              y={mineY + 18}
+              textAnchor="middle"
+              className="text-[10px] font-bold"
+              fill="#ef4444"
+            >
+              -{values[i].mine}
+            </text>
+
             {/* 評価者名（C1, C2, ... 形式） */}
             <text
               x={x}
-              y={height - padding.bottom + 15}
+              y={height - padding.bottom + 18}
               textAnchor="middle"
-              className="text-[10px] fill-muted-foreground"
+              className="text-[11px] fill-muted-foreground font-medium"
             >
               C{i + 1}
             </text>
             {/* 評価者の実名（短縮） */}
             <text
               x={x}
-              y={height - padding.bottom + 28}
+              y={height - padding.bottom + 32}
               textAnchor="middle"
-              className="text-[8px] fill-muted-foreground"
+              className="text-[9px] fill-muted-foreground"
             >
-              {evaluator.data.evaluatorName.slice(0, 5)}
+              {evaluator.data.evaluatorName.slice(0, 6)}
             </text>
           </g>
         );
       })}
 
-      {/* Y軸ラベル */}
+      {/* Y軸ラベル（左側） */}
       <text
         x={15}
-        y={height / 2}
+        y={padding.top + graphHeight / 4}
         textAnchor="middle"
         dominantBaseline="middle"
-        transform={`rotate(-90, 15, ${height / 2})`}
-        className="text-[11px] fill-muted-foreground font-medium"
+        transform={`rotate(-90, 15, ${padding.top + graphHeight / 4})`}
+        className="text-[12px] fill-green-600 font-medium"
       >
-        {type === "virtue" ? "徳の累積 G+(U)" : "地雷の累積 G-(U)"}
+        徳 G+(U)
+      </text>
+      <text
+        x={15}
+        y={centerY + graphHeight / 4}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        transform={`rotate(-90, 15, ${centerY + graphHeight / 4})`}
+        className="text-[12px] fill-red-600 font-medium"
+      >
+        地雷 G-(U)
       </text>
 
       {/* X軸ラベル */}
       <text
         x={width / 2}
-        y={height - 5}
+        y={height - 8}
         textAnchor="middle"
-        className="text-[11px] fill-muted-foreground"
+        className="text-[12px] fill-muted-foreground font-medium"
       >
         模倣人格（類似度順）
       </text>
+
+      {/* 凡例 */}
+      <g transform={`translate(${width - padding.right - 100}, ${padding.top - 25})`}>
+        <circle cx={0} cy={0} r={5} fill="#22c55e" />
+        <text x={10} y={4} className="text-[10px] fill-muted-foreground">徳（上）</text>
+        <circle cx={60} cy={0} r={5} fill="#ef4444" />
+        <text x={70} y={4} className="text-[10px] fill-muted-foreground">地雷（下）</text>
+      </g>
     </svg>
   );
 }
@@ -462,7 +639,7 @@ export function CumulativeWaveformChart({
             価値観波形 G+(U) / G-(U)
           </CardTitle>
           <CardDescription>
-            {sortedEvaluators.length}人の模倣人格による累積評価（類似度順に並び替え済み）
+            {sortedEvaluators.length}人の模倣人格による評価（類似度順に並び替え済み）
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -471,7 +648,7 @@ export function CumulativeWaveformChart({
             <div className="flex items-center gap-3 p-4 bg-green-500/10 rounded-lg">
               <TrendingUp className="h-8 w-8 text-green-500" />
               <div>
-                <p className="text-sm text-muted-foreground">徳の累積</p>
+                <p className="text-sm text-muted-foreground">徳の合計</p>
                 <p className="text-2xl font-bold text-green-600">
                   {waveform.totalVirtueCount}
                 </p>
@@ -489,7 +666,7 @@ export function CumulativeWaveformChart({
             <div className="flex items-center gap-3 p-4 bg-red-500/10 rounded-lg">
               <TrendingDown className="h-8 w-8 text-red-500" />
               <div>
-                <p className="text-sm text-muted-foreground">地雷の累積</p>
+                <p className="text-sm text-muted-foreground">地雷の合計</p>
                 <p className="text-2xl font-bold text-red-600">
                   {waveform.totalMineCount}
                 </p>
@@ -497,33 +674,14 @@ export function CumulativeWaveformChart({
             </div>
           </div>
 
-          {/* 波形グラフ（特許図7準拠） */}
-          <div className="space-y-6">
-            <div>
-              <h4 className="text-sm font-medium mb-2 text-green-600 flex items-center gap-2">
-                <TrendingUp className="h-4 w-4" />
-                徳波形 G+(U)
-              </h4>
-              <div className="bg-muted/30 rounded-lg p-2">
-                <WaveformGraph
-                  evaluators={sortedEvaluators}
-                  type="virtue"
-                  color="#22c55e"
-                />
-              </div>
-            </div>
-            <div>
-              <h4 className="text-sm font-medium mb-2 text-red-600 flex items-center gap-2">
-                <TrendingDown className="h-4 w-4" />
-                地雷波形 G-(U)
-              </h4>
-              <div className="bg-muted/30 rounded-lg p-2">
-                <WaveformGraph
-                  evaluators={sortedEvaluators}
-                  type="mine"
-                  color="#ef4444"
-                />
-              </div>
+          {/* 上下対称の波形グラフ（特許図7準拠） */}
+          <div>
+            <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+              <Activity className="h-4 w-4" />
+              波形グラフ（上: 徳 / 下: 地雷）
+            </h4>
+            <div className="bg-muted/30 rounded-lg p-4">
+              <CombinedWaveformGraph evaluators={sortedEvaluators} />
             </div>
           </div>
 
