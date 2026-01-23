@@ -1,0 +1,76 @@
+{
+  "query": "SELECT id, targetUserId, predictorUserId, predictorTwinId, scenarioId, predictedVerdict, comparedAt, actualVerdict, isCorrect\nFROM friend_predictions \nORDER BY id DESC\nLIMIT 10",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT id, targetUserId, predictorUserId, predictorTwinId, scenarioId, predictedVerdict, comparedAt, actualVerdict, isCorrect\nFROM friend_predictions \nORDER BY id DESC\nLIMIT 10",
+  "rows": [
+    {
+      "id": "6",
+      "targetUserId": "1",
+      "predictorUserId": "30065",
+      "predictorTwinId": "3",
+      "scenarioId": "business_whistleblower",
+      "predictedVerdict": "virtue",
+      "comparedAt": "NULL",
+      "actualVerdict": "NULL",
+      "isCorrect": "NULL"
+    },
+    {
+      "id": "5",
+      "targetUserId": "1",
+      "predictorUserId": "30065",
+      "predictorTwinId": "3",
+      "scenarioId": "business_competitor",
+      "predictedVerdict": "virtue",
+      "comparedAt": "NULL",
+      "actualVerdict": "NULL",
+      "isCorrect": "NULL"
+    },
+    {
+      "id": "4",
+      "targetUserId": "1",
+      "predictorUserId": "30065",
+      "predictorTwinId": "3",
+      "scenarioId": "business_overtime",
+      "predictedVerdict": "virtue",
+      "comparedAt": "NULL",
+      "actualVerdict": "NULL",
+      "isCorrect": "NULL"
+    },
+    {
+      "id": "3",
+      "targetUserId": "1",
+      "predictorUserId": "30065",
+      "predictorTwinId": "3",
+      "scenarioId": "disaster_help_stranger",
+      "predictedVerdict": "virtue",
+      "comparedAt": "NULL",
+      "actualVerdict": "NULL",
+      "isCorrect": "NULL"
+    },
+    {
+      "id": "2",
+      "targetUserId": "1",
+      "predictorUserId": "30065",
+      "predictorTwinId": "3",
+      "scenarioId": "disaster_donation",
+      "predictedVerdict": "neutral",
+      "comparedAt": "NULL",
+      "actualVerdict": "NULL",
+      "isCorrect": "NULL"
+    },
+    {
+      "id": "1",
+      "targetUserId": "1",
+      "predictorUserId": "30065",
+      "predictorTwinId": "3",
+      "scenarioId": "disaster_volunteer",
+      "predictedVerdict": "neutral",
+      "comparedAt": "NULL",
+      "actualVerdict": "NULL",
+      "isCorrect": "NULL"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\ttargetUserId\tpredictorUserId\tpredictorTwinId\tscenarioId\tpredictedVerdict\tcomparedAt\tactualVerdict\tisCorrect\n6\t1\t30065\t3\tbusiness_whistleblower\tvirtue\tNULL\tNULL\tNULL\n5\t1\t30065\t3\tbusiness_competitor\tvirtue\tNULL\tNULL\tNULL\n4\t1\t30065\t3\tbusiness_overtime\tvirtue\tNULL\tNULL\tNULL\n3\t1\t30065\t3\tdisaster_help_stranger\tvirtue\tNULL\tNULL\tNULL\n2\t1\t30065\t3\tdisaster_donation\tneutral\tNULL\tNULL\tNULL\n1\t1\t30065\t3\tdisaster_volunteer\tneutral\tNULL\tNULL\tNULL\n",
+  "stderr": "",
+  "execution_time_ms": 1491
+}

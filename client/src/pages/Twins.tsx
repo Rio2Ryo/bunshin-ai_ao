@@ -18,6 +18,7 @@ import { MBTIInterview } from "@/components/MBTIInterview";
 import { ValueWaveformChart } from "@/components/ValueWaveformChart";
 import { ValueScenarioInterview } from "@/components/ValueScenarioInterview";
 import { CumulativeWaveformChart } from "@/components/CumulativeWaveformChart";
+import { OtherPerspectiveWaveformChart } from "@/components/OtherPerspectiveWaveformChart";
 
 export default function MyTwin() {
   const { data: twin, isLoading, refetch } = trpc.myTwin.get.useQuery();
@@ -27,9 +28,11 @@ export default function MyTwin() {
   const runFullAnalysisMutation = trpc.myTwin.runFullAnalysis.useMutation();
   const generateSelfWaveformMutation = trpc.myTwin.generateSelfWaveform.useMutation();
   const evaluateByAllTwinsMutation = trpc.myTwin.evaluateByAllTwins.useMutation();
+  const generateFriendPredictionsMutation = trpc.friends.generateFriendPredictions.useMutation();
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isGeneratingWaveform, setIsGeneratingWaveform] = useState(false);
+  const [isUpdatingOtherPerspective, setIsUpdatingOtherPerspective] = useState(false);
 
   // 全ての模倣AIによる評価を実行して累積波形を更新
   const handleGenerateWaveform = async () => {
@@ -46,6 +49,26 @@ export default function MyTwin() {
       toast.error(error.message || "波形の更新に失敗しました");
     } finally {
       setIsGeneratingWaveform(false);
+    }
+  };
+
+  // 他者視点波形を生成（友達の分身AIから予測を取得）
+  const handleUpdateOtherPerspective = async () => {
+    setIsUpdatingOtherPerspective(true);
+    try {
+      const result = await generateFriendPredictionsMutation.mutateAsync();
+      if (result.friendsProcessed === 0) {
+        toast.info("友達がいないか、友達の分身AIが未設定です");
+      } else if (result.totalPredictions === 0) {
+        toast.info("価値観シナリオに回答してから他者視点波形を生成してください");
+      } else {
+        toast.success(`${result.friendsProcessed}人の友達から${result.successfulPredictions}件の予測を取得しました`);
+      }
+      refetch();
+    } catch (error: any) {
+      toast.error(error.message || "他者視点波形の生成に失敗しました");
+    } finally {
+      setIsUpdatingOtherPerspective(false);
     }
   };
 
@@ -585,6 +608,16 @@ export default function MyTwin() {
                 onGenerate={handleGenerateWaveform}
                 isGenerating={isGeneratingWaveform}
                 scenarioProgress={twin.scenarioProgress as any}
+              />
+            </div>
+
+            {/* 他者視点波形 */}
+            <div className="lg:col-span-2">
+              <OtherPerspectiveWaveformChart
+                waveform={(twin as any).otherPerspectiveWaveform}
+                selfWaveform={twin.cumulativeWaveform as any}
+                onUpdate={handleUpdateOtherPerspective}
+                isUpdating={isUpdatingOtherPerspective}
               />
             </div>
 

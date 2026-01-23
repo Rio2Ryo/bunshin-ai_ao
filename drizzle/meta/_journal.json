@@ -71,6 +71,20 @@
       "when": 1768813689735,
       "tag": "0009_goofy_iron_man",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1769070750028,
+      "tag": "0010_tough_talisman",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1769126680358,
+      "tag": "0011_quick_cerise",
+      "breakpoints": true
     }
   ]
 }

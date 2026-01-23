@@ -514,3 +514,225 @@ export const cumulativeWaveforms = mysqlTable("cumulative_waveforms", {
 
 export type CumulativeWaveform = typeof cumulativeWaveforms.$inferSelect;
 export type InsertCumulativeWaveform = typeof cumulativeWaveforms.$inferInsert;
+
+
+/**
+ * Intimacy scores - 親密度スコア
+ * 友達間の親密度を追跡（会話量と予測精度に基づく）
+ */
+export const intimacyScores = mysqlTable("intimacy_scores", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(), // 親密度の対象ユーザー
+  friendId: int("friendId").notNull(), // 友達のユーザーID
+  // 会話量ベースのスコア
+  totalMessageCount: int("totalMessageCount").default(0).notNull(), // 総メッセージ数
+  conversationDays: int("conversationDays").default(0).notNull(), // 会話した日数
+  lastConversationAt: timestamp("lastConversationAt"), // 最後の会話日時
+  // 予測精度ベースのスコア
+  totalPredictions: int("totalPredictions").default(0).notNull(), // 予測した回数
+  correctPredictions: int("correctPredictions").default(0).notNull(), // 的中した回数
+  predictionAccuracy: decimal("predictionAccuracy", { precision: 5, scale: 2 }), // 予測精度 (0-100%)
+  // 総合親密度スコア
+  intimacyScore: decimal("intimacyScore", { precision: 5, scale: 2 }).default("0").notNull(), // 親密度 (0-100)
+  intimacyLevel: mysqlEnum("intimacyLevel", ["stranger", "acquaintance", "friend", "close_friend", "best_friend"]).default("stranger").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type IntimacyScore = typeof intimacyScores.$inferSelect;
+export type InsertIntimacyScore = typeof intimacyScores.$inferInsert;
+
+/**
+ * Friend predictions - 友達による予測
+ * 友達の分身AIが「この人ならどう答えるか」を予測した記録
+ */
+export const friendPredictions = mysqlTable("friend_predictions", {
+  id: int("id").autoincrement().primaryKey(),
+  targetUserId: int("targetUserId").notNull(), // 予測対象のユーザー
+  targetTwinId: int("targetTwinId").notNull(), // 予測対象の分身AI
+  predictorUserId: int("predictorUserId").notNull(), // 予測した友達のユーザーID
+  predictorTwinId: int("predictorTwinId").notNull(), // 予測した友達の分身AI
+  scenarioResponseId: int("scenarioResponseId"), // 対応するシナリオ回答（実際の回答後に紐付け）
+  scenarioId: varchar("scenarioId", { length: 100 }).notNull(), // シナリオの識別子
+  scenarioText: text("scenarioText").notNull(), // シナリオの内容
+  // 予測内容
+  predictedResponse: text("predictedResponse").notNull(), // 予測した回答
+  predictedVerdict: mysqlEnum("predictedVerdict", ["virtue", "mine", "neutral"]).notNull(), // 予測した評価（徳/地雷/中立）
+  predictedJudgmentScores: json("predictedJudgmentScores").$type<{
+    goodEvil: number;
+    likesDislike: number;
+    profitLoss: number;
+    interest: number;
+    pleasurePain: number;
+    difficulty: number;
+    possibility: number;
+    comfort: number;
+    rightWrong: number;
+  }>(),
+  predictionReason: text("predictionReason"), // 予測理由
+  confidence: decimal("confidence", { precision: 5, scale: 2 }), // 予測の確信度 (0-100)
+  // 実際の回答との比較結果（後から更新）
+  actualVerdict: mysqlEnum("actualVerdict", ["virtue", "mine", "neutral"]), // 実際の評価
+  isCorrect: int("isCorrect"), // 予測が当たったか (0=外れ, 1=当たり)
+  similarityScore: decimal("similarityScore", { precision: 5, scale: 2 }), // 回答の類似度 (0-100)
+  comparedAt: timestamp("comparedAt"), // 比較した日時
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type FriendPrediction = typeof friendPredictions.$inferSelect;
+export type InsertFriendPrediction = typeof friendPredictions.$inferInsert;
+
+/**
+ * Other-perspective waveform - 他者視点波形
+ * 友達からの予測に基づく波形（自己申告波形とは別）
+ */
+export const otherPerspectiveWaveforms = mysqlTable("other_perspective_waveforms", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  twinId: int("twinId").notNull(),
+  // 累積スコア（友達の予測に基づく）
+  totalVirtueCount: int("totalVirtueCount").default(0).notNull(),
+  totalMineCount: int("totalMineCount").default(0).notNull(),
+  totalNeutralCount: int("totalNeutralCount").default(0).notNull(),
+  // 9つの判断基準の累積スコア
+  cumulativeJudgmentScores: json("cumulativeJudgmentScores").$type<{
+    goodEvil: { sum: number; count: number };
+    likesDislike: { sum: number; count: number };
+    profitLoss: { sum: number; count: number };
+    interest: { sum: number; count: number };
+    pleasurePain: { sum: number; count: number };
+    difficulty: { sum: number; count: number };
+    possibility: { sum: number; count: number };
+    comfort: { sum: number; count: number };
+    rightWrong: { sum: number; count: number };
+  }>(),
+  // 予測者ごとの内訳（親密度で重み付け）
+  predictorBreakdown: json("predictorBreakdown").$type<{
+    [predictorTwinId: string]: {
+      predictorName: string;
+      intimacyScore: number; // 親密度スコア
+      intimacyLevel: string; // 親密度レベル
+      weight: number; // 重み（親密度に基づく）
+      virtueCount: number;
+      mineCount: number;
+      neutralCount: number;
+      predictionAccuracy: number; // この人の予測精度
+    };
+  }>(),
+  // 自己申告波形との乖離度
+  selfReportGap: decimal("selfReportGap", { precision: 5, scale: 2 }), // 自己認識ギャップ (0-100)
+  lastUpdated: timestamp("lastUpdated").defaultNow().onUpdateNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type OtherPerspectiveWaveform = typeof otherPerspectiveWaveforms.$inferSelect;
+export type InsertOtherPerspectiveWaveform = typeof otherPerspectiveWaveforms.$inferInsert;
+
+
+/**
+ * Point settings - ポイント設定（管理者が変更可能）
+ * 各アクションに対するポイント付与数を管理
+ */
+export const pointSettings = mysqlTable("point_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  actionType: varchar("actionType", { length: 100 }).notNull().unique(), // アクションの識別子
+  actionName: varchar("actionName", { length: 255 }).notNull(), // 表示名
+  actionDescription: text("actionDescription"), // アクションの説明
+  points: int("points").default(1).notNull(), // 付与ポイント数
+  isActive: int("isActive").default(1).notNull(), // 有効/無効
+  category: varchar("category", { length: 100 }), // カテゴリ（診断、評価、対話など）
+  difficulty: mysqlEnum("difficulty", ["easy", "medium", "hard"]).default("medium").notNull(), // 難易度
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PointSetting = typeof pointSettings.$inferSelect;
+export type InsertPointSetting = typeof pointSettings.$inferInsert;
+
+/**
+ * User points - ユーザーポイント残高
+ */
+export const userPoints = mysqlTable("user_points", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().unique(),
+  balance: int("balance").default(0).notNull(), // 現在のポイント残高
+  totalEarned: int("totalEarned").default(0).notNull(), // 累計獲得ポイント
+  totalSpent: int("totalSpent").default(0).notNull(), // 累計使用ポイント
+  totalExpired: int("totalExpired").default(0).notNull(), // 累計失効ポイント
+  lastActivityAt: timestamp("lastActivityAt").defaultNow().notNull(), // 最終ポイント増減日
+  expiresAt: timestamp("expiresAt"), // 有効期限（最終活動日から1年）
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type UserPoint = typeof userPoints.$inferSelect;
+export type InsertUserPoint = typeof userPoints.$inferInsert;
+
+/**
+ * Point transactions - ポイント取引履歴
+ */
+export const pointTransactions = mysqlTable("point_transactions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  type: mysqlEnum("type", ["earn", "spend", "expire", "adjust"]).notNull(), // 取引タイプ
+  amount: int("amount").notNull(), // ポイント数（正の値）
+  balanceAfter: int("balanceAfter").notNull(), // 取引後の残高
+  actionType: varchar("actionType", { length: 100 }), // 関連アクション（earnの場合）
+  referenceId: varchar("referenceId", { length: 255 }), // 関連ID（シナリオID、製品IDなど）
+  description: text("description"), // 取引の説明
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type PointTransaction = typeof pointTransactions.$inferSelect;
+export type InsertPointTransaction = typeof pointTransactions.$inferInsert;
+
+/**
+ * Redeemable products - 交換可能な製品
+ */
+export const redeemableProducts = mysqlTable("redeemable_products", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(), // 製品名
+  description: text("description"), // 製品説明
+  imageUrl: varchar("imageUrl", { length: 1000 }), // 製品画像URL
+  pointsCost: int("pointsCost").notNull(), // 必要ポイント数
+  priceYen: int("priceYen"), // 円換算価格（参考）
+  category: varchar("category", { length: 100 }), // カテゴリ
+  stock: int("stock"), // 在庫数（nullは無制限）
+  isActive: int("isActive").default(1).notNull(), // 有効/無効
+  sortOrder: int("sortOrder").default(0).notNull(), // 表示順
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type RedeemableProduct = typeof redeemableProducts.$inferSelect;
+export type InsertRedeemableProduct = typeof redeemableProducts.$inferInsert;
+
+/**
+ * Point redemptions - ポイント交換履歴
+ */
+export const pointRedemptions = mysqlTable("point_redemptions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  productId: int("productId").notNull(),
+  pointsUsed: int("pointsUsed").notNull(), // 使用ポイント数
+  status: mysqlEnum("status", ["pending", "processing", "completed", "cancelled", "refunded"]).default("pending").notNull(),
+  shippingInfo: json("shippingInfo").$type<{
+    name?: string;
+    address?: string;
+    phone?: string;
+    email?: string;
+    notes?: string;
+  }>(), // 配送情報（物理製品の場合）
+  fulfillmentInfo: json("fulfillmentInfo").$type<{
+    code?: string; // デジタル製品のコード
+    url?: string; // ダウンロードURL
+    expiresAt?: string; // 有効期限
+  }>(), // 履行情報
+  notes: text("notes"), // 管理者メモ
+  completedAt: timestamp("completedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PointRedemption = typeof pointRedemptions.$inferSelect;
+export type InsertPointRedemption = typeof pointRedemptions.$inferInsert;

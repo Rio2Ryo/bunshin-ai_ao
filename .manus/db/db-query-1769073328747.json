@@ -1,0 +1,17 @@
+{
+  "query": "SELECT id, userId, scenarioId, scenarioText, analysisResult FROM value_scenario_responses WHERE userId = 1 LIMIT 1",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT id, userId, scenarioId, scenarioText, analysisResult FROM value_scenario_responses WHERE userId = 1 LIMIT 1",
+  "rows": [
+    {
+      "id": "30001",
+      "userId": "1",
+      "scenarioId": "disaster_volunteer",
+      "scenarioText": "大地震が発生し、被災地でボランティアを募集しています。あなたは仕事を休んでボランティアに参加しますか？その理由も教えてください。",
+      "analysisResult": "{\"analysisNotes\": \"ユーザーは、感情や道徳的な義務感よりも、合理性、効率性、そして自己の負担回避を重視しています。「無理してやるものではない」という発言は、苦痛や困難（pleasurePain, difficulty）を避ける傾向が強いことを示します。また、「必要かどうかは現地の人の声に耳を傾けたい」という部分は、感情論ではなく、客観的なデータや正しい判断（rightWrong）に基づいて行動したいという強い志向が見られます。利他性（goodEvil）のスコアは低くはありませんが、行動を伴うレベルではないため、中程度に留めています。全体として、現実的かつ合理主義的な価値観が行動決定の根底にあると分析されます。\", \"judgmentScores\": {\"comfort\": 50, \"difficulty\": 40, \"goodEvil\": 10, \"interest\": 40, \"likesDislike\": 20, \"pleasurePain\": 60, \"possibility\": 50, \"profitLoss\": 30, \"rightWrong\": 70}, \"mineIndicators\": [\"行動への消極性\", \"負担の回避\", \"自己保身の傾向\", \"大義よりも合理性を優先\"], \"virtueIndicators\": [\"状況の客観的分析\", \"自己の限界の認識\", \"現地ニーズの尊重\", \"効率性の重視\"]}"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tuserId\tscenarioId\tscenarioText\tanalysisResult\n30001\t1\tdisaster_volunteer\t大地震が発生し、被災地でボランティアを募集しています。あなたは仕事を休んでボランティアに参加しますか？その理由も教えてください。\t{\"analysisNotes\": \"ユーザーは、感情や道徳的な義務感よりも、合理性、効率性、そして自己の負担回避を重視しています。「無理してやるものではない」という発言は、苦痛や困難（pleasurePain, difficulty）を避ける傾向が強いことを示します。また、「必要かどうかは現地の人の声に耳を傾けたい」という部分は、感情論ではなく、客観的なデータや正しい判断（rightWrong）に基づいて行動したいという強い志向が見られます。利他性（goodEvil）のスコアは低くはありませんが、行動を伴うレベルではないため、中程度に留めています。全体として、現実的かつ合理主義的な価値観が行動決定の根底にあると分析されます。\", \"judgmentScores\": {\"comfort\": 50, \"difficulty\": 40, \"goodEvil\": 10, \"interest\": 40, \"likesDislike\": 20, \"pleasurePain\": 60, \"possibility\": 50, \"profitLoss\": 30, \"rightWrong\": 70}, \"mineIndicators\": [\"行動への消極性\", \"負担の回避\", \"自己保身の傾向\", \"大義よりも合理性を優先\"], \"virtueIndicators\": [\"状況の客観的分析\", \"自己の限界の認識\", \"現地ニーズの尊重\", \"効率性の重視\"]}\n",
+  "stderr": "",
+  "execution_time_ms": 1504
+}

@@ -1,0 +1,8 @@
+{
+  "query": "SELECT f.id, f.user_id, f.friend_id, f.status, u1.name as user_name, u2.name as friend_name\nFROM friendships f\nJOIN users u1 ON f.user_id = u1.id\nJOIN users u2 ON f.friend_id = u2.id\nWHERE f.status = 'accepted'\nLIMIT 20;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT f.id, f.user_id, f.friend_id, f.status, u1.name as user_name, u2.name as friend_name\nFROM friendships f\nJOIN users u1 ON f.user_id = u1.id\nJOIN users u2 ON f.friend_id = u2.id\nWHERE f.status = 'accepted'\nLIMIT 20;",
+  "returncode": 1,
+  "logs": [
+    "ERROR 1054 (42S22) at line 1: Unknown column 'f.user_id' in 'on clause'"
+  ]
+}

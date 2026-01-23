@@ -1,0 +1,15 @@
+{
+  "query": "SELECT id, name, email FROM users WHERE email LIKE '%gifted%' OR email LIKE '%common%' LIMIT 5;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT id, name, email FROM users WHERE email LIKE '%gifted%' OR email LIKE '%common%' LIMIT 5;",
+  "rows": [
+    {
+      "id": "1",
+      "name": "共通用GIFT",
+      "email": "common.gifted.tokyo@gmail.com"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\temail\n1\t共通用GIFT\tcommon.gifted.tokyo@gmail.com\n",
+  "stderr": "",
+  "execution_time_ms": 1533
+}

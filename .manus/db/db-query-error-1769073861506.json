@@ -1,0 +1,8 @@
+{
+  "query": "SELECT COUNT(*) as total, \n       SUM(CASE WHEN comparedAt IS NOT NULL THEN 1 ELSE 0 END) as compared,\n       SUM(CASE WHEN evaluation = 'virtue' THEN 1 ELSE 0 END) as virtue,\n       SUM(CASE WHEN evaluation = 'landmine' THEN 1 ELSE 0 END) as landmine,\n       SUM(CASE WHEN evaluation = 'neutral' THEN 1 ELSE 0 END) as neutral\nFROM friend_predictions;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT COUNT(*) as total, \n       SUM(CASE WHEN comparedAt IS NOT NULL THEN 1 ELSE 0 END) as compared,\n       SUM(CASE WHEN evaluation = 'virtue' THEN 1 ELSE 0 END) as virtue,\n       SUM(CASE WHEN evaluation = 'landmine' THEN 1 ELSE 0 END) as landmine,\n       SUM(CASE WHEN evaluation = 'neutral' THEN 1 ELSE 0 END) as neutral\nFROM friend_predictions;",
+  "returncode": 1,
+  "logs": [
+    "ERROR 1054 (42S22) at line 1: Unknown column 'evaluation' in ''"
+  ]
+}

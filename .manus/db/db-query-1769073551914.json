@@ -1,0 +1,60 @@
+{
+  "query": "SELECT dt.id, dt.name, dt.userId FROM digital_twins dt WHERE dt.name IN ('田中太郎', '佐藤花子', '鈴木一郎', '高橋美咲', '伊藤健太', '渡辺愛', '山本大輔', '中村さくら', '小林誠', '加藤由美');",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT dt.id, dt.name, dt.userId FROM digital_twins dt WHERE dt.name IN ('田中太郎', '佐藤花子', '鈴木一郎', '高橋美咲', '伊藤健太', '渡辺愛', '山本大輔', '中村さくら', '小林誠', '加藤由美');",
+  "rows": [
+    {
+      "id": "30001",
+      "name": "田中太郎",
+      "userId": "690005"
+    },
+    {
+      "id": "30002",
+      "name": "佐藤花子",
+      "userId": "690006"
+    },
+    {
+      "id": "30003",
+      "name": "鈴木一郎",
+      "userId": "690007"
+    },
+    {
+      "id": "30004",
+      "name": "高橋美咲",
+      "userId": "690008"
+    },
+    {
+      "id": "30005",
+      "name": "伊藤健太",
+      "userId": "690009"
+    },
+    {
+      "id": "30006",
+      "name": "渡辺愛",
+      "userId": "690011"
+    },
+    {
+      "id": "30007",
+      "name": "山本大輔",
+      "userId": "690012"
+    },
+    {
+      "id": "30008",
+      "name": "中村さくら",
+      "userId": "690013"
+    },
+    {
+      "id": "30009",
+      "name": "小林誠",
+      "userId": "690014"
+    },
+    {
+      "id": "30010",
+      "name": "加藤由美",
+      "userId": "690015"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\tuserId\n30001\t田中太郎\t690005\n30002\t佐藤花子\t690006\n30003\t鈴木一郎\t690007\n30004\t高橋美咲\t690008\n30005\t伊藤健太\t690009\n30006\t渡辺愛\t690011\n30007\t山本大輔\t690012\n30008\t中村さくら\t690013\n30009\t小林誠\t690014\n30010\t加藤由美\t690015\n",
+  "stderr": "",
+  "execution_time_ms": 1531
+}

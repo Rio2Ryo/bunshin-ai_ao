@@ -1,0 +1,18 @@
+{
+  "query": "SELECT id, userId, twinId, totalVirtueCount, totalMineCount, totalNeutralCount FROM other_perspective_waveforms;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT id, userId, twinId, totalVirtueCount, totalMineCount, totalNeutralCount FROM other_perspective_waveforms;",
+  "rows": [
+    {
+      "id": "1",
+      "userId": "1",
+      "twinId": "1",
+      "totalVirtueCount": "2",
+      "totalMineCount": "0",
+      "totalNeutralCount": "4"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tuserId\ttwinId\ttotalVirtueCount\ttotalMineCount\ttotalNeutralCount\n1\t1\t1\t2\t0\t4\n",
+  "stderr": "",
+  "execution_time_ms": 1508
+}

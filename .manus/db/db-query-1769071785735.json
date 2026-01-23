@@ -1,0 +1,30 @@
+{
+  "query": "SELECT id, name, openId FROM users WHERE name LIKE '%松浦%' OR name LIKE '%田中%' OR name LIKE '%佐藤%' OR name LIKE '%鈴木%' OR name LIKE '%高橋%' LIMIT 20;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT id, name, openId FROM users WHERE name LIKE '%松浦%' OR name LIKE '%田中%' OR name LIKE '%佐藤%' OR name LIKE '%鈴木%' OR name LIKE '%高橋%' LIMIT 20;",
+  "rows": [
+    {
+      "id": "690005",
+      "name": "田中太郎",
+      "openId": "test_user_tanaka_001"
+    },
+    {
+      "id": "690006",
+      "name": "佐藤花子",
+      "openId": "test_user_sato_002"
+    },
+    {
+      "id": "690007",
+      "name": "鈴木一郎",
+      "openId": "test_user_suzuki_003"
+    },
+    {
+      "id": "690008",
+      "name": "高橋美咲",
+      "openId": "test_user_takahashi_004"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\topenId\n690005\t田中太郎\ttest_user_tanaka_001\n690006\t佐藤花子\ttest_user_sato_002\n690007\t鈴木一郎\ttest_user_suzuki_003\n690008\t高橋美咲\ttest_user_takahashi_004\n",
+  "stderr": "",
+  "execution_time_ms": 1581
+}

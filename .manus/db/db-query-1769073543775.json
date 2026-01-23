@@ -1,0 +1,70 @@
+{
+  "query": "SELECT dt.id, dt.name, dt.userId, u.name as userName FROM digital_twins dt JOIN users u ON dt.userId = u.id WHERE dt.name LIKE '%田中%' OR dt.name LIKE '%佐藤%' OR dt.name LIKE '%鈴木%' OR dt.name LIKE '%高橋%' OR dt.name LIKE '%伊藤%' OR dt.name LIKE '%渡辺%' OR dt.name LIKE '%山本%' OR dt.name LIKE '%中村%' OR dt.name LIKE '%小林%' OR dt.name LIKE '%加藤%' LIMIT 20;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT dt.id, dt.name, dt.userId, u.name as userName FROM digital_twins dt JOIN users u ON dt.userId = u.id WHERE dt.name LIKE '%田中%' OR dt.name LIKE '%佐藤%' OR dt.name LIKE '%鈴木%' OR dt.name LIKE '%高橋%' OR dt.name LIKE '%伊藤%' OR dt.name LIKE '%渡辺%' OR dt.name LIKE '%山本%' OR dt.name LIKE '%中村%' OR dt.name LIKE '%小林%' OR dt.name LIKE '%加藤%' LIMIT 20;",
+  "rows": [
+    {
+      "id": "30001",
+      "name": "田中太郎",
+      "userId": "690005",
+      "userName": "田中太郎"
+    },
+    {
+      "id": "30002",
+      "name": "佐藤花子",
+      "userId": "690006",
+      "userName": "佐藤花子"
+    },
+    {
+      "id": "30003",
+      "name": "鈴木一郎",
+      "userId": "690007",
+      "userName": "鈴木一郎"
+    },
+    {
+      "id": "30004",
+      "name": "高橋美咲",
+      "userId": "690008",
+      "userName": "高橋美咲"
+    },
+    {
+      "id": "30005",
+      "name": "伊藤健太",
+      "userId": "690009",
+      "userName": "伊藤健太"
+    },
+    {
+      "id": "30006",
+      "name": "渡辺愛",
+      "userId": "690011",
+      "userName": "渡辺愛"
+    },
+    {
+      "id": "30007",
+      "name": "山本大輔",
+      "userId": "690012",
+      "userName": "山本大輔"
+    },
+    {
+      "id": "30008",
+      "name": "中村さくら",
+      "userId": "690013",
+      "userName": "中村さくら"
+    },
+    {
+      "id": "30009",
+      "name": "小林誠",
+      "userId": "690014",
+      "userName": "小林誠"
+    },
+    {
+      "id": "30010",
+      "name": "加藤由美",
+      "userId": "690015",
+      "userName": "加藤由美"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\tuserId\tuserName\n30001\t田中太郎\t690005\t田中太郎\n30002\t佐藤花子\t690006\t佐藤花子\n30003\t鈴木一郎\t690007\t鈴木一郎\n30004\t高橋美咲\t690008\t高橋美咲\n30005\t伊藤健太\t690009\t伊藤健太\n30006\t渡辺愛\t690011\t渡辺愛\n30007\t山本大輔\t690012\t山本大輔\n30008\t中村さくら\t690013\t中村さくら\n30009\t小林誠\t690014\t小林誠\n30010\t加藤由美\t690015\t加藤由美\n",
+  "stderr": "",
+  "execution_time_ms": 1519
+}

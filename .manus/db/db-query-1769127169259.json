@@ -1,0 +1,157 @@
+{
+  "query": "SELECT * FROM point_settings; SELECT * FROM redeemable_products;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT * FROM point_settings; SELECT * FROM redeemable_products;",
+  "rows": [
+    {
+      "id": "1",
+      "actionType": "big_five_complete",
+      "actionName": "ビッグファイブ診断完了",
+      "actionDescription": "ビッグファイブ診断完了を完了するとポイントが付与されます",
+      "points": "10",
+      "isActive": "1",
+      "category": "診断",
+      "difficulty": "medium",
+      "createdAt": "2026-01-23 00:12:37",
+      "updatedAt": "2026-01-23 00:12:37"
+    },
+    {
+      "id": "2",
+      "actionType": "mbti_complete",
+      "actionName": "MBTI診断完了",
+      "actionDescription": "MBTI診断完了を完了するとポイントが付与されます",
+      "points": "10",
+      "isActive": "1",
+      "category": "診断",
+      "difficulty": "medium",
+      "createdAt": "2026-01-23 00:12:37",
+      "updatedAt": "2026-01-23 00:12:37"
+    },
+    {
+      "id": "3",
+      "actionType": "scenario_answer",
+      "actionName": "価値観シナリオ回答",
+      "actionDescription": "価値観シナリオ回答を完了するとポイントが付与されます",
+      "points": "3",
+      "isActive": "1",
+      "category": "評価",
+      "difficulty": "easy",
+      "createdAt": "2026-01-23 00:12:37",
+      "updatedAt": "2026-01-23 00:12:37"
+    },
+    {
+      "id": "4",
+      "actionType": "friend_prediction",
+      "actionName": "友達の予測評価",
+      "actionDescription": "友達の予測評価を完了するとポイントが付与されます",
+      "points": "2",
+      "isActive": "1",
+      "category": "評価",
+      "difficulty": "easy",
+      "createdAt": "2026-01-23 00:12:37",
+      "updatedAt": "2026-01-23 00:12:37"
+    },
+    {
+      "id": "5",
+      "actionType": "waveform_update",
+      "actionName": "波形更新",
+      "actionDescription": "波形更新を完了するとポイントが付与されます",
+      "points": "1",
+      "isActive": "1",
+      "category": "評価",
+      "difficulty": "easy",
+      "createdAt": "2026-01-23 00:12:37",
+      "updatedAt": "2026-01-23 00:12:37"
+    },
+    {
+      "id": "6",
+      "actionType": "chat_session",
+      "actionName": "分身AIとのチャット",
+      "actionDescription": "分身AIとのチャットを完了するとポイントが付与されます",
+      "points": "5",
+      "isActive": "1",
+      "category": "対話",
+      "difficulty": "medium",
+      "createdAt": "2026-01-23 00:12:38",
+      "updatedAt": "2026-01-23 00:12:38"
+    },
+    {
+      "id": "7",
+      "actionType": "matching_complete",
+      "actionName": "マッチング完了",
+      "actionDescription": "マッチング完了を完了するとポイントが付与されます",
+      "points": "15",
+      "isActive": "1",
+      "category": "対話",
+      "difficulty": "hard",
+      "createdAt": "2026-01-23 00:12:38",
+      "updatedAt": "2026-01-23 00:12:38"
+    },
+    {
+      "id": "8",
+      "actionType": "profile_update",
+      "actionName": "プロフィール更新",
+      "actionDescription": "プロフィール更新を完了するとポイントが付与されます",
+      "points": "2",
+      "isActive": "1",
+      "category": "プロフィール",
+      "difficulty": "easy",
+      "createdAt": "2026-01-23 00:12:38",
+      "updatedAt": "2026-01-23 00:12:38"
+    },
+    {
+      "id": "9",
+      "actionType": "twin_create",
+      "actionName": "分身AI作成",
+      "actionDescription": "分身AI作成を完了するとポイントが付与されます",
+      "points": "20",
+      "isActive": "1",
+      "category": "プロフィール",
+      "difficulty": "medium",
+      "createdAt": "2026-01-23 00:12:38",
+      "updatedAt": "2026-01-23 00:12:38"
+    },
+    {
+      "id": "10",
+      "actionType": "friend_add",
+      "actionName": "友達追加",
+      "actionDescription": "友達追加を完了するとポイントが付与されます",
+      "points": "5",
+      "isActive": "1",
+      "category": "ソーシャル",
+      "difficulty": "easy",
+      "createdAt": "2026-01-23 00:12:39",
+      "updatedAt": "2026-01-23 00:12:39"
+    },
+    {
+      "id": "11",
+      "actionType": "daily_login",
+      "actionName": "デイリーログイン",
+      "actionDescription": "デイリーログインを完了するとポイントが付与されます",
+      "points": "1",
+      "isActive": "1",
+      "category": "ボーナス",
+      "difficulty": "easy",
+      "createdAt": "2026-01-23 00:12:39",
+      "updatedAt": "2026-01-23 00:12:39"
+    },
+    {
+      "id": "12",
+      "actionType": "first_time_bonus",
+      "actionName": "初回登録ボーナス",
+      "actionDescription": "初回登録ボーナスを完了するとポイントが付与されます",
+      "points": "100",
+      "isActive": "1",
+      "category": "ボーナス",
+      "difficulty": "easy",
+      "createdAt": "2026-01-23 00:12:39",
+      "updatedAt": "2026-01-23 00:12:39"
+    }
+  ],
+  "messages": [
+    "id\tname\tdescription\timageUrl\tpointsCost\tpriceYen\tcategory\tstock\tisActive\tsortOrder\tcreatedAt\tupdatedAt",
+    "1\tカタオモイカード\t名刺型デジタル名刺サービス「Kataomoi（片思い）」のカード。NFCタッチで瞬時にプロフィール共有が可能。\tNULL\t5500\t5500\tデジタル名刺\tNULL\t1\t1\t2026-01-23 00:12:39\t2026-01-23 00:12:39"
+  ],
+  "stdout": "id\tactionType\tactionName\tactionDescription\tpoints\tisActive\tcategory\tdifficulty\tcreatedAt\tupdatedAt\n1\tbig_five_complete\tビッグファイブ診断完了\tビッグファイブ診断完了を完了するとポイントが付与されます\t10\t1\t診断\tmedium\t2026-01-23 00:12:37\t2026-01-23 00:12:37\n2\tmbti_complete\tMBTI診断完了\tMBTI診断完了を完了するとポイントが付与されます\t10\t1\t診断\tmedium\t2026-01-23 00:12:37\t2026-01-23 00:12:37\n3\tscenario_answer\t価値観シナリオ回答\t価値観シナリオ回答を完了するとポイントが付与されます\t3\t1\t評価\teasy\t2026-01-23 00:12:37\t2026-01-23 00:12:37\n4\tfriend_prediction\t友達の予測評価\t友達の予測評価を完了するとポイントが付与されます\t2\t1\t評価\teasy\t2026-01-23 00:12:37\t2026-01-23 00:12:37\n5\twaveform_update\t波形更新\t波形更新を完了するとポイントが付与されます\t1\t1\t評価\teasy\t2026-01-23 00:12:37\t2026-01-23 00:12:37\n6\tchat_session\t分身AIとのチャット\t分身AIとのチャットを完了するとポイントが付与されます\t5\t1\t対話\tmedium\t2026-01-23 00:12:38\t2026-01-23 00:12:38\n7\tmatching_complete\tマッチング完了\tマッチング完了を完了するとポイントが付与されます\t15\t1\t対話\thard\t2026-01-23 00:12:38\t2026-01-23 00:12:38\n8\tprofile_update\tプロフィール更新\tプロフィール更新を完了するとポイントが付与されます\t2\t1\tプロフィール\teasy\t2026-01-23 00:12:38\t2026-01-23 00:12:38\n9\ttwin_create\t分身AI作成\t分身AI作成を完了するとポイントが付与されます\t20\t1\tプロフィール\tmedium\t2026-01-23 00:12:38\t2026-01-23 00:12:38\n10\tfriend_add\t友達追加\t友達追加を完了するとポイントが付与されます\t5\t1\tソーシャル\teasy\t2026-01-23 00:12:39\t2026-01-23 00:12:39\n11\tdaily_login\tデイリーログイン\tデイリーログインを完了するとポイントが付与されます\t1\t1\tボーナス\teasy\t2026-01-23 00:12:39\t2026-01-23 00:12:39\n12\tfirst_time_bonus\t初回登録ボーナス\t初回登録ボーナスを完了するとポイントが付与されます\t100\t1\tボーナス\teasy\t2026-01-23 00:12:39\t2026-01-23 00:12:39\nid\tname\tdescription\timageUrl\tpointsCost\tpriceYen\tcategory\tstock\tisActive\tsortOrder\tcreatedAt\tupdatedAt\n1\tカタオモイカード\t名刺型デジタル名刺サービス「Kataomoi（片思い）」のカード。NFCタッチで瞬時にプロフィール共有が可能。\tNULL\t5500\t5500\tデジタル名刺\tNULL\t1\t1\t2026-01-23 00:12:39\t2026-01-23 00:12:39\n",
+  "stderr": "",
+  "execution_time_ms": 1900
+}

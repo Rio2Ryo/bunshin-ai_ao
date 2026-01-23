@@ -1,0 +1,80 @@
+{
+  "query": "SELECT u.id, u.name, u.friendCode, dt.id as twinId, dt.name as twinName FROM users u LEFT JOIN digital_twins dt ON u.id = dt.userId WHERE u.name IN ('田中太郎', '佐藤花子', '鈴木一郎', '高橋美咲', '伊藤健太', '渡辺愛', '山本大輔', '中村さくら', '小林誠', '加藤由美');",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT u.id, u.name, u.friendCode, dt.id as twinId, dt.name as twinName FROM users u LEFT JOIN digital_twins dt ON u.id = dt.userId WHERE u.name IN ('田中太郎', '佐藤花子', '鈴木一郎', '高橋美咲', '伊藤健太', '渡辺愛', '山本大輔', '中村さくら', '小林誠', '加藤由美');",
+  "rows": [
+    {
+      "id": "690005",
+      "name": "田中太郎",
+      "friendCode": "TANAKA01",
+      "twinId": "30001",
+      "twinName": "田中太郎"
+    },
+    {
+      "id": "690006",
+      "name": "佐藤花子",
+      "friendCode": "SATO0002",
+      "twinId": "30002",
+      "twinName": "佐藤花子"
+    },
+    {
+      "id": "690007",
+      "name": "鈴木一郎",
+      "friendCode": "SUZUKI03",
+      "twinId": "30003",
+      "twinName": "鈴木一郎"
+    },
+    {
+      "id": "690008",
+      "name": "高橋美咲",
+      "friendCode": "TAKAHA04",
+      "twinId": "30004",
+      "twinName": "高橋美咲"
+    },
+    {
+      "id": "690009",
+      "name": "伊藤健太",
+      "friendCode": "ITO00005",
+      "twinId": "30005",
+      "twinName": "伊藤健太"
+    },
+    {
+      "id": "690011",
+      "name": "渡辺愛",
+      "friendCode": "WATANA06",
+      "twinId": "30006",
+      "twinName": "渡辺愛"
+    },
+    {
+      "id": "690012",
+      "name": "山本大輔",
+      "friendCode": "YAMAMO07",
+      "twinId": "30007",
+      "twinName": "山本大輔"
+    },
+    {
+      "id": "690013",
+      "name": "中村さくら",
+      "friendCode": "NAKAMU08",
+      "twinId": "30008",
+      "twinName": "中村さくら"
+    },
+    {
+      "id": "690014",
+      "name": "小林誠",
+      "friendCode": "KOBAYA09",
+      "twinId": "30009",
+      "twinName": "小林誠"
+    },
+    {
+      "id": "690015",
+      "name": "加藤由美",
+      "friendCode": "KATO0010",
+      "twinId": "30010",
+      "twinName": "加藤由美"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\tfriendCode\ttwinId\ttwinName\n690005\t田中太郎\tTANAKA01\t30001\t田中太郎\n690006\t佐藤花子\tSATO0002\t30002\t佐藤花子\n690007\t鈴木一郎\tSUZUKI03\t30003\t鈴木一郎\n690008\t高橋美咲\tTAKAHA04\t30004\t高橋美咲\n690009\t伊藤健太\tITO00005\t30005\t伊藤健太\n690011\t渡辺愛\tWATANA06\t30006\t渡辺愛\n690012\t山本大輔\tYAMAMO07\t30007\t山本大輔\n690013\t中村さくら\tNAKAMU08\t30008\t中村さくら\n690014\t小林誠\tKOBAYA09\t30009\t小林誠\n690015\t加藤由美\tKATO0010\t30010\t加藤由美\n",
+  "stderr": "",
+  "execution_time_ms": 1524
+}

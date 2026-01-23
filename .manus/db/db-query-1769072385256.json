@@ -1,0 +1,130 @@
+{
+  "query": "SELECT id, userId, friendId, status FROM friendships WHERE status = 'accepted' LIMIT 20;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT id, userId, friendId, status FROM friendships WHERE status = 'accepted' LIMIT 20;",
+  "rows": [
+    {
+      "id": "1",
+      "userId": "30065",
+      "friendId": "1",
+      "status": "accepted"
+    },
+    {
+      "id": "30002",
+      "userId": "1",
+      "friendId": "3",
+      "status": "accepted"
+    },
+    {
+      "id": "30003",
+      "userId": "3",
+      "friendId": "1",
+      "status": "accepted"
+    },
+    {
+      "id": "30004",
+      "userId": "1",
+      "friendId": "4",
+      "status": "accepted"
+    },
+    {
+      "id": "30005",
+      "userId": "4",
+      "friendId": "1",
+      "status": "accepted"
+    },
+    {
+      "id": "30006",
+      "userId": "1",
+      "friendId": "5",
+      "status": "accepted"
+    },
+    {
+      "id": "30007",
+      "userId": "5",
+      "friendId": "1",
+      "status": "accepted"
+    },
+    {
+      "id": "30008",
+      "userId": "1",
+      "friendId": "6",
+      "status": "accepted"
+    },
+    {
+      "id": "30009",
+      "userId": "6",
+      "friendId": "1",
+      "status": "accepted"
+    },
+    {
+      "id": "30010",
+      "userId": "1",
+      "friendId": "7",
+      "status": "accepted"
+    },
+    {
+      "id": "30011",
+      "userId": "7",
+      "friendId": "1",
+      "status": "accepted"
+    },
+    {
+      "id": "30012",
+      "userId": "1",
+      "friendId": "8",
+      "status": "accepted"
+    },
+    {
+      "id": "30013",
+      "userId": "8",
+      "friendId": "1",
+      "status": "accepted"
+    },
+    {
+      "id": "30014",
+      "userId": "1",
+      "friendId": "9",
+      "status": "accepted"
+    },
+    {
+      "id": "30015",
+      "userId": "9",
+      "friendId": "1",
+      "status": "accepted"
+    },
+    {
+      "id": "30016",
+      "userId": "1",
+      "friendId": "10",
+      "status": "accepted"
+    },
+    {
+      "id": "30017",
+      "userId": "10",
+      "friendId": "1",
+      "status": "accepted"
+    },
+    {
+      "id": "30018",
+      "userId": "1",
+      "friendId": "11",
+      "status": "accepted"
+    },
+    {
+      "id": "30019",
+      "userId": "11",
+      "friendId": "1",
+      "status": "accepted"
+    },
+    {
+      "id": "30020",
+      "userId": "1",
+      "friendId": "12",
+      "status": "accepted"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tuserId\tfriendId\tstatus\n1\t30065\t1\taccepted\n30002\t1\t3\taccepted\n30003\t3\t1\taccepted\n30004\t1\t4\taccepted\n30005\t4\t1\taccepted\n30006\t1\t5\taccepted\n30007\t5\t1\taccepted\n30008\t1\t6\taccepted\n30009\t6\t1\taccepted\n30010\t1\t7\taccepted\n30011\t7\t1\taccepted\n30012\t1\t8\taccepted\n30013\t8\t1\taccepted\n30014\t1\t9\taccepted\n30015\t9\t1\taccepted\n30016\t1\t10\taccepted\n30017\t10\t1\taccepted\n30018\t1\t11\taccepted\n30019\t11\t1\taccepted\n30020\t1\t12\taccepted\n",
+  "stderr": "",
+  "execution_time_ms": 1496
+}

@@ -1,0 +1,50 @@
+{
+  "query": "SELECT * FROM friendships WHERE userId = 1 OR friendId = 1 LIMIT 5;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT * FROM friendships WHERE userId = 1 OR friendId = 1 LIMIT 5;",
+  "rows": [
+    {
+      "id": "1",
+      "userId": "30065",
+      "friendId": "1",
+      "status": "accepted",
+      "createdAt": "2026-01-17 10:56:17",
+      "updatedAt": "2026-01-17 10:58:50"
+    },
+    {
+      "id": "30001",
+      "userId": "1",
+      "friendId": "690005",
+      "status": "pending",
+      "createdAt": "2026-01-22 08:52:22",
+      "updatedAt": "2026-01-22 08:52:22"
+    },
+    {
+      "id": "30002",
+      "userId": "1",
+      "friendId": "3",
+      "status": "accepted",
+      "createdAt": "2026-01-22 08:53:06",
+      "updatedAt": "2026-01-22 08:53:06"
+    },
+    {
+      "id": "30003",
+      "userId": "3",
+      "friendId": "1",
+      "status": "accepted",
+      "createdAt": "2026-01-22 08:53:06",
+      "updatedAt": "2026-01-22 08:53:06"
+    },
+    {
+      "id": "30004",
+      "userId": "1",
+      "friendId": "4",
+      "status": "accepted",
+      "createdAt": "2026-01-22 08:53:06",
+      "updatedAt": "2026-01-22 08:53:06"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tuserId\tfriendId\tstatus\tcreatedAt\tupdatedAt\n1\t30065\t1\taccepted\t2026-01-17 10:56:17\t2026-01-17 10:58:50\n30001\t1\t690005\tpending\t2026-01-22 08:52:22\t2026-01-22 08:52:22\n30002\t1\t3\taccepted\t2026-01-22 08:53:06\t2026-01-22 08:53:06\n30003\t3\t1\taccepted\t2026-01-22 08:53:06\t2026-01-22 08:53:06\n30004\t1\t4\taccepted\t2026-01-22 08:53:06\t2026-01-22 08:53:06\n",
+  "stderr": "",
+  "execution_time_ms": 1561
+}

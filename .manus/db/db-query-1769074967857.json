@@ -1,0 +1,70 @@
+{
+  "query": "SELECT id, name, email FROM users ORDER BY id DESC LIMIT 20;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT id, name, email FROM users ORDER BY id DESC LIMIT 20;",
+  "rows": [
+    {
+      "id": "690015",
+      "name": "加藤由美",
+      "email": "kato@test.example.com"
+    },
+    {
+      "id": "690014",
+      "name": "小林誠",
+      "email": "kobayashi@test.example.com"
+    },
+    {
+      "id": "690013",
+      "name": "中村さくら",
+      "email": "nakamura@test.example.com"
+    },
+    {
+      "id": "690012",
+      "name": "山本大輔",
+      "email": "yamamoto@test.example.com"
+    },
+    {
+      "id": "690011",
+      "name": "渡辺愛",
+      "email": "watanabe@test.example.com"
+    },
+    {
+      "id": "690009",
+      "name": "伊藤健太",
+      "email": "ito@test.example.com"
+    },
+    {
+      "id": "690008",
+      "name": "高橋美咲",
+      "email": "takahashi@test.example.com"
+    },
+    {
+      "id": "690007",
+      "name": "鈴木一郎",
+      "email": "suzuki@test.example.com"
+    },
+    {
+      "id": "690006",
+      "name": "佐藤花子",
+      "email": "sato@test.example.com"
+    },
+    {
+      "id": "690005",
+      "name": "田中太郎",
+      "email": "tanaka@test.example.com"
+    },
+    {
+      "id": "30065",
+      "name": "Matsuura Ryosuke",
+      "email": "rmatsuura.int@gmail.com"
+    },
+    {
+      "id": "1",
+      "name": "共通用GIFT",
+      "email": "common.gifted.tokyo@gmail.com"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\temail\n690015\t加藤由美\tkato@test.example.com\n690014\t小林誠\tkobayashi@test.example.com\n690013\t中村さくら\tnakamura@test.example.com\n690012\t山本大輔\tyamamoto@test.example.com\n690011\t渡辺愛\twatanabe@test.example.com\n690009\t伊藤健太\tito@test.example.com\n690008\t高橋美咲\ttakahashi@test.example.com\n690007\t鈴木一郎\tsuzuki@test.example.com\n690006\t佐藤花子\tsato@test.example.com\n690005\t田中太郎\ttanaka@test.example.com\n30065\tMatsuura Ryosuke\trmatsuura.int@gmail.com\n1\t共通用GIFT\tcommon.gifted.tokyo@gmail.com\n",
+  "stderr": "",
+  "execution_time_ms": 1536
+}

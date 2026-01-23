@@ -29,7 +29,26 @@ import { notifyOwner } from "./_core/notification";
 import { generatePresentationContent, parseMarkdownToSlides, generateSlideContentFile } from "./services/presentationGenerator";
 import { analyzeBigFiveTraits, analyzeJudgmentThresholds, evaluateValueWaveform, calculatePersonalitySimilarity, calculateAccuracyScore, conductPersonalityInterview, analyzeMBTI, conductMBTIInterview, runIntegratedPersonalityAnalysis, generateSelfWaveform, calculateWaveformSimilarity, calculateVirtueMineCompatibility } from "./services/personalityEvaluator";
 import { conductValueScenarioInterview, getCumulativeWaveform, getScenarioProgress, VALUE_SCENARIOS, SCENARIO_CATEGORIES, evaluateChatMessage, reevaluateExistingResponses, updateCumulativeWaveform, evaluateByAllTwins } from "./services/valueScenarioService";
+import { updateIntimacyScore, getAllIntimacyScores, INTIMACY_LEVELS } from "./services/intimacyService";
+import { 
+  getUserPoints, 
+  awardPoints, 
+  spendPoints, 
+  getPointTransactions, 
+  getRedeemableProducts, 
+  redeemProduct, 
+  getUserRedemptions,
+  getAllPointSettings,
+  updatePointSetting,
+  initializePointSettings,
+  initializeProducts,
+  POINT_ACTIONS
+} from "./services/pointService";
+import { requestPredictionsFromFriends, comparePredictionWithActual, updateOtherPerspectiveWaveform, calculateSelfReportGap, generatePredictionsForExistingResponses } from "./services/friendPredictionService";
 import type { BigFiveTraits, JudgmentThresholds, ValueWaveform, MBTIType } from "../drizzle/schema";
+import { otherPerspectiveWaveforms } from "../drizzle/schema";
+import { getDb } from "./db";
+import { eq } from "drizzle-orm";
 
 export const appRouter = router({
   system: systemRouter,
@@ -80,10 +99,20 @@ export const appRouter = router({
       const cumulativeWaveform = await getCumulativeWaveform(ctx.user.id, twin.id);
       const scenarioProgress = await getScenarioProgress(ctx.user.id, twin.id);
       
+      // 他者視点波形を取得
+      const db = await getDb();
+      const otherPerspectiveWaveform = db ? await db
+        .select()
+        .from(otherPerspectiveWaveforms)
+        .where(eq(otherPerspectiveWaveforms.userId, ctx.user.id))
+        .limit(1)
+        .then(rows => rows[0] || null) : null;
+      
       return {
         ...twin,
         cumulativeWaveform,
         scenarioProgress,
+        otherPerspectiveWaveform,
       };
     }),
 
@@ -156,6 +185,10 @@ ${input.rawInput}`,
           }
         }
 
+        // 既存の分身AIがあるか確認
+        const existingTwin = await getDigitalTwinByUser(ctx.user.id);
+        const isNewTwin = !existingTwin;
+        
         const id = await upsertDigitalTwin(ctx.user.id, {
           name: input.name,
           rawInput: input.rawInput,
@@ -164,6 +197,17 @@ ${input.rawInput}`,
           systemPrompt,
           status: "active",
         });
+        
+        // 新規作成の場合のみポイント付与
+        if (isNewTwin) {
+          await awardPoints(
+            ctx.user.id,
+            POINT_ACTIONS.TWIN_CREATE.type,
+            `twin_${id}`,
+            "分身AIを作成"
+          ).catch(err => console.error("Point award error:", err));
+        }
+        
         return { id };
       }),
 
@@ -655,6 +699,16 @@ ${input.rawInput}`,
           input.userResponse
         );
 
+        // ユーザーが回答した場合はポイントを付与
+        if (input.userResponse && result.scenarioId) {
+          await awardPoints(
+            ctx.user.id,
+            POINT_ACTIONS.SCENARIO_ANSWER.type,
+            `scenario_${result.scenarioId}`,
+            `価値観シナリオ「${result.scenarioId}」に回答`
+          ).catch(err => console.error("Point award error:", err));
+        }
+
         return result;
       }),
 
@@ -740,6 +794,15 @@ ${input.rawInput}`,
       .input(z.object({ requestId: z.number() }))
       .mutation(async ({ ctx, input }) => {
         await acceptFriendRequest(input.requestId, ctx.user.id);
+        
+        // 友達追加でポイント付与
+        await awardPoints(
+          ctx.user.id,
+          POINT_ACTIONS.FRIEND_ADD.type,
+          `friend_${input.requestId}`,
+          "友達リクエストを承認"
+        ).catch(err => console.error("Point award error:", err));
+        
         return { success: true };
       }),
 
@@ -794,6 +857,103 @@ ${input.rawInput}`,
           waveformSimilarity,
           ...compatibility,
           friendName: friendTwin.name
+        };
+      }),
+
+    // 親密度を取得
+    getIntimacy: protectedProcedure
+      .input(z.object({ friendId: z.number() }))
+      .query(async ({ ctx, input }) => {
+        const scores = await getAllIntimacyScores(ctx.user.id);
+        const friendScore = scores.find(s => s.friendId === input.friendId);
+        if (!friendScore) {
+          return {
+            intimacyScore: 0,
+            intimacyLevel: "stranger" as const,
+            intimacyLevelLabel: INTIMACY_LEVELS.stranger.label,
+            predictionAccuracy: null
+          };
+        }
+        return {
+          ...friendScore,
+          intimacyLevelLabel: INTIMACY_LEVELS[friendScore.intimacyLevel].label
+        };
+      }),
+
+    // 親密度を更新
+    updateIntimacy: protectedProcedure
+      .input(z.object({ friendId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const result = await updateIntimacyScore(ctx.user.id, input.friendId);
+        return {
+          ...result,
+          intimacyLevelLabel: INTIMACY_LEVELS[result.intimacyLevel].label
+        };
+      }),
+
+    // 全友達の親密度一覧を取得
+    getAllIntimacyScores: protectedProcedure
+      .query(async ({ ctx }) => {
+        const scores = await getAllIntimacyScores(ctx.user.id);
+        return scores.map(s => ({
+          ...s,
+          intimacyLevelLabel: INTIMACY_LEVELS[s.intimacyLevel].label
+        }));
+      }),
+
+    // 友達に予測を依頼（シナリオ回答前）
+    requestPredictions: protectedProcedure
+      .input(z.object({
+        scenarioId: z.string(),
+        scenarioText: z.string(),
+        friendUserIds: z.array(z.number())
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+        const predictionIds = await requestPredictionsFromFriends(
+          ctx.user.id,
+          twin.id,
+          input.scenarioId,
+          input.scenarioText,
+          input.friendUserIds
+        );
+        return { predictionIds, count: predictionIds.length };
+      }),
+
+    // 他者視点波形を更新（既存の予測から波形を再計算）
+    updateOtherPerspectiveWaveform: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+        await updateOtherPerspectiveWaveform(ctx.user.id, twin.id);
+        const gap = await calculateSelfReportGap(ctx.user.id);
+        return { success: true, selfReportGap: gap };
+      }),
+
+    // 友達の分身AIから予測を生成して他者視点波形を構築
+    generateFriendPredictions: protectedProcedure
+      .mutation(async ({ ctx }) => {
+        console.log("[generateFriendPredictions] Called for user:", ctx.user.id);
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+        
+        const result = await generatePredictionsForExistingResponses(ctx.user.id, twin.id);
+        
+        // 予測生成後に他者視点波形を更新
+        const waveformResult = await updateOtherPerspectiveWaveform(ctx.user.id, twin.id);
+        console.log("[generateFriendPredictions] Waveform updated:", waveformResult);
+        
+        return {
+          success: true,
+          ...result,
+          waveform: waveformResult
         };
       }),
 
@@ -1410,6 +1570,14 @@ ${dialogueText}
 
         // Increment matching count for usage tracking
         await incrementMatchingCount(ctx.user.id);
+        
+        // マッチング完了でポイント付与
+        await awardPoints(
+          ctx.user.id,
+          POINT_ACTIONS.MATCHING_COMPLETE.type,
+          `matching_${sessionId}`,
+          `マッチング完了: ${myTwin.name} × ${friendTwin.name}`
+        ).catch(err => console.error("Point award error:", err));
 
         return { id: sessionId, dialogues };
       }),
@@ -1933,6 +2101,104 @@ ${dialogueText}`,
         await updateUserPlan(ctx.user.id, input.plan);
         return { success: true, plan: input.plan };
       }),
+  }),
+
+  // ============ Points System ============
+  points: router({
+    // ポイント残高を取得
+    getBalance: protectedProcedure.query(async ({ ctx }) => {
+      const userPoint = await getUserPoints(ctx.user.id);
+      return {
+        balance: userPoint.balance,
+        totalEarned: userPoint.totalEarned,
+        totalSpent: userPoint.totalSpent,
+        totalExpired: userPoint.totalExpired,
+        lastActivityAt: userPoint.lastActivityAt,
+        expiresAt: userPoint.expiresAt,
+      };
+    }),
+
+    // ポイント取引履歴を取得
+    getTransactions: protectedProcedure
+      .input(z.object({ limit: z.number().optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        return getPointTransactions(ctx.user.id, input?.limit ?? 50);
+      }),
+
+    // ポイントを手動で付与（テスト用）
+    award: protectedProcedure
+      .input(z.object({
+        actionType: z.string(),
+        referenceId: z.string().optional(),
+        description: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        return awardPoints(ctx.user.id, input.actionType, input.referenceId, input.description);
+      }),
+
+    // 交換可能な製品一覧を取得
+    getProducts: protectedProcedure.query(async () => {
+      return getRedeemableProducts();
+    }),
+
+    // 製品をポイントで交換
+    redeemProduct: protectedProcedure
+      .input(z.object({
+        productId: z.number(),
+        shippingInfo: z.object({
+          name: z.string().optional(),
+          address: z.string().optional(),
+          phone: z.string().optional(),
+          email: z.string().optional(),
+          notes: z.string().optional(),
+        }).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        return redeemProduct(ctx.user.id, input.productId, input.shippingInfo);
+      }),
+
+    // 交換履歴を取得
+    getRedemptions: protectedProcedure.query(async ({ ctx }) => {
+      return getUserRedemptions(ctx.user.id);
+    }),
+
+    // ポイント設定を取得（管理者用）
+    getSettings: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "管理者権限が必要です" });
+      }
+      return getAllPointSettings();
+    }),
+
+    // ポイント設定を更新（管理者用）
+    updateSetting: protectedProcedure
+      .input(z.object({
+        actionType: z.string(),
+        points: z.number().min(0),
+        isActive: z.boolean().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.user.role !== "admin") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "管理者権限が必要です" });
+        }
+        await updatePointSetting(input.actionType, input.points, input.isActive);
+        return { success: true };
+      }),
+
+    // ポイント設定を初期化（管理者用）
+    initializeSettings: protectedProcedure.mutation(async ({ ctx }) => {
+      if (ctx.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "管理者権限が必要です" });
+      }
+      await initializePointSettings();
+      await initializeProducts();
+      return { success: true };
+    }),
+
+    // ポイントアクション一覧を取得
+    getActionTypes: protectedProcedure.query(async () => {
+      return Object.values(POINT_ACTIONS);
+    }),
   }),
 });
 

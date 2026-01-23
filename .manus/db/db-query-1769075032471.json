@@ -1,0 +1,15 @@
+{
+  "query": "SELECT targetUserId, SUM(CASE WHEN comparedAt IS NOT NULL THEN 1 ELSE 0 END) as compared_count, COUNT(*) as total FROM friend_predictions GROUP BY targetUserId;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT targetUserId, SUM(CASE WHEN comparedAt IS NOT NULL THEN 1 ELSE 0 END) as compared_count, COUNT(*) as total FROM friend_predictions GROUP BY targetUserId;",
+  "rows": [
+    {
+      "targetUserId": "1",
+      "compared_count": "66",
+      "total": "66"
+    }
+  ],
+  "messages": [],
+  "stdout": "targetUserId\tcompared_count\ttotal\n1\t66\t66\n",
+  "stderr": "",
+  "execution_time_ms": 1515
+}

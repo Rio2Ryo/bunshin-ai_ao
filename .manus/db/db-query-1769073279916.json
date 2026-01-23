@@ -1,0 +1,64 @@
+{
+  "query": "SELECT fp.id, fp.targetUserId, fp.predictorTwinId, fp.scenarioId, fp.predictedVerdict, fp.comparedAt,\n       dt.name as predictorName\nFROM friend_predictions fp\nLEFT JOIN digital_twins dt ON fp.predictorTwinId = dt.id\nORDER BY fp.id DESC\nLIMIT 10",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT fp.id, fp.targetUserId, fp.predictorTwinId, fp.scenarioId, fp.predictedVerdict, fp.comparedAt,\n       dt.name as predictorName\nFROM friend_predictions fp\nLEFT JOIN digital_twins dt ON fp.predictorTwinId = dt.id\nORDER BY fp.id DESC\nLIMIT 10",
+  "rows": [
+    {
+      "id": "6",
+      "targetUserId": "1",
+      "predictorTwinId": "3",
+      "scenarioId": "business_whistleblower",
+      "predictedVerdict": "virtue",
+      "comparedAt": "NULL",
+      "predictorName": "障害者松浦"
+    },
+    {
+      "id": "5",
+      "targetUserId": "1",
+      "predictorTwinId": "3",
+      "scenarioId": "business_competitor",
+      "predictedVerdict": "virtue",
+      "comparedAt": "NULL",
+      "predictorName": "障害者松浦"
+    },
+    {
+      "id": "4",
+      "targetUserId": "1",
+      "predictorTwinId": "3",
+      "scenarioId": "business_overtime",
+      "predictedVerdict": "virtue",
+      "comparedAt": "NULL",
+      "predictorName": "障害者松浦"
+    },
+    {
+      "id": "3",
+      "targetUserId": "1",
+      "predictorTwinId": "3",
+      "scenarioId": "disaster_help_stranger",
+      "predictedVerdict": "virtue",
+      "comparedAt": "NULL",
+      "predictorName": "障害者松浦"
+    },
+    {
+      "id": "2",
+      "targetUserId": "1",
+      "predictorTwinId": "3",
+      "scenarioId": "disaster_donation",
+      "predictedVerdict": "neutral",
+      "comparedAt": "NULL",
+      "predictorName": "障害者松浦"
+    },
+    {
+      "id": "1",
+      "targetUserId": "1",
+      "predictorTwinId": "3",
+      "scenarioId": "disaster_volunteer",
+      "predictedVerdict": "neutral",
+      "comparedAt": "NULL",
+      "predictorName": "障害者松浦"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\ttargetUserId\tpredictorTwinId\tscenarioId\tpredictedVerdict\tcomparedAt\tpredictorName\n6\t1\t3\tbusiness_whistleblower\tvirtue\tNULL\t障害者松浦\n5\t1\t3\tbusiness_competitor\tvirtue\tNULL\t障害者松浦\n4\t1\t3\tbusiness_overtime\tvirtue\tNULL\t障害者松浦\n3\t1\t3\tdisaster_help_stranger\tvirtue\tNULL\t障害者松浦\n2\t1\t3\tdisaster_donation\tneutral\tNULL\t障害者松浦\n1\t1\t3\tdisaster_volunteer\tneutral\tNULL\t障害者松浦\n",
+  "stderr": "",
+  "execution_time_ms": 1678
+}

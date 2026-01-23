@@ -1,0 +1,26 @@
+{
+  "query": "SELECT f.id, f.userId, u1.name as userName, f.friendId, u2.name as friendName, f.status \nFROM friendships f \nJOIN users u1 ON f.userId = u1.id \nJOIN users u2 ON f.friendId = u2.id \nWHERE f.userId = 1 OR f.friendId = 1;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT f.id, f.userId, u1.name as userName, f.friendId, u2.name as friendName, f.status \nFROM friendships f \nJOIN users u1 ON f.userId = u1.id \nJOIN users u2 ON f.friendId = u2.id \nWHERE f.userId = 1 OR f.friendId = 1;",
+  "rows": [
+    {
+      "id": "30001",
+      "userId": "1",
+      "userName": "共通用GIFT",
+      "friendId": "690005",
+      "friendName": "田中太郎",
+      "status": "pending"
+    },
+    {
+      "id": "1",
+      "userId": "30065",
+      "userName": "Matsuura Ryosuke",
+      "friendId": "1",
+      "friendName": "共通用GIFT",
+      "status": "accepted"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tuserId\tuserName\tfriendId\tfriendName\tstatus\n30001\t1\t共通用GIFT\t690005\t田中太郎\tpending\n1\t30065\tMatsuura Ryosuke\t1\t共通用GIFT\taccepted\n",
+  "stderr": "",
+  "execution_time_ms": 1548
+}

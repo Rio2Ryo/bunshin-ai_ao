@@ -1,0 +1,8 @@
+{
+  "query": "SELECT targetUserId, comparedAt, COUNT(*) as cnt FROM friend_predictions GROUP BY targetUserId, comparedAt IS NOT NULL;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT targetUserId, comparedAt, COUNT(*) as cnt FROM friend_predictions GROUP BY targetUserId, comparedAt IS NOT NULL;",
+  "returncode": 1,
+  "logs": [
+    "ERROR 1055 (42000) at line 1: Expression #2 of SELECT list is not in GROUP BY clause and contains nonaggregated column '7dnHzn9LN53aWPboB5GxFU.friend_predictions.comparedAt' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by"
+  ]
+}

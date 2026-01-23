@@ -1,0 +1,150 @@
+{
+  "query": "SELECT f.id, f.userId, f.friendId, f.status, dt.name as friendTwinName \nFROM friendships f \nLEFT JOIN digital_twins dt ON dt.userId = f.friendId \nWHERE f.userId = 1 AND f.status = 'accepted';",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT f.id, f.userId, f.friendId, f.status, dt.name as friendTwinName \nFROM friendships f \nLEFT JOIN digital_twins dt ON dt.userId = f.friendId \nWHERE f.userId = 1 AND f.status = 'accepted';",
+  "rows": [
+    {
+      "id": "30022",
+      "userId": "1",
+      "friendId": "690005",
+      "status": "accepted",
+      "friendTwinName": "田中太郎"
+    },
+    {
+      "id": "30024",
+      "userId": "1",
+      "friendId": "690006",
+      "status": "accepted",
+      "friendTwinName": "佐藤花子"
+    },
+    {
+      "id": "30026",
+      "userId": "1",
+      "friendId": "690007",
+      "status": "accepted",
+      "friendTwinName": "鈴木一郎"
+    },
+    {
+      "id": "30028",
+      "userId": "1",
+      "friendId": "690008",
+      "status": "accepted",
+      "friendTwinName": "高橋美咲"
+    },
+    {
+      "id": "30030",
+      "userId": "1",
+      "friendId": "690009",
+      "status": "accepted",
+      "friendTwinName": "伊藤健太"
+    },
+    {
+      "id": "30032",
+      "userId": "1",
+      "friendId": "690011",
+      "status": "accepted",
+      "friendTwinName": "渡辺愛"
+    },
+    {
+      "id": "30034",
+      "userId": "1",
+      "friendId": "690012",
+      "status": "accepted",
+      "friendTwinName": "山本大輔"
+    },
+    {
+      "id": "30036",
+      "userId": "1",
+      "friendId": "690013",
+      "status": "accepted",
+      "friendTwinName": "中村さくら"
+    },
+    {
+      "id": "30038",
+      "userId": "1",
+      "friendId": "690014",
+      "status": "accepted",
+      "friendTwinName": "小林誠"
+    },
+    {
+      "id": "30040",
+      "userId": "1",
+      "friendId": "690015",
+      "status": "accepted",
+      "friendTwinName": "加藤由美"
+    },
+    {
+      "id": "30002",
+      "userId": "1",
+      "friendId": "3",
+      "status": "accepted",
+      "friendTwinName": "NULL"
+    },
+    {
+      "id": "30004",
+      "userId": "1",
+      "friendId": "4",
+      "status": "accepted",
+      "friendTwinName": "NULL"
+    },
+    {
+      "id": "30006",
+      "userId": "1",
+      "friendId": "5",
+      "status": "accepted",
+      "friendTwinName": "NULL"
+    },
+    {
+      "id": "30008",
+      "userId": "1",
+      "friendId": "6",
+      "status": "accepted",
+      "friendTwinName": "NULL"
+    },
+    {
+      "id": "30010",
+      "userId": "1",
+      "friendId": "7",
+      "status": "accepted",
+      "friendTwinName": "NULL"
+    },
+    {
+      "id": "30012",
+      "userId": "1",
+      "friendId": "8",
+      "status": "accepted",
+      "friendTwinName": "NULL"
+    },
+    {
+      "id": "30014",
+      "userId": "1",
+      "friendId": "9",
+      "status": "accepted",
+      "friendTwinName": "NULL"
+    },
+    {
+      "id": "30016",
+      "userId": "1",
+      "friendId": "10",
+      "status": "accepted",
+      "friendTwinName": "NULL"
+    },
+    {
+      "id": "30018",
+      "userId": "1",
+      "friendId": "11",
+      "status": "accepted",
+      "friendTwinName": "NULL"
+    },
+    {
+      "id": "30020",
+      "userId": "1",
+      "friendId": "12",
+      "status": "accepted",
+      "friendTwinName": "NULL"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tuserId\tfriendId\tstatus\tfriendTwinName\n30022\t1\t690005\taccepted\t田中太郎\n30024\t1\t690006\taccepted\t佐藤花子\n30026\t1\t690007\taccepted\t鈴木一郎\n30028\t1\t690008\taccepted\t高橋美咲\n30030\t1\t690009\taccepted\t伊藤健太\n30032\t1\t690011\taccepted\t渡辺愛\n30034\t1\t690012\taccepted\t山本大輔\n30036\t1\t690013\taccepted\t中村さくら\n30038\t1\t690014\taccepted\t小林誠\n30040\t1\t690015\taccepted\t加藤由美\n30002\t1\t3\taccepted\tNULL\n30004\t1\t4\taccepted\tNULL\n30006\t1\t5\taccepted\tNULL\n30008\t1\t6\taccepted\tNULL\n30010\t1\t7\taccepted\tNULL\n30012\t1\t8\taccepted\tNULL\n30014\t1\t9\taccepted\tNULL\n30016\t1\t10\taccepted\tNULL\n30018\t1\t11\taccepted\tNULL\n30020\t1\t12\taccepted\tNULL\n",
+  "stderr": "",
+  "execution_time_ms": 1487
+}
