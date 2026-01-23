@@ -325,3 +325,26 @@
 - [x] クエスト一覧ページ
 - [x] 進捗バー表示
 - [x] 達成通知
+
+
+## Clawdbot連携機能（2026-01-23）
+
+### Clawdbot接続設定
+- [x] Clawdbot接続テーブル（clawdbot_connections）
+- [x] Gateway URL・トークン管理
+- [x] 接続テスト機能
+- [x] 接続ステータス管理
+
+### Clawdbot経由のメッセージング
+- [x] Clawdbot OpenAI互換API連携
+- [x] 分身AIとClawdbotのメッセージブリッジ
+- [x] Clawdbotのメモリ・スキル活用
+
+### Clawdbotチャンネル連携
+- [x] LINE/WhatsApp/Telegram経由の分身AI操作
+- [x] Clawdbotのマルチチャンネル機能活用
+
+### UI
+- [x] Clawdbot接続設定ページ
+- [x] Clawdbotステータス表示
+- [x] Clawdbot経由チャットページ

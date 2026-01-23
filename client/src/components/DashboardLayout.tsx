@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/sidebar";
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Coins, Target } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Coins, Target, Link2 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -37,6 +37,7 @@ const menuItems = [
   { icon: Users, label: "マッチング", path: "/matching" },
   { icon: Coins, label: "ポイント", path: "/points" },
   { icon: Target, label: "クエスト", path: "/quests" },
+  { icon: Link2, label: "Clawdbot連携", path: "/clawdbot" },
   { icon: Settings2, label: "AI API設定", path: "/ai-config" },
   { icon: Zap, label: "オーケストレーション", path: "/orchestration" },
   { icon: Crown, label: "プラン", path: "/plan" },

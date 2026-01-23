@@ -736,3 +736,421 @@ export const pointRedemptions = mysqlTable("point_redemptions", {
 
 export type PointRedemption = typeof pointRedemptions.$inferSelect;
 export type InsertPointRedemption = typeof pointRedemptions.$inferInsert;
+
+
+// ============================================
+// Clawdbot風機能のテーブル
+// ============================================
+
+/**
+ * Daily memory logs - 日次メモリログ
+ * Clawdbotのmemory/YYYY-MM-DD.md相当
+ */
+export const dailyMemoryLogs = mysqlTable("daily_memory_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  twinId: int("twinId").notNull(),
+  logDate: varchar("logDate", { length: 10 }).notNull(), // YYYY-MM-DD形式
+  content: text("content").notNull(), // Markdown形式のログ内容
+  summary: text("summary"), // AIによる要約
+  keyPoints: json("keyPoints").$type<string[]>(), // 重要ポイント
+  emotionalTone: varchar("emotionalTone", { length: 50 }), // その日の感情トーン
+  topics: json("topics").$type<string[]>(), // 話題のタグ
+  messageCount: int("messageCount").default(0).notNull(), // その日のメッセージ数
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DailyMemoryLog = typeof dailyMemoryLogs.$inferSelect;
+export type InsertDailyMemoryLog = typeof dailyMemoryLogs.$inferInsert;
+
+/**
+ * Long-term memory - 長期記憶
+ * Clawdbotのmemory.md相当（キュレートされた重要情報）
+ */
+export const longTermMemory = mysqlTable("long_term_memory", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  twinId: int("twinId").notNull(),
+  category: mysqlEnum("category", [
+    "preference", // 好み・嗜好
+    "fact", // 事実・情報
+    "decision", // 決定事項
+    "goal", // 目標
+    "relationship", // 人間関係
+    "skill", // スキル・能力
+    "experience", // 経験
+    "belief", // 信念・価値観
+    "routine", // 習慣・ルーティン
+    "other" // その他
+  ]).notNull(),
+  title: varchar("title", { length: 255 }).notNull(), // 記憶のタイトル
+  content: text("content").notNull(), // 記憶の内容
+  importance: int("importance").default(5).notNull(), // 重要度 (1-10)
+  source: varchar("source", { length: 100 }), // 情報源（会話、診断、ファイルなど）
+  sourceId: varchar("sourceId", { length: 255 }), // 情報源のID
+  tags: json("tags").$type<string[]>(), // タグ
+  embedding: json("embedding").$type<number[]>(), // ベクトル埋め込み（検索用）
+  lastAccessedAt: timestamp("lastAccessedAt"), // 最後にアクセスした日時
+  accessCount: int("accessCount").default(0).notNull(), // アクセス回数
+  isActive: int("isActive").default(1).notNull(), // 有効/無効
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type LongTermMemoryEntry = typeof longTermMemory.$inferSelect;
+export type InsertLongTermMemory = typeof longTermMemory.$inferInsert;
+
+/**
+ * Skills - スキル（プラグイン）定義
+ */
+export const skills = mysqlTable("skills", {
+  id: int("id").autoincrement().primaryKey(),
+  skillId: varchar("skillId", { length: 100 }).notNull().unique(), // スキルの識別子
+  name: varchar("name", { length: 255 }).notNull(), // スキル名
+  description: text("description"), // スキルの説明
+  category: mysqlEnum("category", [
+    "productivity", // 生産性（カレンダー、タスク管理など）
+    "communication", // コミュニケーション（メール、メッセージなど）
+    "information", // 情報収集（天気、ニュースなど）
+    "entertainment", // エンターテイメント
+    "health", // 健康・フィットネス
+    "finance", // 金融・家計
+    "learning", // 学習
+    "social", // ソーシャル
+    "custom" // カスタム
+  ]).notNull(),
+  type: mysqlEnum("type", ["builtin", "community", "custom"]).default("builtin").notNull(),
+  version: varchar("version", { length: 20 }).default("1.0.0").notNull(),
+  author: varchar("author", { length: 255 }),
+  authorId: int("authorId"), // カスタムスキルの作成者
+  // スキルの設定
+  config: json("config").$type<{
+    triggers?: string[]; // トリガーワード
+    requiredPermissions?: string[]; // 必要な権限
+    requiredApis?: string[]; // 必要なAPI
+    parameters?: {
+      name: string;
+      type: string;
+      description: string;
+      required: boolean;
+      default?: unknown;
+    }[];
+  }>(),
+  // スキルの実行コード（カスタムスキルの場合）
+  executionCode: text("executionCode"), // JavaScript/TypeScriptコード
+  systemPrompt: text("systemPrompt"), // スキル用のシステムプロンプト
+  // 統計
+  usageCount: int("usageCount").default(0).notNull(),
+  rating: decimal("rating", { precision: 3, scale: 2 }), // 評価 (0-5)
+  ratingCount: int("ratingCount").default(0).notNull(),
+  isActive: int("isActive").default(1).notNull(),
+  isPublic: int("isPublic").default(0).notNull(), // 公開/非公開
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Skill = typeof skills.$inferSelect;
+export type InsertSkill = typeof skills.$inferInsert;
+
+/**
+ * User skills - ユーザーが有効にしているスキル
+ */
+export const userSkills = mysqlTable("user_skills", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  twinId: int("twinId").notNull(),
+  skillId: int("skillId").notNull(),
+  isEnabled: int("isEnabled").default(1).notNull(),
+  // スキルごとのユーザー設定
+  userConfig: json("userConfig").$type<Record<string, unknown>>(),
+  // 使用統計
+  usageCount: int("usageCount").default(0).notNull(),
+  lastUsedAt: timestamp("lastUsedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type UserSkill = typeof userSkills.$inferSelect;
+export type InsertUserSkill = typeof userSkills.$inferInsert;
+
+/**
+ * Heartbeat settings - ハートビート設定
+ * 分身AIからの定期連絡設定
+ */
+export const heartbeatSettings = mysqlTable("heartbeat_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  twinId: int("twinId").notNull(),
+  isEnabled: int("isEnabled").default(0).notNull(),
+  // スケジュール設定
+  frequency: mysqlEnum("frequency", ["daily", "weekly", "custom"]).default("daily").notNull(),
+  preferredTime: varchar("preferredTime", { length: 5 }), // HH:MM形式
+  preferredDays: json("preferredDays").$type<number[]>(), // 曜日（0=日曜）
+  timezone: varchar("timezone", { length: 50 }).default("Asia/Tokyo").notNull(),
+  // カスタムcron式（frequencyがcustomの場合）
+  cronExpression: varchar("cronExpression", { length: 100 }),
+  // ハートビートの内容設定
+  messageTypes: json("messageTypes").$type<{
+    dailyBriefing: boolean; // 今日の予定・リマインダー
+    progressCheck: boolean; // 進捗確認
+    motivational: boolean; // モチベーションメッセージ
+    learningTip: boolean; // 学習のヒント
+    randomThought: boolean; // ランダムな思考・質問
+  }>(),
+  customPrompt: text("customPrompt"), // カスタムプロンプト
+  // 通知チャネル
+  notificationChannels: json("notificationChannels").$type<{
+    inApp: boolean;
+    line: boolean;
+    email: boolean;
+  }>(),
+  // 統計
+  totalSent: int("totalSent").default(0).notNull(),
+  lastSentAt: timestamp("lastSentAt"),
+  nextScheduledAt: timestamp("nextScheduledAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type HeartbeatSetting = typeof heartbeatSettings.$inferSelect;
+export type InsertHeartbeatSetting = typeof heartbeatSettings.$inferInsert;
+
+/**
+ * Heartbeat messages - ハートビートメッセージ履歴
+ */
+export const heartbeatMessages = mysqlTable("heartbeat_messages", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  twinId: int("twinId").notNull(),
+  settingId: int("settingId").notNull(),
+  messageType: varchar("messageType", { length: 50 }).notNull(),
+  content: text("content").notNull(),
+  // 配信状態
+  status: mysqlEnum("status", ["pending", "sent", "delivered", "read", "failed"]).default("pending").notNull(),
+  sentAt: timestamp("sentAt"),
+  deliveredAt: timestamp("deliveredAt"),
+  readAt: timestamp("readAt"),
+  // ユーザーの反応
+  userResponse: text("userResponse"),
+  respondedAt: timestamp("respondedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type HeartbeatMessage = typeof heartbeatMessages.$inferSelect;
+export type InsertHeartbeatMessage = typeof heartbeatMessages.$inferInsert;
+
+/**
+ * Multi-agent tasks - マルチエージェントタスク
+ * 複数の分身AI間での協力タスク
+ */
+export const multiAgentTasks = mysqlTable("multi_agent_tasks", {
+  id: int("id").autoincrement().primaryKey(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  creatorUserId: int("creatorUserId").notNull(),
+  creatorTwinId: int("creatorTwinId").notNull(),
+  status: mysqlEnum("status", ["draft", "active", "paused", "completed", "cancelled"]).default("draft").notNull(),
+  // 参加者
+  participants: json("participants").$type<{
+    twinId: number;
+    userId: number;
+    twinName: string;
+    role: string; // タスク内での役割
+    status: "invited" | "accepted" | "declined" | "active";
+    joinedAt?: string;
+  }[]>(),
+  // タスクの設定
+  taskType: mysqlEnum("taskType", [
+    "brainstorm", // ブレインストーミング
+    "project", // プロジェクト協力
+    "discussion", // ディスカッション
+    "research", // 共同リサーチ
+    "planning", // 計画立案
+    "review", // レビュー・フィードバック
+    "custom" // カスタム
+  ]).default("discussion").notNull(),
+  // 進捗
+  progress: int("progress").default(0).notNull(), // 0-100%
+  milestones: json("milestones").$type<{
+    id: string;
+    title: string;
+    description?: string;
+    status: "pending" | "in_progress" | "completed";
+    assignedTo?: number; // twinId
+    completedAt?: string;
+  }[]>(),
+  // 成果物
+  deliverables: json("deliverables").$type<{
+    id: string;
+    title: string;
+    type: string;
+    content?: string;
+    url?: string;
+    createdBy: number; // twinId
+    createdAt: string;
+  }[]>(),
+  deadline: timestamp("deadline"),
+  completedAt: timestamp("completedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MultiAgentTask = typeof multiAgentTasks.$inferSelect;
+export type InsertMultiAgentTask = typeof multiAgentTasks.$inferInsert;
+
+/**
+ * Multi-agent messages - マルチエージェントタスク内のメッセージ
+ */
+export const multiAgentMessages = mysqlTable("multi_agent_messages", {
+  id: int("id").autoincrement().primaryKey(),
+  taskId: int("taskId").notNull(),
+  senderTwinId: int("senderTwinId").notNull(),
+  senderUserId: int("senderUserId").notNull(),
+  content: text("content").notNull(),
+  messageType: mysqlEnum("messageType", [
+    "message", // 通常メッセージ
+    "proposal", // 提案
+    "question", // 質問
+    "answer", // 回答
+    "decision", // 決定事項
+    "action_item", // アクションアイテム
+    "summary", // 要約
+    "system" // システムメッセージ
+  ]).default("message").notNull(),
+  // メンション
+  mentions: json("mentions").$type<number[]>(), // twinIds
+  // リアクション
+  reactions: json("reactions").$type<{
+    twinId: number;
+    reaction: string;
+  }[]>(),
+  // 参照
+  replyToId: int("replyToId"), // 返信先メッセージID
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type MultiAgentMessage = typeof multiAgentMessages.$inferSelect;
+export type InsertMultiAgentMessage = typeof multiAgentMessages.$inferInsert;
+
+/**
+ * LINE connections - LINE連携設定
+ */
+export const lineConnections = mysqlTable("line_connections", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().unique(),
+  twinId: int("twinId").notNull(),
+  // LINE情報
+  lineUserId: varchar("lineUserId", { length: 255 }).notNull().unique(),
+  lineDisplayName: varchar("lineDisplayName", { length: 255 }),
+  linePictureUrl: varchar("linePictureUrl", { length: 1000 }),
+  // 連携状態
+  status: mysqlEnum("status", ["pending", "active", "paused", "disconnected"]).default("pending").notNull(),
+  // 設定
+  settings: json("settings").$type<{
+    receiveHeartbeat: boolean; // ハートビートを受信
+    receiveNotifications: boolean; // 通知を受信
+    allowVoiceMessages: boolean; // 音声メッセージを許可
+    language: string; // 言語設定
+  }>(),
+  // 統計
+  totalMessages: int("totalMessages").default(0).notNull(),
+  lastMessageAt: timestamp("lastMessageAt"),
+  connectedAt: timestamp("connectedAt"),
+  disconnectedAt: timestamp("disconnectedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type LineConnection = typeof lineConnections.$inferSelect;
+export type InsertLineConnection = typeof lineConnections.$inferInsert;
+
+/**
+ * LINE message history - LINEメッセージ履歴
+ */
+export const lineMessages = mysqlTable("line_messages", {
+  id: int("id").autoincrement().primaryKey(),
+  connectionId: int("connectionId").notNull(),
+  userId: int("userId").notNull(),
+  twinId: int("twinId").notNull(),
+  // メッセージ情報
+  lineMessageId: varchar("lineMessageId", { length: 255 }),
+  direction: mysqlEnum("direction", ["incoming", "outgoing"]).notNull(),
+  messageType: mysqlEnum("messageType", ["text", "image", "audio", "video", "sticker", "location", "flex"]).default("text").notNull(),
+  content: text("content"),
+  // メディア情報（画像・音声・動画の場合）
+  mediaUrl: varchar("mediaUrl", { length: 1000 }),
+  // 処理状態
+  status: mysqlEnum("status", ["received", "processing", "sent", "delivered", "read", "failed"]).default("received").notNull(),
+  // 関連するチャットセッション
+  chatSessionId: int("chatSessionId"),
+  chatMessageId: int("chatMessageId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type LineMessage = typeof lineMessages.$inferSelect;
+export type InsertLineMessage = typeof lineMessages.$inferInsert;
+
+
+// ============================================
+// Clawdbot連携テーブル
+// ============================================
+
+/**
+ * Clawdbot connections - Clawdbot Gateway接続設定
+ * ユーザーが自分のClawdbotインスタンスと分身AIを連携
+ */
+export const clawdbotConnections = mysqlTable("clawdbot_connections", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().unique(),
+  twinId: int("twinId").notNull(),
+  // Clawdbot Gateway設定
+  gatewayUrl: varchar("gatewayUrl", { length: 500 }).notNull(), // ws://host:port または http://host:port
+  authToken: varchar("authToken", { length: 500 }), // Gateway認証トークン（暗号化して保存）
+  agentId: varchar("agentId", { length: 100 }).default("main").notNull(), // Clawdbotのエージェント ID
+  // 接続状態
+  status: mysqlEnum("status", ["pending", "testing", "active", "error", "disconnected"]).default("pending").notNull(),
+  lastConnectionTest: timestamp("lastConnectionTest"),
+  lastError: text("lastError"),
+  // 機能設定
+  settings: json("settings").$type<{
+    enableMemorySync: boolean; // Clawdbotのメモリを分身AIと同期
+    enableSkillAccess: boolean; // Clawdbotのスキルを分身AIから利用
+    enableChannelBridge: boolean; // LINE/WhatsApp等のチャンネルブリッジ
+    preferredModel: string; // 使用するモデル
+    sessionPersistence: boolean; // セッション永続化
+  }>(),
+  // 統計
+  totalMessages: int("totalMessages").default(0).notNull(),
+  lastMessageAt: timestamp("lastMessageAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ClawdbotConnection = typeof clawdbotConnections.$inferSelect;
+export type InsertClawdbotConnection = typeof clawdbotConnections.$inferInsert;
+
+/**
+ * Clawdbot message logs - Clawdbot経由のメッセージログ
+ */
+export const clawdbotMessageLogs = mysqlTable("clawdbot_message_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  connectionId: int("connectionId").notNull(),
+  userId: int("userId").notNull(),
+  twinId: int("twinId").notNull(),
+  // メッセージ情報
+  direction: mysqlEnum("direction", ["to_clawdbot", "from_clawdbot"]).notNull(),
+  content: text("content").notNull(),
+  // Clawdbot固有の情報
+  clawdbotSessionKey: varchar("clawdbotSessionKey", { length: 255 }), // Clawdbotのセッションキー
+  sourceChannel: varchar("sourceChannel", { length: 50 }), // 元のチャンネル（line, whatsapp, telegram等）
+  // 処理状態
+  status: mysqlEnum("status", ["pending", "sent", "received", "error"]).default("pending").notNull(),
+  errorMessage: text("errorMessage"),
+  // レスポンス時間
+  responseTimeMs: int("responseTimeMs"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ClawdbotMessageLog = typeof clawdbotMessageLogs.$inferSelect;
+export type InsertClawdbotMessageLog = typeof clawdbotMessageLogs.$inferInsert;

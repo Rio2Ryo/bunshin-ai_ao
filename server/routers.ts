@@ -2269,6 +2269,114 @@ ${dialogueText}`,
       };
     }),
   }),
+
+  // ============ Clawdbot連携 ============
+  clawdbot: router({
+    // 接続設定を取得
+    getConnection: protectedProcedure.query(async ({ ctx }) => {
+      const { getClawdbotConnection } = await import("./services/clawdbotService");
+      return getClawdbotConnection(ctx.user.id);
+    }),
+
+    // 接続を作成
+    createConnection: protectedProcedure
+      .input(z.object({
+        gatewayUrl: z.string().url(),
+        authToken: z.string().optional(),
+        agentId: z.string().optional(),
+        settings: z.object({
+          enableMemorySync: z.boolean().optional(),
+          enableSkillAccess: z.boolean().optional(),
+          enableChannelBridge: z.boolean().optional(),
+          preferredModel: z.string().optional(),
+          sessionPersistence: z.boolean().optional(),
+        }).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { createClawdbotConnection } = await import("./services/clawdbotService");
+        
+        // ユーザーの分身AIを取得
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "分身AIを先に作成してください",
+          });
+        }
+        
+        const connectionId = await createClawdbotConnection(
+          ctx.user.id,
+          twin.id,
+          input.gatewayUrl,
+          input.authToken,
+          input.agentId || "main",
+          input.settings
+        );
+        
+        // 外部AI接続ポイントを付与
+        await awardPoints(ctx.user.id, "external_ai_connect", `clawdbot_${connectionId}`, "Clawdbot接続");
+        
+        return { success: true, connectionId };
+      }),
+
+    // 接続を更新
+    updateConnection: protectedProcedure
+      .input(z.object({
+        gatewayUrl: z.string().url().optional(),
+        authToken: z.string().optional(),
+        agentId: z.string().optional(),
+        settings: z.object({
+          enableMemorySync: z.boolean().optional(),
+          enableSkillAccess: z.boolean().optional(),
+          enableChannelBridge: z.boolean().optional(),
+          preferredModel: z.string().optional(),
+          sessionPersistence: z.boolean().optional(),
+        }).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { updateClawdbotConnection } = await import("./services/clawdbotService");
+        await updateClawdbotConnection(ctx.user.id, input);
+        return { success: true };
+      }),
+
+    // 接続をテスト
+    testConnection: protectedProcedure.mutation(async ({ ctx }) => {
+      const { testClawdbotConnection } = await import("./services/clawdbotService");
+      return testClawdbotConnection(ctx.user.id);
+    }),
+
+    // メッセージを送信
+    sendMessage: protectedProcedure
+      .input(z.object({
+        message: z.string().min(1),
+        sessionKey: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { sendMessageViaClawdbot } = await import("./services/clawdbotService");
+        return sendMessageViaClawdbot(ctx.user.id, input.message, input.sessionKey);
+      }),
+
+    // メッセージ履歴を取得
+    getMessageHistory: protectedProcedure
+      .input(z.object({ limit: z.number().optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        const { getClawdbotMessageHistory } = await import("./services/clawdbotService");
+        return getClawdbotMessageHistory(ctx.user.id, input?.limit ?? 50);
+      }),
+
+    // 利用可能なモデル一覧を取得
+    getModels: protectedProcedure.query(async ({ ctx }) => {
+      const { getClawdbotModels } = await import("./services/clawdbotService");
+      return getClawdbotModels(ctx.user.id);
+    }),
+
+    // 接続を削除
+    deleteConnection: protectedProcedure.mutation(async ({ ctx }) => {
+      const { deleteClawdbotConnection } = await import("./services/clawdbotService");
+      const result = await deleteClawdbotConnection(ctx.user.id);
+      return { success: result };
+    }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;
