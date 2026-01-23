@@ -42,7 +42,12 @@ import {
   updatePointSetting,
   initializePointSettings,
   initializeProducts,
-  POINT_ACTIONS
+  POINT_ACTIONS,
+  getQuestList,
+  checkDailyLogin,
+  checkAndAwardMilestones,
+  checkFriendMilestones,
+  checkMatchingMilestones
 } from "./services/pointService";
 import { requestPredictionsFromFriends, comparePredictionWithActual, updateOtherPerspectiveWaveform, calculateSelfReportGap, generatePredictionsForExistingResponses } from "./services/friendPredictionService";
 import type { BigFiveTraits, JudgmentThresholds, ValueWaveform, MBTIType } from "../drizzle/schema";
@@ -295,7 +300,18 @@ ${input.rawInput}`,
         if (!twin) {
           throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
         }
+        
+        // 既存の公開設定を確認
+        const wasPublic = twin.isPublic;
+        
         await updateTwinPublicSettings(twin.id, input.isPublic, input.publicBio, input.tags);
+        
+        // 新規公開の場合のみポイント付与（分身AIを公開）
+        if (input.isPublic && !wasPublic) {
+          awardPoints(ctx.user.id, POINT_ACTIONS.DISCOVERY_PUBLISH.type, `publish_${twin.id}`, "分身AIを公開")
+            .catch(err => console.error("Point award error:", err));
+        }
+        
         return { success: true };
       }),
 
@@ -1037,6 +1053,11 @@ ${input.rawInput}`,
           throw new TRPCError({ code: "NOT_FOUND", message: "Create your digital twin first" });
         }
         const id = await addKnowledgeEntry({ ...input, twinId: twin.id });
+        
+        // ポイント付与（ナレッジ追加）
+        awardPoints(ctx.user.id, POINT_ACTIONS.KNOWLEDGE_ADD.type, `knowledge_${id}`, "ナレッジ追加")
+          .catch(err => console.error("Point award error:", err));
+        
         return { id };
       }),
 
@@ -1081,6 +1102,10 @@ ${input.rawInput}`,
           size: buffer.length,
           status: "pending",
         });
+        
+        // ポイント付与（ファイルアップロード）
+        awardPoints(ctx.user.id, POINT_ACTIONS.FILE_UPLOAD.type, `file_${fileId}`, "ファイルアップロード")
+          .catch(err => console.error("Point award error:", err));
 
         return { id: fileId, url };
       }),
@@ -1108,10 +1133,21 @@ ${input.rawInput}`,
         isActive: z.number().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
+        // 既存の設定を確認
+        const existingConfigs = await getAiApiConfigs(ctx.user.id);
+        const isNewConnection = !existingConfigs.some(c => c.provider === input.provider);
+        
         await upsertAiApiConfig({
           userId: ctx.user.id,
           ...input,
         });
+        
+        // 新規接続の場合のみポイント付与（外部AI API接続）
+        if (isNewConnection) {
+          awardPoints(ctx.user.id, POINT_ACTIONS.EXTERNAL_AI_CONNECT.type, `api_${input.provider}`, `外部AI API接続 (${input.provider})`)
+            .catch(err => console.error("Point award error:", err));
+        }
+        
         return { success: true };
       }),
 
@@ -1152,6 +1188,11 @@ ${input.rawInput}`,
           userId: ctx.user.id,
           ...input,
         });
+        
+        // ポイント付与（ロール追加）
+        awardPoints(ctx.user.id, POINT_ACTIONS.ORCHESTRATION_ROLE_ADD.type, `role_${id}`, `ロール追加: ${input.roleName}`)
+          .catch(err => console.error("Point award error:", err));
+        
         return { id };
       }),
 
@@ -1274,6 +1315,14 @@ ${input.rawInput}`,
           input.content,
           response
         ).catch(err => console.error("Chat evaluation error:", err));
+        
+        // ポイント付与（分身AIとの会話）
+        awardPoints(ctx.user.id, POINT_ACTIONS.CHAT_MESSAGE.type, `chat_${messageId}`, "分身AIとの会話")
+          .catch(err => console.error("Point award error:", err));
+        
+        // マイルストーンチェック（非同期）
+        checkAndAwardMilestones(ctx.user.id)
+          .catch(err => console.error("Milestone check error:", err));
 
         return { messageId, response };
       }),
@@ -2198,6 +2247,26 @@ ${dialogueText}`,
     // ポイントアクション一覧を取得
     getActionTypes: protectedProcedure.query(async () => {
       return Object.values(POINT_ACTIONS);
+    }),
+    
+    // クエスト一覧を取得
+    getQuests: protectedProcedure.query(async ({ ctx }) => {
+      return getQuestList(ctx.user.id);
+    }),
+    
+    // デイリーログインボーナスをチェック・付与
+    checkDailyLogin: protectedProcedure.mutation(async ({ ctx }) => {
+      return checkDailyLogin(ctx.user.id);
+    }),
+    
+    // マイルストーンをチェック
+    checkMilestones: protectedProcedure.mutation(async ({ ctx }) => {
+      const chatMilestones = await checkAndAwardMilestones(ctx.user.id);
+      const matchingMilestones = await checkMatchingMilestones(ctx.user.id);
+      
+      return {
+        awarded: [...chatMilestones.awarded, ...matchingMilestones.awarded],
+      };
     }),
   }),
 });

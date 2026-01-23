@@ -18,6 +18,7 @@ import Friends from "./pages/Friends";
 import Plan from "./pages/Plan";
 import Discover from "./pages/Discover";
 import Points from "./pages/Points";
+import Quests from "./pages/Quests";
 
 
 function Router() {
@@ -38,6 +39,7 @@ function Router() {
       <Route path="/plan" component={Plan} />
       <Route path="/discover" component={Discover} />
       <Route path="/points" component={Points} />
+      <Route path="/quests" component={Quests} />
 
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
