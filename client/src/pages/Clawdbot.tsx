@@ -24,8 +24,21 @@ import {
   Clock,
   Zap,
   Brain,
-  Link2
+  Link2,
+  GraduationCap,
+  TrendingUp,
+  Heart,
+  ThumbsDown,
+  Star,
+  MessageCircle,
+  Sparkles,
+  BarChart3,
+  Edit3,
+  Save
 } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 export default function ClawdbotPage() {
   const [gatewayUrl, setGatewayUrl] = useState("");
@@ -46,6 +59,44 @@ export default function ClawdbotPage() {
   const { data: messageHistory, refetch: refetchHistory } = trpc.clawdbot.getMessageHistory.useQuery({ limit: 50 });
   const { data: models } = trpc.clawdbot.getModels.useQuery(undefined, {
     enabled: connection?.status === "active",
+  });
+
+  // 学習状況の取得
+  const { data: learningStatus, refetch: refetchLearningStatus } = trpc.clawdbot.getLearningStatus.useQuery();
+  const { data: learnedTraits, refetch: refetchLearnedTraits } = trpc.clawdbot.getLearnedTraits.useQuery();
+
+  // 会話同期
+  const syncConversations = trpc.clawdbot.syncConversations.useMutation({
+    onSuccess: (result) => {
+      toast.success(`${result.synced}件の会話を同期しました`);
+      refetchLearningStatus();
+    },
+    onError: (error) => {
+      toast.error(`同期エラー: ${error.message}`);
+    },
+  });
+
+  // 人格分析
+  const analyzePersonality = trpc.clawdbot.analyzePersonality.useMutation({
+    onSuccess: (result) => {
+      toast.success(`${result.analyzed}件の会話を分析しました`);
+      refetchLearningStatus();
+      refetchLearnedTraits();
+    },
+    onError: (error) => {
+      toast.error(`分析エラー: ${error.message}`);
+    },
+  });
+
+  // 学習設定更新
+  const updateLearningSettings = trpc.clawdbot.updateLearningSettings.useMutation({
+    onSuccess: () => {
+      toast.success("学習設定を更新しました");
+      refetchLearningStatus();
+    },
+    onError: (error) => {
+      toast.error(`設定更新エラー: ${error.message}`);
+    },
   });
 
   const createConnection = trpc.clawdbot.createConnection.useMutation({
@@ -169,6 +220,10 @@ export default function ClawdbotPage() {
             <TabsTrigger value="chat" disabled={connection?.status !== "active"}>
               <MessageSquare className="w-4 h-4 mr-2" />
               チャット
+            </TabsTrigger>
+            <TabsTrigger value="learning">
+              <GraduationCap className="w-4 h-4 mr-2" />
+              学習状況
             </TabsTrigger>
           </TabsList>
 
@@ -463,6 +518,283 @@ export default function ClawdbotPage() {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="learning" className="space-y-4">
+            {/* 学習サマリー */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-muted-foreground">総会話数</p>
+                      <p className="text-3xl font-bold">{learningStatus?.totalSnippets || 0}</p>
+                    </div>
+                    <MessageCircle className="w-8 h-8 text-muted-foreground" />
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-muted-foreground">分析済み</p>
+                      <p className="text-3xl font-bold">{learningStatus?.analyzedSnippets || 0}</p>
+                    </div>
+                    <BarChart3 className="w-8 h-8 text-muted-foreground" />
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-muted-foreground">分析回数</p>
+                      <p className="text-3xl font-bold">{learningStatus?.learning?.analysisCount || 0}</p>
+                    </div>
+                    <TrendingUp className="w-8 h-8 text-muted-foreground" />
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* 学習進捗 */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Sparkles className="w-5 h-5" />
+                  学習進捗
+                </CardTitle>
+                <CardDescription>
+                  会話が{learningStatus?.learning?.learningThreshold || 10}件貯まると自動で人格分析を実行します
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span>未分析の会話</span>
+                    <span>{learningStatus?.learning?.pendingConversations || 0} / {learningStatus?.learning?.learningThreshold || 10}</span>
+                  </div>
+                  <Progress 
+                    value={((learningStatus?.learning?.pendingConversations || 0) / (learningStatus?.learning?.learningThreshold || 10)) * 100} 
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => syncConversations.mutate()}
+                    disabled={syncConversations.isPending}
+                    variant="outline"
+                  >
+                    <RefreshCw className={`w-4 h-4 mr-2 ${syncConversations.isPending ? "animate-spin" : ""}`} />
+                    会話を同期
+                  </Button>
+                  <Button
+                    onClick={() => analyzePersonality.mutate()}
+                    disabled={analyzePersonality.isPending || (learningStatus?.learning?.pendingConversations || 0) === 0}
+                  >
+                    <Brain className={`w-4 h-4 mr-2 ${analyzePersonality.isPending ? "animate-spin" : ""}`} />
+                    今すぐ分析
+                  </Button>
+                </div>
+
+                <Separator />
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>自動学習</Label>
+                    <p className="text-sm text-muted-foreground">閾値に達したら自動で分析</p>
+                  </div>
+                  <Switch
+                    checked={learningStatus?.learning?.autoLearnEnabled === 1}
+                    onCheckedChange={(checked) => {
+                      updateLearningSettings.mutate({ autoLearnEnabled: checked });
+                    }}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* 学習した人格特性 */}
+            {learnedTraits && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Brain className="w-5 h-5" />
+                    学習した人格特性
+                  </CardTitle>
+                  <CardDescription>
+                    会話から抽出されたあなたの特徴
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ScrollArea className="h-[400px] pr-4">
+                    <div className="space-y-6">
+                      {/* 好きなこと */}
+                      {learnedTraits.likes?.length > 0 && (
+                        <div>
+                          <h4 className="font-medium flex items-center gap-2 mb-2">
+                            <Heart className="w-4 h-4 text-pink-500" />
+                            好きなこと
+                          </h4>
+                          <div className="flex flex-wrap gap-2">
+                            {learnedTraits.likes.map((item: string, i: number) => (
+                              <Badge key={i} variant="secondary" className="bg-pink-100 dark:bg-pink-900/30">
+                                {item}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 苦手なこと */}
+                      {learnedTraits.dislikes?.length > 0 && (
+                        <div>
+                          <h4 className="font-medium flex items-center gap-2 mb-2">
+                            <ThumbsDown className="w-4 h-4 text-gray-500" />
+                            苦手なこと
+                          </h4>
+                          <div className="flex flex-wrap gap-2">
+                            {learnedTraits.dislikes.map((item: string, i: number) => (
+                              <Badge key={i} variant="secondary" className="bg-gray-100 dark:bg-gray-800">
+                                {item}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 価値観 */}
+                      {learnedTraits.values?.length > 0 && (
+                        <div>
+                          <h4 className="font-medium flex items-center gap-2 mb-2">
+                            <Star className="w-4 h-4 text-yellow-500" />
+                            大切にしている価値観
+                          </h4>
+                          <div className="flex flex-wrap gap-2">
+                            {learnedTraits.values.map((item: string, i: number) => (
+                              <Badge key={i} variant="secondary" className="bg-yellow-100 dark:bg-yellow-900/30">
+                                {item}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 興味・関心 */}
+                      {learnedTraits.interests?.length > 0 && (
+                        <div>
+                          <h4 className="font-medium flex items-center gap-2 mb-2">
+                            <Sparkles className="w-4 h-4 text-blue-500" />
+                            興味・関心
+                          </h4>
+                          <div className="flex flex-wrap gap-2">
+                            {learnedTraits.interests.map((item: string, i: number) => (
+                              <Badge key={i} variant="secondary" className="bg-blue-100 dark:bg-blue-900/30">
+                                {item}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 口癖 */}
+                      {learnedTraits.catchphrases?.length > 0 && (
+                        <div>
+                          <h4 className="font-medium flex items-center gap-2 mb-2">
+                            <MessageCircle className="w-4 h-4 text-green-500" />
+                            口癖・よく使う表現
+                          </h4>
+                          <div className="flex flex-wrap gap-2">
+                            {[...learnedTraits.catchphrases, ...(learnedTraits.frequentExpressions || [])].map((item: string, i: number) => (
+                              <Badge key={i} variant="outline" className="border-green-500">
+                                「{item}」
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* コミュニケーションスタイル */}
+                      {learnedTraits.communicationStyle && (
+                        <div>
+                          <h4 className="font-medium flex items-center gap-2 mb-3">
+                            <BarChart3 className="w-4 h-4 text-purple-500" />
+                            コミュニケーションスタイル
+                          </h4>
+                          <div className="space-y-3">
+                            <div>
+                              <div className="flex justify-between text-sm mb-1">
+                                <span>カジュアル</span>
+                                <span>フォーマル</span>
+                              </div>
+                              <Progress value={learnedTraits.communicationStyle.formality} />
+                            </div>
+                            <div>
+                              <div className="flex justify-between text-sm mb-1">
+                                <span>簡潔</span>
+                                <span>詳細</span>
+                              </div>
+                              <Progress value={learnedTraits.communicationStyle.verbosity} />
+                            </div>
+                            <div>
+                              <div className="flex justify-between text-sm mb-1">
+                                <span>論理的</span>
+                                <span>感情的</span>
+                              </div>
+                              <Progress value={learnedTraits.communicationStyle.emotionality} />
+                            </div>
+                            <div>
+                              <div className="flex justify-between text-sm mb-1">
+                                <span>婉曲</span>
+                                <span>直接的</span>
+                              </div>
+                              <Progress value={learnedTraits.communicationStyle.directness} />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 意思決定スタイル */}
+                      {learnedTraits.decisionMakingStyle && learnedTraits.decisionMakingStyle !== "未分析" && (
+                        <div>
+                          <h4 className="font-medium mb-2">意思決定スタイル</h4>
+                          <p className="text-muted-foreground">{learnedTraits.decisionMakingStyle}</p>
+                        </div>
+                      )}
+
+                      {/* 最終分析日時 */}
+                      {learnedTraits.lastAnalyzedAt && (
+                        <div className="text-sm text-muted-foreground pt-4 border-t">
+                          最終分析: {new Date(learnedTraits.lastAnalyzedAt).toLocaleString("ja-JP")}
+                          （累計 {learnedTraits.totalConversationsAnalyzed} 回）
+                        </div>
+                      )}
+                    </div>
+                  </ScrollArea>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* 学習データがない場合 */}
+            {!learnedTraits && (
+              <Card>
+                <CardContent className="py-12 text-center">
+                  <GraduationCap className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                  <h3 className="text-lg font-medium mb-2">まだ学習データがありません</h3>
+                  <p className="text-muted-foreground mb-4">
+                    Clawdbotで会話をすると、自動的にあなたの人格を学習します
+                  </p>
+                  <Button
+                    onClick={() => syncConversations.mutate()}
+                    disabled={syncConversations.isPending}
+                  >
+                    <RefreshCw className={`w-4 h-4 mr-2 ${syncConversations.isPending ? "animate-spin" : ""}`} />
+                    会話を同期して学習を開始
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
         </Tabs>
 

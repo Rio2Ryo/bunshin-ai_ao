@@ -20,6 +20,7 @@ import Discover from "./pages/Discover";
 import Points from "./pages/Points";
 import Quests from "./pages/Quests";
 import Clawdbot from "./pages/Clawdbot";
+import LearnedPersonality from "./pages/LearnedPersonality";
 import AdminAIProvider from "./pages/AdminAIProvider";
 import { PWAInstallPrompt } from "./components/PWAInstallPrompt";
 
@@ -44,6 +45,7 @@ function Router() {
       <Route path="/points" component={Points} />
       <Route path="/quests" component={Quests} />
       <Route path="/clawdbot" component={Clawdbot} />
+      <Route path="/learned-personality" component={LearnedPersonality} />
       <Route path="/admin/ai-provider" component={AdminAIProvider} />
 
       <Route path="/404" component={NotFound} />

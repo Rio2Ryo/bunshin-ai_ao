@@ -8,6 +8,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { handleStripeWebhook } from "../stripe/webhook";
+import { handleClawdbotWebhook, getClawdbotWebhookInfo } from "../clawdbot/webhook";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -34,6 +35,10 @@ async function startServer() {
   
   // Stripe webhook route - MUST be before body parsers
   app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), handleStripeWebhook);
+  
+  // Clawdbot webhook routes
+  app.get("/api/clawdbot/webhook", getClawdbotWebhookInfo);
+  app.post("/api/clawdbot/webhook", express.json(), handleClawdbotWebhook);
   
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
