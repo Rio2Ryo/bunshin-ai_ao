@@ -370,10 +370,10 @@
 
 
 ## PWA化（2026-01-24）
-- [ ] PWAマニフェスト（manifest.json）作成
-- [ ] アプリアイコン作成（192x192, 512x512）
-- [ ] Service Worker実装
-- [ ] オフラインページ対応
-- [ ] キャッシュ戦略設定
-- [ ] インストールプロンプトUI
-- [ ] iOS Safari対応（apple-touch-icon等）
+- [x] PWAマニフェスト（manifest.json）作成
+- [x] アプリアイコン作成（192x192, 512x512）
+- [x] Service Worker実装
+- [x] オフラインページ対応
+- [x] キャッシュ戦略設定
+- [x] インストールプロンプトUI
+- [x] iOS Safari対応（apple-touch-icon等）

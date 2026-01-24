@@ -21,6 +21,7 @@ import Points from "./pages/Points";
 import Quests from "./pages/Quests";
 import Clawdbot from "./pages/Clawdbot";
 import AdminAIProvider from "./pages/AdminAIProvider";
+import { PWAInstallPrompt } from "./components/PWAInstallPrompt";
 
 
 function Router() {
@@ -58,6 +59,7 @@ function App() {
         <TooltipProvider>
           <Toaster />
           <Router />
+          <PWAInstallPrompt />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>
