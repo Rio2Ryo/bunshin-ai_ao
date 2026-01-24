@@ -20,6 +20,7 @@ import Discover from "./pages/Discover";
 import Points from "./pages/Points";
 import Quests from "./pages/Quests";
 import Clawdbot from "./pages/Clawdbot";
+import AdminAIProvider from "./pages/AdminAIProvider";
 
 
 function Router() {
@@ -42,6 +43,7 @@ function Router() {
       <Route path="/points" component={Points} />
       <Route path="/quests" component={Quests} />
       <Route path="/clawdbot" component={Clawdbot} />
+      <Route path="/admin/ai-provider" component={AdminAIProvider} />
 
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />

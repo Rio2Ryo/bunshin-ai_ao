@@ -2377,6 +2377,62 @@ ${dialogueText}`,
       return { success: result };
     }),
   }),
+
+  // ============ AI Provider Management (管理者専用) ============
+  aiProvider: router({
+    // 利用可能なプロバイダー一覧を取得
+    getAvailableProviders: protectedProcedure.query(async ({ ctx }) => {
+      // 管理者のみ
+      if (ctx.user.role !== 'admin') {
+        throw new TRPCError({ code: 'FORBIDDEN', message: '管理者権限が必要です' });
+      }
+      const { getAvailableProviders } = await import("./services/aiProviderService");
+      return getAvailableProviders();
+    }),
+
+    // 現在の機能別プロバイダー設定を取得
+    getSettings: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== 'admin') {
+        throw new TRPCError({ code: 'FORBIDDEN', message: '管理者権限が必要です' });
+      }
+      const { getAllProviderSettings } = await import("./services/aiProviderService");
+      return getAllProviderSettings();
+    }),
+
+    // 機能別プロバイダー設定を更新
+    updateSetting: protectedProcedure
+      .input(z.object({
+        feature: z.enum(['chat', 'personality', 'value_scenario', 'matching', 'memory', 'prediction', 'default']),
+        provider: z.enum(['manus', 'gemini', 'openai', 'anthropic', 'grok']),
+        model: z.string().optional(),
+        maxTokens: z.number().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.user.role !== 'admin') {
+          throw new TRPCError({ code: 'FORBIDDEN', message: '管理者権限が必要です' });
+        }
+        const { setProviderForFeature } = await import("./services/aiProviderService");
+        setProviderForFeature(input.feature, {
+          provider: input.provider,
+          model: input.model,
+          maxTokens: input.maxTokens,
+        });
+        return { success: true };
+      }),
+
+    // プロバイダーの接続テスト
+    testProvider: protectedProcedure
+      .input(z.object({
+        provider: z.enum(['manus', 'gemini', 'openai', 'anthropic', 'grok']),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.user.role !== 'admin') {
+          throw new TRPCError({ code: 'FORBIDDEN', message: '管理者権限が必要です' });
+        }
+        const { testProvider } = await import("./services/aiProviderService");
+        return testProvider(input.provider);
+      }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;

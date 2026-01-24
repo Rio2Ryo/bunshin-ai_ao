@@ -7,6 +7,7 @@
  */
 
 import { invokeLLM } from "../_core/llm";
+import { invokeLLMWithProvider } from "./aiProviderService";
 import type { BigFiveTraits, JudgmentThresholds, ValueWaveform, MBTIType } from "../../drizzle/schema";
 
 /**

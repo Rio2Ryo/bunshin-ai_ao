@@ -14,6 +14,7 @@ import {
 } from "../../drizzle/schema";
 import { eq, and, sql, isNull, desc } from "drizzle-orm";
 import { invokeLLM } from "../_core/llm";
+import { invokeLLMWithProvider } from "./aiProviderService";
 import { 
   updateIntimacyScore, 
   getAllIntimacyScores, 
