@@ -62,13 +62,22 @@ const providerModels: Record<AIProvider, string> = {
   manus: 'gemini-2.5-flash',
   gemini: 'gemini-2.5-flash',
   openai: 'gpt-4o',
-  anthropic: 'claude-3-5-sonnet-20241022',
+  anthropic: 'claude-sonnet-4-20250514',
   grok: 'grok-3',
+};
+
+// プロバイダー別のデフォルトmax_tokens
+const providerMaxTokens: Record<AIProvider, number> = {
+  manus: 32768,
+  gemini: 32768,
+  openai: 4096,
+  anthropic: 4096,
+  grok: 4096,
 };
 
 // プロバイダー別のAPIエンドポイント
 const providerEndpoints: Record<AIProvider, string> = {
-  manus: 'https://forge.manus.im/v1/chat/completions',
+  manus: (ENV.forgeApiUrl || 'https://forge.manus.ai') + '/v1/chat/completions',
   gemini: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
   openai: 'https://api.openai.com/v1/chat/completions',
   anthropic: 'https://api.anthropic.com/v1/messages',
@@ -104,7 +113,7 @@ function getApiKeyForProvider(provider: AIProvider): string {
     case 'manus':
       return ENV.forgeApiKey || '';
     case 'gemini':
-      return process.env.GEMINI_API_KEY || ENV.forgeApiKey || '';
+      return process.env.GEMINI_API_KEY || '';
     case 'openai':
       return process.env.OPENAI_API_KEY || '';
     case 'anthropic':
@@ -237,7 +246,7 @@ export async function invokeLLMWithProvider(
     }
   }
   
-  payload.max_tokens = maxTokens || max_tokens || config.maxTokens || 32768;
+  payload.max_tokens = maxTokens || max_tokens || config.maxTokens || providerMaxTokens[provider] || 4096;
   
   // Manus特有の設定
   if (provider === 'manus') {
@@ -363,8 +372,19 @@ export function getAvailableProviders(): Array<{ provider: AIProvider; available
  */
 export async function testProvider(provider: AIProvider): Promise<{ success: boolean; latency?: number; error?: string }> {
   const startTime = Date.now();
+  console.log(`[testProvider] Testing provider: ${provider}`);
   
   try {
+    const apiKey = getApiKeyForProvider(provider);
+    console.log(`[testProvider] API key available: ${!!apiKey}, length: ${apiKey?.length || 0}`);
+    
+    if (!apiKey) {
+      return {
+        success: false,
+        error: `API key not configured for provider: ${provider}`,
+      };
+    }
+    
     const testParams: InvokeParams = {
       messages: [{ role: 'user', content: 'Hello, respond with just "OK"' }],
     };
@@ -373,15 +393,21 @@ export async function testProvider(provider: AIProvider): Promise<{ success: boo
     const originalConfig = featureProviderConfig.default;
     featureProviderConfig.default = { provider };
     
-    await invokeLLMWithProvider(testParams, 'default');
+    console.log(`[testProvider] Invoking LLM with provider: ${provider}`);
+    const result = await invokeLLMWithProvider(testParams, 'default');
+    console.log(`[testProvider] LLM response received:`, JSON.stringify(result).substring(0, 200));
     
     featureProviderConfig.default = originalConfig;
     
+    const latency = Date.now() - startTime;
+    console.log(`[testProvider] Test successful, latency: ${latency}ms`);
+    
     return {
       success: true,
-      latency: Date.now() - startTime,
+      latency,
     };
   } catch (error) {
+    console.error(`[testProvider] Test failed:`, error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',

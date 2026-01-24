@@ -1,0 +1,35 @@
+{
+  "query": "SELECT id, name, role FROM users LIMIT 5;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT id, name, role FROM users LIMIT 5;",
+  "rows": [
+    {
+      "id": "1",
+      "name": "共通用GIFT",
+      "role": "admin"
+    },
+    {
+      "id": "30065",
+      "name": "Matsuura Ryosuke",
+      "role": "user"
+    },
+    {
+      "id": "690005",
+      "name": "田中太郎",
+      "role": "user"
+    },
+    {
+      "id": "690006",
+      "name": "佐藤花子",
+      "role": "user"
+    },
+    {
+      "id": "690007",
+      "name": "鈴木一郎",
+      "role": "user"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\trole\n1\t共通用GIFT\tadmin\n30065\tMatsuura Ryosuke\tuser\n690005\t田中太郎\tuser\n690006\t佐藤花子\tuser\n690007\t鈴木一郎\tuser\n",
+  "stderr": "",
+  "execution_time_ms": 1515
+}
