@@ -1154,3 +1154,121 @@ export const clawdbotMessageLogs = mysqlTable("clawdbot_message_logs", {
 
 export type ClawdbotMessageLog = typeof clawdbotMessageLogs.$inferSelect;
 export type InsertClawdbotMessageLog = typeof clawdbotMessageLogs.$inferInsert;
+
+
+/**
+ * Conversation learning data - 会話から学習した人格データ
+ * Clawdbot経由の会話を分析して抽出した人格特性
+ */
+export interface LearnedPersonalityTraits {
+  // 好み・嫌い
+  likes: string[];
+  dislikes: string[];
+  // 価値観
+  values: string[];
+  priorities: string[];
+  // コミュニケーションスタイル
+  communicationStyle: {
+    formality: number; // 0=カジュアル, 100=フォーマル
+    verbosity: number; // 0=簡潔, 100=詳細
+    emotionality: number; // 0=論理的, 100=感情的
+    directness: number; // 0=婉曲, 100=直接的
+  };
+  // 口癖・よく使う表現
+  catchphrases: string[];
+  frequentExpressions: string[];
+  // 興味・関心分野
+  interests: string[];
+  expertise: string[];
+  // 行動パターン
+  decisionMakingStyle: string; // 慎重/即断/相談型など
+  conflictResolutionStyle: string; // 回避/対決/妥協など
+  // 感情パターン
+  emotionalTriggers: {
+    positive: string[]; // 喜ぶこと
+    negative: string[]; // 怒ること・悲しむこと
+  };
+  // 最終更新
+  lastAnalyzedAt: string;
+  totalConversationsAnalyzed: number;
+}
+
+export const conversationLearning = mysqlTable("conversation_learning", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().unique(),
+  twinId: int("twinId").notNull(),
+  // 学習した人格特性
+  learnedTraits: json("learnedTraits").$type<LearnedPersonalityTraits>(),
+  // 学習の進捗
+  totalConversations: int("totalConversations").default(0).notNull(),
+  lastAnalysisAt: timestamp("lastAnalysisAt"),
+  analysisCount: int("analysisCount").default(0).notNull(), // 分析実行回数
+  // 未分析の会話数（閾値に達したら分析実行）
+  pendingConversations: int("pendingConversations").default(0).notNull(),
+  // 設定
+  autoLearnEnabled: int("autoLearnEnabled").default(1).notNull(), // 自動学習有効
+  learningThreshold: int("learningThreshold").default(10).notNull(), // 何会話ごとに分析するか
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ConversationLearning = typeof conversationLearning.$inferSelect;
+export type InsertConversationLearning = typeof conversationLearning.$inferInsert;
+
+/**
+ * Conversation snippets - 学習用に保存された会話断片
+ * 人格分析に使用する会話の抜粋
+ */
+export const conversationSnippets = mysqlTable("conversation_snippets", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  twinId: int("twinId").notNull(),
+  // 会話の種類
+  source: mysqlEnum("source", ["clawdbot", "web_chat", "matching", "group"]).notNull(),
+  sourceId: varchar("sourceId", { length: 255 }), // 元のメッセージID等
+  // 会話内容
+  userMessage: text("userMessage").notNull(), // ユーザーの発言
+  context: text("context"), // 前後の文脈（他者の発言など）
+  // 抽出された特徴
+  extractedFeatures: json("extractedFeatures").$type<{
+    sentiment: string; // positive/negative/neutral
+    topics: string[]; // 話題
+    expressedPreferences: string[]; // 表明された好み
+    expressedValues: string[]; // 表明された価値観
+    emotionalState: string; // 感情状態
+    communicationPatterns: string[]; // コミュニケーションパターン
+  }>(),
+  // 分析状態
+  isAnalyzed: int("isAnalyzed").default(0).notNull(),
+  analyzedAt: timestamp("analyzedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ConversationSnippet = typeof conversationSnippets.$inferSelect;
+export type InsertConversationSnippet = typeof conversationSnippets.$inferInsert;
+
+/**
+ * Group conversation observations - グループ会話の観察記録
+ * グループLINE等での会話を観察して学習
+ */
+export const groupConversationObservations = mysqlTable("group_conversation_observations", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(), // 観察対象のユーザー
+  twinId: int("twinId").notNull(),
+  // グループ情報
+  groupId: varchar("groupId", { length: 255 }).notNull(), // LINEグループID等
+  groupName: varchar("groupName", { length: 255 }),
+  // 会話内容
+  speakerType: mysqlEnum("speakerType", ["self", "other"]).notNull(), // 自分/他者
+  speakerName: varchar("speakerName", { length: 255 }), // 他者の場合の名前
+  message: text("message").notNull(),
+  // 文脈情報
+  replyToId: int("replyToId"), // 返信先のID
+  threadContext: text("threadContext"), // スレッドの文脈
+  // 分析用フラグ
+  isRelevantForLearning: int("isRelevantForLearning").default(0).notNull(), // 学習に使うか
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type GroupConversationObservation = typeof groupConversationObservations.$inferSelect;
+export type InsertGroupConversationObservation = typeof groupConversationObservations.$inferInsert;

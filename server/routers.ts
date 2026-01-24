@@ -2376,6 +2376,102 @@ ${dialogueText}`,
       const result = await deleteClawdbotConnection(ctx.user.id);
       return { success: result };
     }),
+
+    // ============ 会話学習機能 ============
+    
+    // 会話を同期（Clawdbotメッセージログから学習用スニペットを作成）
+    syncConversations: protectedProcedure.mutation(async ({ ctx }) => {
+      const { syncClawdbotConversations } = await import("./services/conversationLearningService");
+      return syncClawdbotConversations(ctx.user.id);
+    }),
+
+    // 学習状況を取得
+    getLearningStatus: protectedProcedure.query(async ({ ctx }) => {
+      const { getLearningStatus } = await import("./services/conversationLearningService");
+      return getLearningStatus(ctx.user.id);
+    }),
+
+    // 手動で人格分析を実行
+    analyzePersonality: protectedProcedure.mutation(async ({ ctx }) => {
+      const { analyzeAndUpdatePersonality, getOrCreateConversationLearning } = await import("./services/conversationLearningService");
+      
+      // ユーザーの分身AIを取得
+      const twin = await getDigitalTwinByUser(ctx.user.id);
+      if (!twin) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "分身AIを先に作成してください",
+        });
+      }
+      
+      // 学習データを初期化
+      await getOrCreateConversationLearning(ctx.user.id, twin.id);
+      
+      // 分析を実行
+      return analyzeAndUpdatePersonality(ctx.user.id, twin.id);
+    }),
+
+    // 学習設定を更新
+    updateLearningSettings: protectedProcedure
+      .input(z.object({
+        autoLearnEnabled: z.boolean().optional(),
+        learningThreshold: z.number().min(5).max(100).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { updateLearningSettings } = await import("./services/conversationLearningService");
+        return updateLearningSettings(ctx.user.id, input);
+      }),
+
+    // グループ会話を記録（Clawdbotからのwebhook用）
+    recordGroupMessage: protectedProcedure
+      .input(z.object({
+        groupId: z.string(),
+        groupName: z.string().optional(),
+        speakerType: z.enum(["self", "other"]),
+        message: z.string(),
+        speakerName: z.string().optional(),
+        replyToId: z.number().optional(),
+        threadContext: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { recordGroupConversation } = await import("./services/conversationLearningService");
+        
+        // ユーザーの分身AIを取得
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "分身AIを先に作成してください",
+          });
+        }
+        
+        const id = await recordGroupConversation(
+          ctx.user.id,
+          twin.id,
+          input.groupId,
+          input.groupName,
+          input.speakerType,
+          input.message,
+          input.speakerName,
+          input.replyToId,
+          input.threadContext
+        );
+        
+        return { success: true, id };
+      }),
+
+    // 学習した人格特性を取得
+    getLearnedTraits: protectedProcedure.query(async ({ ctx }) => {
+      const { getOrCreateConversationLearning } = await import("./services/conversationLearningService");
+      
+      const twin = await getDigitalTwinByUser(ctx.user.id);
+      if (!twin) {
+        return null;
+      }
+      
+      const learning = await getOrCreateConversationLearning(ctx.user.id, twin.id);
+      return learning?.learnedTraits || null;
+    }),
   }),
 
   // ============ AI Provider Management (管理者専用) ============
