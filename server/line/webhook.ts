@@ -501,6 +501,10 @@ export async function handleLineWebhook(req: Request, res: Response) {
   console.log("[LINE] Headers:", JSON.stringify(req.headers, null, 2));
   console.log("[LINE] Body:", JSON.stringify(req.body, null, 2));
   
+  // デバッグ: リクエストが来たら即座に200を返して、その後処理を続行
+  // LINEには先に200を返す（タイムアウト防止）
+  res.status(200).json({ success: true });
+  
   try {
     // 署名検証
     const signature = req.headers["x-line-signature"] as string;
@@ -512,7 +516,16 @@ export async function handleLineWebhook(req: Request, res: Response) {
     if (!verifyLineSignature(body, signature)) {
       console.error("[LINE] Invalid signature - verification failed");
       console.error("[LINE] LINE_CHANNEL_SECRET exists:", !!process.env.LINE_CHANNEL_SECRET);
-      return res.status(401).json({ error: "Invalid signature" });
+      // 署名検証失敗でもデバッグのためメッセージを送る
+      const webhookBody = req.body as LineWebhookBody;
+      for (const event of webhookBody.events) {
+        if (event.source.userId) {
+          await pushToLine(event.source.userId, [
+            { type: "text", text: `デバッグ: 署名検証失敗\nLINE_CHANNEL_SECRET exists: ${!!process.env.LINE_CHANNEL_SECRET}` }
+          ]);
+        }
+      }
+      return;
     }
     
     console.log("[LINE] Signature verified successfully");
@@ -525,6 +538,13 @@ export async function handleLineWebhook(req: Request, res: Response) {
     // 各イベントを処理
     for (const event of webhookBody.events) {
       try {
+        // デバッグ: イベント受信を通知
+        if (event.source.userId && event.type === "message") {
+          await pushToLine(event.source.userId, [
+            { type: "text", text: `デバッグ: Webhook受信OK\nイベントタイプ: ${event.type}\nlineUserId: ${event.source.userId}` }
+          ]);
+        }
+        
         switch (event.type) {
           case "follow":
             await handleFollowEvent(event);
@@ -543,16 +563,17 @@ export async function handleLineWebhook(req: Request, res: Response) {
         }
       } catch (eventError) {
         console.error("[LINE] Event processing error:", eventError);
-        // 個別のイベントエラーは無視して続行
+        // デバッグ: エラーを通知
+        if (event.source.userId) {
+          await pushToLine(event.source.userId, [
+            { type: "text", text: `デバッグ: エラー発生\n${eventError instanceof Error ? eventError.message : String(eventError)}` }
+          ]);
+        }
       }
     }
     
-    // LINEには常に200を返す
-    res.status(200).json({ success: true });
-    
   } catch (error) {
     console.error("[LINE] Webhook error:", error);
-    res.status(500).json({ error: "Internal server error" });
   }
 }
 

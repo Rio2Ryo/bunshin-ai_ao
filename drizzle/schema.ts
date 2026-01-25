@@ -1272,3 +1272,23 @@ export const groupConversationObservations = mysqlTable("group_conversation_obse
 
 export type GroupConversationObservation = typeof groupConversationObservations.$inferSelect;
 export type InsertGroupConversationObservation = typeof groupConversationObservations.$inferInsert;
+
+
+/**
+ * Webhook debug logs - Webhookデバッグログ
+ * LINE Webhookの受信状況を記録
+ */
+export const webhookDebugLogs = mysqlTable("webhook_debug_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  source: varchar("source", { length: 50 }).notNull(), // line, clawdbot等
+  eventType: varchar("eventType", { length: 50 }), // message, follow等
+  requestBody: text("requestBody"), // リクエストボディ
+  headers: text("headers"), // ヘッダー情報
+  processingStep: varchar("processingStep", { length: 100 }), // 処理ステップ
+  result: varchar("result", { length: 50 }), // success, error
+  errorMessage: text("errorMessage"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type WebhookDebugLog = typeof webhookDebugLogs.$inferSelect;
+export type InsertWebhookDebugLog = typeof webhookDebugLogs.$inferInsert;
