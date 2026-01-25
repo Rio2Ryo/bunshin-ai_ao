@@ -170,9 +170,13 @@ async function generateTwinResponse(
   userMessage: string,
   lineUserId: string
 ): Promise<string> {
+  console.log("[LINE] generateTwinResponse called");
+  console.log("[LINE] isClawdbotEnabled():", isClawdbotEnabled());
+  
   // Clawdbotが有効な場合はClawdbot経由で応答
   if (isClawdbotEnabled()) {
     console.log("[LINE] Using Clawdbot Gateway for response");
+    console.log("[LINE] Gateway URL:", process.env.CLAWDBOT_GATEWAY_URL);
     return await generateTwinResponseViaClawdbot(userId, twinId, userMessage, lineUserId);
   }
   
@@ -381,6 +385,8 @@ async function handleMessageEvent(event: LineWebhookEvent) {
   if (!lineUserId || !event.message || !event.replyToken) return;
   
   console.log("[LINE] Message event from:", lineUserId, event.message.type);
+  console.log("[LINE] Clawdbot enabled:", isClawdbotEnabled());
+  console.log("[LINE] Clawdbot URL:", process.env.CLAWDBOT_GATEWAY_URL || "not set");
   
   // ユーザーを検索
   const connection = await findUserByLineId(lineUserId);

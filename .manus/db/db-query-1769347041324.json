@@ -1,0 +1,18 @@
+{
+  "query": "SELECT lc.id, lc.userId, lc.twinId, lc.lineUserId, lc.status, dt.name as twinName FROM line_connections lc LEFT JOIN digital_twins dt ON lc.twinId = dt.id WHERE lc.status = 'active';",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT lc.id, lc.userId, lc.twinId, lc.lineUserId, lc.status, dt.name as twinName FROM line_connections lc LEFT JOIN digital_twins dt ON lc.twinId = dt.id WHERE lc.status = 'active';",
+  "rows": [
+    {
+      "id": "1",
+      "userId": "1",
+      "twinId": "1",
+      "lineUserId": "U76dfe7f34a30095a72c37059373c0028",
+      "status": "active",
+      "twinName": "カタオモイ松浦"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tuserId\ttwinId\tlineUserId\tstatus\ttwinName\n1\t1\t1\tU76dfe7f34a30095a72c37059373c0028\tactive\tカタオモイ松浦\n",
+  "stderr": "",
+  "execution_time_ms": 1522
+}

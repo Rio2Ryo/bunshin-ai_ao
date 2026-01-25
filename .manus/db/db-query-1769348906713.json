@@ -1,0 +1,13 @@
+{
+  "query": "SELECT lineUserId FROM line_connections WHERE status = 'active' LIMIT 1;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute SELECT lineUserId FROM line_connections WHERE status = 'active' LIMIT 1;",
+  "rows": [
+    {
+      "lineUserId": "U76dfe7f34a30095a72c37059373c0028"
+    }
+  ],
+  "messages": [],
+  "stdout": "lineUserId\nU76dfe7f34a30095a72c37059373c0028\n",
+  "stderr": "",
+  "execution_time_ms": 1499
+}
