@@ -40,12 +40,8 @@ async function generateTwinResponseViaClawdbot(
   userMessage: string,
   lineUserId: string
 ): Promise<string> {
-  console.log("[LINE] generateTwinResponseViaClawdbot called");
-  console.log("[LINE] userId:", userId, "twinId:", twinId);
-  
   const db = await getDb();
   if (!db) {
-    console.error("[LINE] DB not available");
     return "申し訳ありません、システムエラーが発生しました。";
   }
   
@@ -93,11 +89,6 @@ async function generateTwinResponseViaClawdbot(
   const systemPrompt = buildSystemPrompt(twin);
   
   try {
-    console.log("[LINE] Calling Clawdbot...");
-    console.log("[LINE] System prompt length:", systemPrompt.length);
-    console.log("[LINE] Conversation history:", conversationHistory.length, "messages");
-    console.log("[LINE] User message:", userMessage);
-    
     // Clawdbot経由で応答を生成
     const result = await sendToClawdbot(
       [
@@ -110,8 +101,6 @@ async function generateTwinResponseViaClawdbot(
         sessionKey: `line_${lineUserId}`,
       }
     );
-    
-    console.log("[LINE] Clawdbot result:", JSON.stringify(result));
     
     if (!result.success) {
       console.error("[LINE] Clawdbot error:", result.error);
@@ -146,16 +135,12 @@ async function generateTwinResponseFallback(
   systemPrompt: string,
   conversationHistory: { role: "user" | "assistant"; content: string }[]
 ): Promise<string> {
-  console.log("[LINE] Fallback to direct LLM");
-  
   const db = await getDb();
   if (!db) {
-    console.error("[LINE] Fallback: DB not available");
     return "申し訳ありません、システムエラーが発生しました。";
   }
   
   try {
-    console.log("[LINE] Fallback: Calling LLM...");
     // LLMで応答を生成
     const response = await invokeLLM({
       messages: [
@@ -165,8 +150,6 @@ async function generateTwinResponseFallback(
       ],
     });
     
-    console.log("[LINE] Fallback: LLM response received");
-    
     const responseContent = response.choices?.[0]?.message?.content;
     const assistantMessage = typeof responseContent === "string" 
       ? responseContent 
@@ -175,13 +158,10 @@ async function generateTwinResponseFallback(
     // 会話をDBに保存
     await saveConversation(db, userId, twinId, userMessage, assistantMessage);
     
-    console.log("[LINE] Fallback: Response saved, returning:", assistantMessage.substring(0, 50));
     return assistantMessage;
   } catch (error) {
     console.error("[LINE] LLM fallback error:", error);
-    // エラーの詳細を返す
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    return `申し訳ありません、応答の生成中にエラーが発生しました。(${errorMsg.substring(0, 100)})`;
+    return "申し訳ありません、応答の生成中にエラーが発生しました。";
   }
 }
 
@@ -194,13 +174,8 @@ async function generateTwinResponse(
   userMessage: string,
   lineUserId: string
 ): Promise<string> {
-  console.log("[LINE] generateTwinResponse called");
-  console.log("[LINE] isClawdbotEnabled():", isClawdbotEnabled());
-  
   // Clawdbotが有効な場合はClawdbot経由で応答
   if (isClawdbotEnabled()) {
-    console.log("[LINE] Using Clawdbot Gateway for response");
-    console.log("[LINE] Gateway URL:", process.env.CLAWDBOT_GATEWAY_URL);
     return await generateTwinResponseViaClawdbot(userId, twinId, userMessage, lineUserId);
   }
   
@@ -521,11 +496,6 @@ async function handleJoinEvent(event: LineWebhookEvent) {
  * Webhook受信エンドポイント
  */
 export async function handleLineWebhook(req: Request, res: Response) {
-  console.log("[LINE] ========== WEBHOOK RECEIVED ==========");
-  console.log("[LINE] Headers:", JSON.stringify(req.headers, null, 2));
-  console.log("[LINE] Body:", JSON.stringify(req.body, null, 2));
-  
-  // デバッグ: リクエストが来たら即座に200を返して、その後処理を続行
   // LINEには先に200を返す（タイムアウト防止）
   res.status(200).json({ success: true });
   
@@ -534,41 +504,16 @@ export async function handleLineWebhook(req: Request, res: Response) {
     const signature = req.headers["x-line-signature"] as string;
     const body = JSON.stringify(req.body);
     
-    console.log("[LINE] Signature:", signature);
-    console.log("[LINE] Body string:", body);
-    
     if (!verifyLineSignature(body, signature)) {
-      console.error("[LINE] Invalid signature - verification failed");
-      console.error("[LINE] LINE_CHANNEL_SECRET exists:", !!process.env.LINE_CHANNEL_SECRET);
-      // 署名検証失敗でもデバッグのためメッセージを送る
-      const webhookBody = req.body as LineWebhookBody;
-      for (const event of webhookBody.events) {
-        if (event.source.userId) {
-          await pushToLine(event.source.userId, [
-            { type: "text", text: `デバッグ: 署名検証失敗\nLINE_CHANNEL_SECRET exists: ${!!process.env.LINE_CHANNEL_SECRET}` }
-          ]);
-        }
-      }
+      console.error("[LINE] Invalid signature");
       return;
     }
     
-    console.log("[LINE] Signature verified successfully");
-    
     const webhookBody = req.body as LineWebhookBody;
-    
-    console.log("[LINE] Webhook received:", webhookBody.events.length, "events");
-    console.log("[LINE] Events:", JSON.stringify(webhookBody.events, null, 2));
     
     // 各イベントを処理
     for (const event of webhookBody.events) {
       try {
-        // デバッグ: イベント受信を通知
-        if (event.source.userId && event.type === "message") {
-          await pushToLine(event.source.userId, [
-            { type: "text", text: `デバッグ: Webhook受信OK\nイベントタイプ: ${event.type}\nlineUserId: ${event.source.userId}` }
-          ]);
-        }
-        
         switch (event.type) {
           case "follow":
             await handleFollowEvent(event);
@@ -587,12 +532,6 @@ export async function handleLineWebhook(req: Request, res: Response) {
         }
       } catch (eventError) {
         console.error("[LINE] Event processing error:", eventError);
-        // デバッグ: エラーを通知
-        if (event.source.userId) {
-          await pushToLine(event.source.userId, [
-            { type: "text", text: `デバッグ: エラー発生\n${eventError instanceof Error ? eventError.message : String(eventError)}` }
-          ]);
-        }
       }
     }
     
