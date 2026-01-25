@@ -40,8 +40,14 @@ async function generateTwinResponseViaClawdbot(
   userMessage: string,
   lineUserId: string
 ): Promise<string> {
+  console.log("[LINE] generateTwinResponseViaClawdbot called");
+  console.log("[LINE] userId:", userId, "twinId:", twinId);
+  
   const db = await getDb();
-  if (!db) return "申し訳ありません、システムエラーが発生しました。";
+  if (!db) {
+    console.error("[LINE] DB not available");
+    return "申し訳ありません、システムエラーが発生しました。";
+  }
   
   // 分身AIの情報を取得
   const [twin] = await db
@@ -87,6 +93,11 @@ async function generateTwinResponseViaClawdbot(
   const systemPrompt = buildSystemPrompt(twin);
   
   try {
+    console.log("[LINE] Calling Clawdbot...");
+    console.log("[LINE] System prompt length:", systemPrompt.length);
+    console.log("[LINE] Conversation history:", conversationHistory.length, "messages");
+    console.log("[LINE] User message:", userMessage);
+    
     // Clawdbot経由で応答を生成
     const result = await sendToClawdbot(
       [
@@ -99,6 +110,8 @@ async function generateTwinResponseViaClawdbot(
         sessionKey: `line_${lineUserId}`,
       }
     );
+    
+    console.log("[LINE] Clawdbot result:", JSON.stringify(result));
     
     if (!result.success) {
       console.error("[LINE] Clawdbot error:", result.error);
@@ -133,10 +146,16 @@ async function generateTwinResponseFallback(
   systemPrompt: string,
   conversationHistory: { role: "user" | "assistant"; content: string }[]
 ): Promise<string> {
+  console.log("[LINE] Fallback to direct LLM");
+  
   const db = await getDb();
-  if (!db) return "申し訳ありません、システムエラーが発生しました。";
+  if (!db) {
+    console.error("[LINE] Fallback: DB not available");
+    return "申し訳ありません、システムエラーが発生しました。";
+  }
   
   try {
+    console.log("[LINE] Fallback: Calling LLM...");
     // LLMで応答を生成
     const response = await invokeLLM({
       messages: [
@@ -146,6 +165,8 @@ async function generateTwinResponseFallback(
       ],
     });
     
+    console.log("[LINE] Fallback: LLM response received");
+    
     const responseContent = response.choices?.[0]?.message?.content;
     const assistantMessage = typeof responseContent === "string" 
       ? responseContent 
@@ -154,10 +175,13 @@ async function generateTwinResponseFallback(
     // 会話をDBに保存
     await saveConversation(db, userId, twinId, userMessage, assistantMessage);
     
+    console.log("[LINE] Fallback: Response saved, returning:", assistantMessage.substring(0, 50));
     return assistantMessage;
   } catch (error) {
     console.error("[LINE] LLM fallback error:", error);
-    return "申し訳ありません、応答の生成中にエラーが発生しました。";
+    // エラーの詳細を返す
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    return `申し訳ありません、応答の生成中にエラーが発生しました。(${errorMsg.substring(0, 100)})`;
   }
 }
 
