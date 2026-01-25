@@ -1,6 +1,6 @@
 /**
  * LINE Webhook Handler
- * LINE公式アカウントからのメッセージを受信し、分身AIと会話
+ * LINE公式アカウントからのメッセージを受信し、Clawdbot経由で分身AIと会話
  */
 
 import type { Request, Response } from "express";
@@ -25,14 +25,20 @@ import {
   saveConversationSnippet,
   getOrCreateConversationLearning 
 } from "../services/conversationLearningService";
+import {
+  isClawdbotEnabled,
+  sendToClawdbot,
+  cleanClawdbotResponse,
+} from "../services/clawdbotGatewayService";
 
 /**
- * 分身AIの応答を生成
+ * Clawdbot経由で分身AIの応答を生成
  */
-async function generateTwinResponse(
+async function generateTwinResponseViaClawdbot(
   userId: number,
   twinId: number,
-  userMessage: string
+  userMessage: string,
+  lineUserId: string
 ): Promise<string> {
   const db = await getDb();
   if (!db) return "申し訳ありません、システムエラーが発生しました。";
@@ -81,6 +87,56 @@ async function generateTwinResponse(
   const systemPrompt = buildSystemPrompt(twin);
   
   try {
+    // Clawdbot経由で応答を生成
+    const result = await sendToClawdbot(
+      [
+        { role: "system", content: systemPrompt },
+        ...conversationHistory,
+        { role: "user", content: userMessage },
+      ],
+      {
+        // LINEユーザーIDをセッションキーとして使用（会話の継続性を保持）
+        sessionKey: `line_${lineUserId}`,
+      }
+    );
+    
+    if (!result.success) {
+      console.error("[LINE] Clawdbot error:", result.error);
+      // Clawdbotが失敗した場合はフォールバック
+      return await generateTwinResponseFallback(userId, twinId, userMessage, systemPrompt, conversationHistory);
+    }
+    
+    // Clawdbotの内部コマンドを除去
+    const assistantMessage = cleanClawdbotResponse(result.response || "");
+    
+    if (!assistantMessage) {
+      return await generateTwinResponseFallback(userId, twinId, userMessage, systemPrompt, conversationHistory);
+    }
+    
+    // 会話をDBに保存
+    await saveConversation(db, userId, twinId, userMessage, assistantMessage);
+    
+    return assistantMessage;
+  } catch (error) {
+    console.error("[LINE] Clawdbot error:", error);
+    return await generateTwinResponseFallback(userId, twinId, userMessage, systemPrompt, conversationHistory);
+  }
+}
+
+/**
+ * フォールバック: 直接LLMで応答を生成
+ */
+async function generateTwinResponseFallback(
+  userId: number,
+  twinId: number,
+  userMessage: string,
+  systemPrompt: string,
+  conversationHistory: { role: "user" | "assistant"; content: string }[]
+): Promise<string> {
+  const db = await getDb();
+  if (!db) return "申し訳ありません、システムエラーが発生しました。";
+  
+  try {
     // LLMで応答を生成
     const response = await invokeLLM({
       messages: [
@@ -100,9 +156,73 @@ async function generateTwinResponse(
     
     return assistantMessage;
   } catch (error) {
-    console.error("[LINE] LLM error:", error);
+    console.error("[LINE] LLM fallback error:", error);
     return "申し訳ありません、応答の生成中にエラーが発生しました。";
   }
+}
+
+/**
+ * 分身AIの応答を生成（メインエントリーポイント）
+ */
+async function generateTwinResponse(
+  userId: number,
+  twinId: number,
+  userMessage: string,
+  lineUserId: string
+): Promise<string> {
+  // Clawdbotが有効な場合はClawdbot経由で応答
+  if (isClawdbotEnabled()) {
+    console.log("[LINE] Using Clawdbot Gateway for response");
+    return await generateTwinResponseViaClawdbot(userId, twinId, userMessage, lineUserId);
+  }
+  
+  // Clawdbotが無効な場合は直接LLMを使用
+  console.log("[LINE] Clawdbot not configured, using direct LLM");
+  const db = await getDb();
+  if (!db) return "申し訳ありません、システムエラーが発生しました。";
+  
+  // 分身AIの情報を取得
+  const [twin] = await db
+    .select()
+    .from(digitalTwins)
+    .where(eq(digitalTwins.id, twinId))
+    .limit(1);
+  
+  if (!twin) {
+    return "分身AIが見つかりません。Webアプリで分身AIを作成してください。";
+  }
+  
+  const systemPrompt = buildSystemPrompt(twin);
+  
+  // LINE用のチャットセッションを検索
+  const [lineSession] = await db
+    .select()
+    .from(chatSessions)
+    .where(
+      and(
+        eq(chatSessions.userId, userId),
+        eq(chatSessions.twinId, twinId),
+        eq(chatSessions.title, "LINE会話")
+      )
+    )
+    .limit(1);
+  
+  // 最近の会話履歴を取得
+  const recentMessages = lineSession 
+    ? await db
+        .select()
+        .from(chatMessages)
+        .where(eq(chatMessages.sessionId, lineSession.id))
+        .orderBy(desc(chatMessages.createdAt))
+        .limit(10)
+    : [];
+  
+  const conversationHistory = recentMessages.reverse().map(msg => ({
+    role: msg.role as "user" | "assistant",
+    content: msg.content || "",
+  }));
+  
+  return await generateTwinResponseFallback(userId, twinId, userMessage, systemPrompt, conversationHistory);
 }
 
 /**
@@ -234,7 +354,7 @@ async function handleFollowEvent(event: LineWebhookEvent) {
     await replyToLine(event.replyToken, [
       {
         type: "text",
-        text: `友だち追加ありがとうございます！🎉\n\n分身AIとLINEを連携するには、以下の連携コードをWebアプリで入力してください。\n\n📱 連携コード: ${linkCode}\n\n※有効期限: 10分\n※Webアプリ: https://bunshin-ai.manus.space/line-link`,
+        text: `友だち追加ありがとうございます！🎉\n\n分身AIとLINEを連携するには、以下の連携コードをWebアプリで入力してください。\n\n📱 連携コード: ${linkCode}\n\n※有効期限: 10分\n※Webアプリ: https://bunshinai.net/line-link`,
       },
     ]);
   }
@@ -305,8 +425,8 @@ async function handleMessageEvent(event: LineWebhookEvent) {
       userMessage
     );
     
-    // 分身AIの応答を生成
-    const response = await generateTwinResponse(userId, twinId, userMessage);
+    // 分身AIの応答を生成（Clawdbot経由）
+    const response = await generateTwinResponse(userId, twinId, userMessage, lineUserId);
     
     // 応答を保存
     await saveLineMessage(
@@ -360,15 +480,7 @@ async function handleJoinEvent(event: LineWebhookEvent) {
  */
 export async function handleLineWebhook(req: Request, res: Response) {
   try {
-    const webhookBody = req.body as LineWebhookBody;
-    
-    // LINEの検証リクエスト（空のevents配列）の場合は署名検証をスキップ
-    if (!webhookBody.events || webhookBody.events.length === 0) {
-      console.log("[LINE] Verification request received");
-      return res.status(200).json({ success: true, message: "Webhook verified" });
-    }
-    
-    // 署名検証（実際のイベントがある場合のみ）
+    // 署名検証
     const signature = req.headers["x-line-signature"] as string;
     const body = JSON.stringify(req.body);
     
@@ -376,6 +488,8 @@ export async function handleLineWebhook(req: Request, res: Response) {
       console.error("[LINE] Invalid signature");
       return res.status(401).json({ error: "Invalid signature" });
     }
+    
+    const webhookBody = req.body as LineWebhookBody;
     
     console.log("[LINE] Webhook received:", webhookBody.events.length, "events");
     
@@ -420,6 +534,7 @@ export async function getLineWebhookInfo(req: Request, res: Response) {
   res.json({
     status: "active",
     version: "1.0.0",
+    clawdbotEnabled: isClawdbotEnabled(),
     supportedEvents: ["follow", "unfollow", "message", "join", "leave"],
     supportedMessageTypes: ["text"],
     documentation: "https://developers.line.biz/ja/docs/messaging-api/",

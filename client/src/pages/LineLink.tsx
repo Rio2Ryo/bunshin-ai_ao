@@ -221,7 +221,7 @@ export default function LineLink() {
                   </p>
                   <Button variant="outline" size="lg" asChild>
                     <a 
-                      href="https://line.me/R/ti/p/@696szqnp" 
+                      href="https://line.me/R/ti/p/@bunshin-ai" 
                       target="_blank" 
                       rel="noopener noreferrer"
                     >

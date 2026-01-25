@@ -406,13 +406,7 @@
 
 ## LINE公式アカウント連携（2026-01-25）
 - [x] LINE公式アカウントを作成（@696szqnp）
-- [x] Channel Access TokenとChannel Secretを取得
-- [x] 環境変数に設定
+- [ ] Channel Access TokenとChannel Secretを取得
+- [ ] 環境変数に設定
 - [ ] Webhook URLを設定
-- [ ] 動作確認
-
-## LINE連携修正（2026-01-25）
-- [x] 公開URLでWebhookエンドポイントをテスト
-- [x] LINE連携の問題を調査・修正
-- [x] 友だち追加リンクを@696szqnpに修正
 - [ ] 動作確認
