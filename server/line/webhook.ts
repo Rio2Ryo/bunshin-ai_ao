@@ -360,7 +360,15 @@ async function handleJoinEvent(event: LineWebhookEvent) {
  */
 export async function handleLineWebhook(req: Request, res: Response) {
   try {
-    // 署名検証
+    const webhookBody = req.body as LineWebhookBody;
+    
+    // LINEの検証リクエスト（空のevents配列）の場合は署名検証をスキップ
+    if (!webhookBody.events || webhookBody.events.length === 0) {
+      console.log("[LINE] Verification request received");
+      return res.status(200).json({ success: true, message: "Webhook verified" });
+    }
+    
+    // 署名検証（実際のイベントがある場合のみ）
     const signature = req.headers["x-line-signature"] as string;
     const body = JSON.stringify(req.body);
     
@@ -368,8 +376,6 @@ export async function handleLineWebhook(req: Request, res: Response) {
       console.error("[LINE] Invalid signature");
       return res.status(401).json({ error: "Invalid signature" });
     }
-    
-    const webhookBody = req.body as LineWebhookBody;
     
     console.log("[LINE] Webhook received:", webhookBody.events.length, "events");
     

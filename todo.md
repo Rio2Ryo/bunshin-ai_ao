@@ -403,3 +403,10 @@
 - [x] LINE連携状態の確認・解除機能
 - [ ] グループLINE対応（観察モード）
 - [x] テスト作成・実行
+
+## LINE公式アカウント連携（2026-01-25）
+- [x] LINE公式アカウントを作成（@696szqnp）
+- [x] Channel Access TokenとChannel Secretを取得
+- [x] 環境変数に設定
+- [ ] Webhook URLを設定
+- [ ] 動作確認
