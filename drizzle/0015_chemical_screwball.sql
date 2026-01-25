@@ -1,0 +1,1 @@
+ALTER TABLE `conversation_snippets` MODIFY COLUMN `source` enum('clawdbot','web_chat','matching','group','line') NOT NULL;
