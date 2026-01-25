@@ -1224,7 +1224,7 @@ export const conversationSnippets = mysqlTable("conversation_snippets", {
   userId: int("userId").notNull(),
   twinId: int("twinId").notNull(),
   // 会話の種類
-  source: mysqlEnum("source", ["clawdbot", "web_chat", "matching", "group"]).notNull(),
+  source: mysqlEnum("source", ["clawdbot", "web_chat", "matching", "group", "line"]).notNull(),
   sourceId: varchar("sourceId", { length: 255 }), // 元のメッセージID等
   // 会話内容
   userMessage: text("userMessage").notNull(), // ユーザーの発言

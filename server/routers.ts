@@ -2529,6 +2529,142 @@ ${dialogueText}`,
         return testProvider(input.provider);
       }),
   }),
+
+  // ============ LINE連携 ============
+  line: router({
+    // LINE連携状態を取得
+    getConnection: protectedProcedure.query(async ({ ctx }) => {
+      const { getLineConnectionByUserId } = await import("./services/lineService");
+      return getLineConnectionByUserId(ctx.user.id);
+    }),
+
+    // 連携コードでLINEを紐付け
+    linkByCode: protectedProcedure
+      .input(z.object({
+        code: z.string().length(6),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { linkByCode } = await import("./services/lineService");
+        
+        // ユーザーの分身AIを取得
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "分身AIを先に作成してください",
+          });
+        }
+        
+        const result = await linkByCode(input.code, ctx.user.id, twin.id);
+        if (!result.success) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: result.error || "連携に失敗しました",
+          });
+        }
+        
+        return { success: true };
+      }),
+
+    // LINE連携を解除
+    disconnect: protectedProcedure.mutation(async ({ ctx }) => {
+      const { getLineConnectionByUserId, disconnectLine } = await import("./services/lineService");
+      
+      const connection = await getLineConnectionByUserId(ctx.user.id);
+      if (!connection) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "LINE連携が見つかりません",
+        });
+      }
+      
+      await disconnectLine(connection.lineUserId);
+      return { success: true };
+    }),
+
+    // LINEメッセージ履歴を取得
+    getMessageHistory: protectedProcedure
+      .input(z.object({
+        limit: z.number().min(1).max(100).default(50),
+      }))
+      .query(async ({ ctx, input }) => {
+        const { getLineMessageHistory } = await import("./services/lineService");
+        return getLineMessageHistory(ctx.user.id, input.limit);
+      }),
+
+    // LINE連携設定を更新
+    updateSettings: protectedProcedure
+      .input(z.object({
+        receiveHeartbeat: z.boolean().optional(),
+        receiveNotifications: z.boolean().optional(),
+        allowVoiceMessages: z.boolean().optional(),
+        language: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+        
+        const { lineConnections } = await import("../drizzle/schema");
+        const { eq } = await import("drizzle-orm");
+        
+        const [connection] = await db
+          .select()
+          .from(lineConnections)
+          .where(eq(lineConnections.userId, ctx.user.id))
+          .limit(1);
+        
+        if (!connection) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "LINE連携が見つかりません",
+          });
+        }
+        
+        const currentSettings = (connection.settings || {
+          receiveHeartbeat: true,
+          receiveNotifications: true,
+          allowVoiceMessages: true,
+          language: "ja",
+        }) as {
+          receiveHeartbeat: boolean;
+          receiveNotifications: boolean;
+          allowVoiceMessages: boolean;
+          language: string;
+        };
+        
+        const updatedSettings = {
+          ...currentSettings,
+          ...input,
+        };
+        
+        await db
+          .update(lineConnections)
+          .set({ settings: updatedSettings as any })
+          .where(eq(lineConnections.userId, ctx.user.id));
+        
+        return { success: true };
+      }),
+
+    // LINE連携を一時停止/再開
+    toggleStatus: protectedProcedure
+      .input(z.object({
+        status: z.enum(["active", "paused"]),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+        
+        const { lineConnections } = await import("../drizzle/schema");
+        const { eq } = await import("drizzle-orm");
+        
+        await db
+          .update(lineConnections)
+          .set({ status: input.status })
+          .where(eq(lineConnections.userId, ctx.user.id));
+        
+        return { success: true };
+      }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;

@@ -80,7 +80,7 @@ export async function getOrCreateConversationLearning(userId: number, twinId: nu
 export async function saveConversationSnippet(
   userId: number,
   twinId: number,
-  source: "clawdbot" | "web_chat" | "matching" | "group",
+  source: "clawdbot" | "web_chat" | "matching" | "group" | "line",
   userMessage: string,
   context?: string,
   sourceId?: string

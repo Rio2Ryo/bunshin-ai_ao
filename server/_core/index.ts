@@ -9,6 +9,7 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { handleStripeWebhook } from "../stripe/webhook";
 import { handleClawdbotWebhook, getClawdbotWebhookInfo } from "../clawdbot/webhook";
+import { handleLineWebhook, getLineWebhookInfo } from "../line/webhook";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -39,6 +40,10 @@ async function startServer() {
   // Clawdbot webhook routes
   app.get("/api/clawdbot/webhook", getClawdbotWebhookInfo);
   app.post("/api/clawdbot/webhook", express.json(), handleClawdbotWebhook);
+  
+  // LINE webhook routes
+  app.get("/api/line/webhook", getLineWebhookInfo);
+  app.post("/api/line/webhook", express.json(), handleLineWebhook);
   
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
