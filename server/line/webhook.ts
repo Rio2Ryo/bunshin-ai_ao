@@ -381,15 +381,27 @@ async function handleUnfollowEvent(event: LineWebhookEvent) {
  * メッセージイベントの処理
  */
 async function handleMessageEvent(event: LineWebhookEvent) {
+  console.log("[LINE] ========== MESSAGE EVENT ==========");
+  console.log("[LINE] Full event:", JSON.stringify(event, null, 2));
+  
   const lineUserId = event.source.userId;
-  if (!lineUserId || !event.message || !event.replyToken) return;
+  console.log("[LINE] lineUserId:", lineUserId);
+  console.log("[LINE] event.message:", event.message);
+  console.log("[LINE] event.replyToken:", event.replyToken);
+  
+  if (!lineUserId || !event.message || !event.replyToken) {
+    console.log("[LINE] Early return - missing required fields");
+    return;
+  }
   
   console.log("[LINE] Message event from:", lineUserId, event.message.type);
   console.log("[LINE] Clawdbot enabled:", isClawdbotEnabled());
   console.log("[LINE] Clawdbot URL:", process.env.CLAWDBOT_GATEWAY_URL || "not set");
   
   // ユーザーを検索
+  console.log("[LINE] Searching for user with lineUserId:", lineUserId);
   const connection = await findUserByLineId(lineUserId);
+  console.log("[LINE] Connection found:", JSON.stringify(connection, null, 2));
   
   if (!connection) {
     // 未連携ユーザー
@@ -485,19 +497,30 @@ async function handleJoinEvent(event: LineWebhookEvent) {
  * Webhook受信エンドポイント
  */
 export async function handleLineWebhook(req: Request, res: Response) {
+  console.log("[LINE] ========== WEBHOOK RECEIVED ==========");
+  console.log("[LINE] Headers:", JSON.stringify(req.headers, null, 2));
+  console.log("[LINE] Body:", JSON.stringify(req.body, null, 2));
+  
   try {
     // 署名検証
     const signature = req.headers["x-line-signature"] as string;
     const body = JSON.stringify(req.body);
     
+    console.log("[LINE] Signature:", signature);
+    console.log("[LINE] Body string:", body);
+    
     if (!verifyLineSignature(body, signature)) {
-      console.error("[LINE] Invalid signature");
+      console.error("[LINE] Invalid signature - verification failed");
+      console.error("[LINE] LINE_CHANNEL_SECRET exists:", !!process.env.LINE_CHANNEL_SECRET);
       return res.status(401).json({ error: "Invalid signature" });
     }
+    
+    console.log("[LINE] Signature verified successfully");
     
     const webhookBody = req.body as LineWebhookBody;
     
     console.log("[LINE] Webhook received:", webhookBody.events.length, "events");
+    console.log("[LINE] Events:", JSON.stringify(webhookBody.events, null, 2));
     
     // 各イベントを処理
     for (const event of webhookBody.events) {
