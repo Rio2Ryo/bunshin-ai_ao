@@ -61,6 +61,7 @@ function Router() {
       <Route path="/cards/my" component={MyCards} />
       <Route path="/cards/nfc-guide" component={NFCSetupGuide} />
       <Route path="/cards/share/:id" component={CardShare} />
+      {/* Note: /cards/:id must come AFTER all specific /cards/* routes */}
       <Route path="/cards/:id" component={CardDetail} />
       <Route path="/card/get/:code" component={CardGet} />
       <Route path="/card/get-bulk/:codes" component={CardGetBulk} />
