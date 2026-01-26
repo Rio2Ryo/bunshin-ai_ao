@@ -2848,6 +2848,211 @@ ${dialogueText}`,
         return card;
       }),
 
+    // 名刺画像をアップロード
+    uploadCardImage: protectedProcedure
+      .input(z.object({
+        filename: z.string(),
+        content: z.string(), // base64 encoded
+        mimeType: z.string(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const buffer = Buffer.from(input.content, "base64");
+        const fileKey = `cards/${ctx.user.id}/${nanoid()}-${input.filename}`;
+        
+        const { url } = await storagePut(fileKey, buffer, input.mimeType);
+        return { url };
+      }),
+
+    // AI/PDFデータから名刺情報を抽出
+    extractCardInfo: protectedProcedure
+      .input(z.object({
+        filename: z.string(),
+        content: z.string(), // base64 encoded
+        mimeType: z.string(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const buffer = Buffer.from(input.content, "base64");
+        const fileKey = `cards/temp/${ctx.user.id}/${nanoid()}-${input.filename}`;
+        
+        // ファイルをS3にアップロード
+        const { url } = await storagePut(fileKey, buffer, input.mimeType);
+        
+        // LLMで名刺情報を抽出
+        const extractionPrompt = `以下の名刺データから情報を抽出してください。
+
+ファイル名: ${input.filename}
+MIMEタイプ: ${input.mimeType}
+
+以下のJSON形式で出力してください:
+{
+  "title": "名前",
+  "subtitle": "役職",
+  "company": "会社名",
+  "department": "部署",
+  "position": "役職",
+  "email": "メールアドレス",
+  "phone": "電話番号",
+  "website": "ウェブサイト",
+  "address": "住所",
+  "description": "説明・自己紹介"
+}
+
+値がない場合はnullを設定してください。`;
+
+        try {
+          // 画像の場合はLLMに画像を送信
+          let messages: any[] = [];
+          
+          if (input.mimeType.startsWith("image/")) {
+            messages = [
+              { role: "system", content: "あなたは名刺情報を抽出するアシスタントです。画像から名刺情報を読み取り、JSON形式で出力してください。" },
+              { 
+                role: "user", 
+                content: [
+                  { type: "text", text: extractionPrompt },
+                  { type: "image_url", image_url: { url } }
+                ]
+              }
+            ];
+          } else if (input.mimeType === "application/pdf") {
+            messages = [
+              { role: "system", content: "あなたは名刺情報を抽出するアシスタントです。PDFから名刺情報を読み取り、JSON形式で出力してください。" },
+              { 
+                role: "user", 
+                content: [
+                  { type: "text", text: extractionPrompt },
+                  { type: "file_url", file_url: { url, mime_type: "application/pdf" } }
+                ]
+              }
+            ];
+          } else {
+            // その他のファイルタイプ
+            messages = [
+              { role: "system", content: "あなたは名刺情報を抽出するアシスタントです。" },
+              { role: "user", content: extractionPrompt }
+            ];
+          }
+
+          const response = await invokeLLM({
+            messages,
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "card_info",
+                strict: true,
+                schema: {
+                  type: "object",
+                  properties: {
+                    title: { type: ["string", "null"] },
+                    subtitle: { type: ["string", "null"] },
+                    company: { type: ["string", "null"] },
+                    department: { type: ["string", "null"] },
+                    position: { type: ["string", "null"] },
+                    email: { type: ["string", "null"] },
+                    phone: { type: ["string", "null"] },
+                    website: { type: ["string", "null"] },
+                    address: { type: ["string", "null"] },
+                    description: { type: ["string", "null"] },
+                  },
+                  required: ["title", "subtitle", "company", "department", "position", "email", "phone", "website", "address", "description"],
+                  additionalProperties: false,
+                },
+              },
+            },
+          });
+
+          const content = response.choices[0]?.message?.content;
+          if (!content || typeof content !== 'string') {
+            throw new Error("抽出に失敗しました");
+          }
+
+          const cardInfo = JSON.parse(content);
+          return { ...cardInfo, imageUrl: url };
+        } catch (error) {
+          console.error("Card info extraction error:", error);
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "名刺情報の抽出に失敗しました" });
+        }
+      }),
+
+    // AIアシストモード: テキストから名刺情報を構造化
+    parseCardText: protectedProcedure
+      .input(z.object({
+        text: z.string().min(1),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const parsePrompt = `以下のテキストから名刺情報を抽出してください。
+
+テキスト:
+${input.text}
+
+以下のJSON形式で出力してください:
+{
+  "title": "名前",
+  "subtitle": "役職・キャッチコピー",
+  "company": "会社名",
+  "department": "部署",
+  "position": "役職",
+  "email": "メールアドレス",
+  "phone": "電話番号",
+  "website": "ウェブサイト",
+  "address": "住所",
+  "twitter": "Twitter/Xアカウント",
+  "instagram": "Instagramアカウント",
+  "line": "LINE ID",
+  "description": "説明・自己紹介",
+  "industry": "業種"
+}
+
+値がない場合はnullを設定してください。テキストから読み取れる情報のみを抽出し、推測はしないでください。`;
+
+        try {
+          const response = await invokeLLM({
+            messages: [
+              { role: "system", content: "あなたは名刺情報を構造化するアシスタントです。ユーザーが入力したテキストから名刺情報を抽出し、JSON形式で出力してください。" },
+              { role: "user", content: parsePrompt }
+            ],
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "card_info",
+                strict: true,
+                schema: {
+                  type: "object",
+                  properties: {
+                    title: { type: ["string", "null"] },
+                    subtitle: { type: ["string", "null"] },
+                    company: { type: ["string", "null"] },
+                    department: { type: ["string", "null"] },
+                    position: { type: ["string", "null"] },
+                    email: { type: ["string", "null"] },
+                    phone: { type: ["string", "null"] },
+                    website: { type: ["string", "null"] },
+                    address: { type: ["string", "null"] },
+                    twitter: { type: ["string", "null"] },
+                    instagram: { type: ["string", "null"] },
+                    line: { type: ["string", "null"] },
+                    description: { type: ["string", "null"] },
+                    industry: { type: ["string", "null"] },
+                  },
+                  required: ["title", "subtitle", "company", "department", "position", "email", "phone", "website", "address", "twitter", "instagram", "line", "description", "industry"],
+                  additionalProperties: false,
+                },
+              },
+            },
+          });
+
+          const content = response.choices[0]?.message?.content;
+          if (!content || typeof content !== 'string') {
+            throw new Error("解析に失敗しました");
+          }
+
+          return JSON.parse(content);
+        } catch (error) {
+          console.error("Card text parsing error:", error);
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "テキストの解析に失敗しました" });
+        }
+      }),
+
     // 自分のカードを更新
     updateMyCard: protectedProcedure
       .input(z.object({
