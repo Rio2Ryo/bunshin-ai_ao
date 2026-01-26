@@ -2665,6 +2665,232 @@ ${dialogueText}`,
         return { success: true };
       }),
   }),
+
+  // ============ NFC名刺（カード）システム ============
+  cards: router({
+    // カードをコードで取得（公開API）
+    getByCode: publicProcedure
+      .input(z.object({ code: z.string() }))
+      .query(async ({ input }) => {
+        const { getCardByCode, incrementCardScans } = await import("./db");
+        const card = await getCardByCode(input.code);
+        if (!card) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "カードが見つかりません" });
+        }
+        // スキャン回数をインクリメント
+        await incrementCardScans(card.id);
+        return card;
+      }),
+
+    // ユーザーが取得したカード一覧
+    getMyCards: protectedProcedure
+      .input(z.object({
+        cardType: z.string().optional(),
+        favoritesOnly: z.boolean().optional(),
+      }).optional())
+      .query(async ({ ctx, input }) => {
+        const { getUserCards, getUserCardsByType, getFavoriteUserCards } = await import("./db");
+        
+        if (input?.favoritesOnly) {
+          return getFavoriteUserCards(ctx.user.id);
+        }
+        if (input?.cardType) {
+          return getUserCardsByType(ctx.user.id, input.cardType);
+        }
+        return getUserCards(ctx.user.id);
+      }),
+
+    // カードを取得（保存）
+    acquire: protectedProcedure
+      .input(z.object({
+        code: z.string(),
+        method: z.enum(["nfc_scan", "qr_scan", "link", "manual"]).default("nfc_scan"),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { getCardByCode, addUserCard, incrementCardSaves, hasUserCard } = await import("./db");
+        
+        const card = await getCardByCode(input.code);
+        if (!card) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "カードが見つかりません" });
+        }
+        
+        // 既に持っているか確認
+        const alreadyHas = await hasUserCard(ctx.user.id, card.id);
+        if (alreadyHas) {
+          throw new TRPCError({ code: "CONFLICT", message: "このカードは既に取得済みです" });
+        }
+        
+        // カードを追加
+        const userCard = await addUserCard({
+          userId: ctx.user.id,
+          cardId: card.id,
+          acquiredMethod: input.method,
+        });
+        
+        if (!userCard) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "カードの取得に失敗しました" });
+        }
+        
+        // 保存回数をインクリメント
+        await incrementCardSaves(card.id);
+        
+        return { success: true, card };
+      }),
+
+    // ユーザーカードを更新（メモ、タグ、お気に入り）
+    updateUserCard: protectedProcedure
+      .input(z.object({
+        cardId: z.number(),
+        memo: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        isFavorite: z.boolean().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { updateUserCard, hasUserCard } = await import("./db");
+        
+        const has = await hasUserCard(ctx.user.id, input.cardId);
+        if (!has) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "カードが見つかりません" });
+        }
+        
+        await updateUserCard(ctx.user.id, input.cardId, {
+          memo: input.memo,
+          tags: input.tags,
+          isFavorite: input.isFavorite !== undefined ? (input.isFavorite ? 1 : 0) : undefined,
+        });
+        
+        return { success: true };
+      }),
+
+    // ユーザーカードを削除
+    removeUserCard: protectedProcedure
+      .input(z.object({ cardId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const { removeUserCard } = await import("./db");
+        await removeUserCard(ctx.user.id, input.cardId);
+        return { success: true };
+      }),
+
+    // 自分のカード（名刺）を作成
+    createMyCard: protectedProcedure
+      .input(z.object({
+        cardType: z.enum(["business_card", "shop_card", "idol_sign", "membership", "event", "other"]).default("business_card"),
+        title: z.string().min(1),
+        subtitle: z.string().optional(),
+        description: z.string().optional(),
+        imageUrl: z.string().optional(),
+        contactInfo: z.object({
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          website: z.string().optional(),
+          address: z.string().optional(),
+          twitter: z.string().optional(),
+          instagram: z.string().optional(),
+          facebook: z.string().optional(),
+          linkedin: z.string().optional(),
+          line: z.string().optional(),
+          custom: z.array(z.object({ label: z.string(), value: z.string() })).optional(),
+        }).optional(),
+        businessInfo: z.object({
+          company: z.string().optional(),
+          position: z.string().optional(),
+          department: z.string().optional(),
+          industry: z.string().optional(),
+        }).optional(),
+        customFields: z.array(z.object({
+          label: z.string(),
+          value: z.string(),
+          type: z.enum(["text", "url", "email", "phone"]).optional(),
+        })).optional(),
+        isPublic: z.boolean().default(true),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { createCard, generateUniqueCardCode } = await import("./db");
+        
+        const code = await generateUniqueCardCode();
+        
+        const card = await createCard({
+          code,
+          ownerUserId: ctx.user.id,
+          cardType: input.cardType,
+          title: input.title,
+          subtitle: input.subtitle || null,
+          description: input.description || null,
+          imageUrl: input.imageUrl || null,
+          contactInfo: input.contactInfo || null,
+          businessInfo: input.businessInfo || null,
+          customFields: input.customFields || null,
+          isPublic: input.isPublic ? 1 : 0,
+        });
+        
+        if (!card) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "カードの作成に失敗しました" });
+        }
+        
+        return card;
+      }),
+
+    // 自分のカード一覧を取得
+    getOwnedCards: protectedProcedure.query(async ({ ctx }) => {
+      const { getCardsByOwner } = await import("./db");
+      return getCardsByOwner(ctx.user.id);
+    }),
+
+    // 自分のカードを更新
+    updateMyCard: protectedProcedure
+      .input(z.object({
+        cardId: z.number(),
+        title: z.string().optional(),
+        subtitle: z.string().optional(),
+        description: z.string().optional(),
+        imageUrl: z.string().optional(),
+        contactInfo: z.object({
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          website: z.string().optional(),
+          address: z.string().optional(),
+          twitter: z.string().optional(),
+          instagram: z.string().optional(),
+          facebook: z.string().optional(),
+          linkedin: z.string().optional(),
+          line: z.string().optional(),
+          custom: z.array(z.object({ label: z.string(), value: z.string() })).optional(),
+        }).optional(),
+        businessInfo: z.object({
+          company: z.string().optional(),
+          position: z.string().optional(),
+          department: z.string().optional(),
+          industry: z.string().optional(),
+        }).optional(),
+        customFields: z.array(z.object({
+          label: z.string(),
+          value: z.string(),
+          type: z.enum(["text", "url", "email", "phone"]).optional(),
+        })).optional(),
+        isPublic: z.boolean().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { getCardById, updateCard } = await import("./db");
+        
+        const card = await getCardById(input.cardId);
+        if (!card || card.ownerUserId !== ctx.user.id) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "カードが見つかりません" });
+        }
+        
+        await updateCard(input.cardId, {
+          title: input.title,
+          subtitle: input.subtitle,
+          description: input.description,
+          imageUrl: input.imageUrl,
+          contactInfo: input.contactInfo,
+          businessInfo: input.businessInfo,
+          customFields: input.customFields,
+          isPublic: input.isPublic !== undefined ? (input.isPublic ? 1 : 0) : undefined,
+        });
+        
+        return { success: true };
+      }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;

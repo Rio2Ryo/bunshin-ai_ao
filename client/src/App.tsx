@@ -23,6 +23,10 @@ import Clawdbot from "./pages/Clawdbot";
 import LearnedPersonality from "./pages/LearnedPersonality";
 import AdminAIProvider from "./pages/AdminAIProvider";
 import LineLink from "./pages/LineLink";
+import Cards from "./pages/Cards";
+import CardDetail from "./pages/CardDetail";
+import CardCreate from "./pages/CardCreate";
+import MyCards from "./pages/MyCards";
 import { PWAInstallPrompt } from "./components/PWAInstallPrompt";
 
 
@@ -48,6 +52,10 @@ function Router() {
       <Route path="/clawdbot" component={Clawdbot} />
       <Route path="/learned-personality" component={LearnedPersonality} />
       <Route path="/line-link" component={LineLink} />
+      <Route path="/cards" component={Cards} />
+      <Route path="/cards/:id" component={CardDetail} />
+      <Route path="/cards/create" component={CardCreate} />
+      <Route path="/cards/my" component={MyCards} />
       <Route path="/admin/ai-provider" component={AdminAIProvider} />
 
       <Route path="/404" component={NotFound} />

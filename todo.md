@@ -406,7 +406,15 @@
 
 ## LINE公式アカウント連携（2026-01-25）
 - [x] LINE公式アカウントを作成（@696szqnp）
-- [ ] Channel Access TokenとChannel Secretを取得
-- [ ] 環境変数に設定
-- [ ] Webhook URLを設定
-- [ ] 動作確認
+- [x] Channel Access TokenとChannel Secretを取得
+- [x] 環境変数に設定
+- [x] Webhook URLを設定
+- [x] 動作確認
+
+## NFC名刺（カード）システム（2026-01-26）
+- [x] DBスキーマ設計（cards, user_cardsテーブル）
+- [x] カード取得API（/api/card/get?code=XXX）
+- [x] マイカード管理ページ（受け取ったカード一覧）
+- [x] カード登録機能（マイプロフィールから）
+- [x] カード取得完了ページ
+- [x] テストと動作確認

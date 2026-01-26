@@ -693,3 +693,193 @@ export async function updateTwinPublicSettings(twinId: number, isPublic: boolean
     tags: tags || null,
   }).where(eq(digitalTwins.id, twinId));
 }
+
+
+// ============ Card Functions (NFC名刺システム) ============
+import { cards, Card, InsertCard, userCards, UserCard, InsertUserCard } from "../drizzle/schema";
+
+// カードをコードで取得
+export async function getCardByCode(code: string): Promise<Card | null> {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const result = await db.select().from(cards).where(eq(cards.code, code)).limit(1);
+  return result[0] || null;
+}
+
+// カードをIDで取得
+export async function getCardById(cardId: number): Promise<Card | null> {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const result = await db.select().from(cards).where(eq(cards.id, cardId)).limit(1);
+  return result[0] || null;
+}
+
+// ユーザーが所有するカード一覧を取得
+export async function getCardsByOwner(ownerUserId: number): Promise<Card[]> {
+  const db = await getDb();
+  if (!db) return [];
+  
+  return await db.select().from(cards).where(eq(cards.ownerUserId, ownerUserId));
+}
+
+// カードを作成
+export async function createCard(card: InsertCard): Promise<Card | null> {
+  const db = await getDb();
+  if (!db) return null;
+  
+  await db.insert(cards).values(card);
+  return await getCardByCode(card.code);
+}
+
+// カードを更新
+export async function updateCard(cardId: number, updates: Partial<InsertCard>): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  
+  await db.update(cards).set(updates).where(eq(cards.id, cardId));
+}
+
+// カードのスキャン回数をインクリメント
+export async function incrementCardScans(cardId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  
+  await db.update(cards).set({
+    totalScans: sql`${cards.totalScans} + 1`,
+    lastScannedAt: new Date(),
+  }).where(eq(cards.id, cardId));
+}
+
+// カードの保存回数をインクリメント
+export async function incrementCardSaves(cardId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  
+  await db.update(cards).set({
+    totalSaves: sql`${cards.totalSaves} + 1`,
+  }).where(eq(cards.id, cardId));
+}
+
+// ユーザーがカードを取得済みか確認
+export async function hasUserCard(userId: number, cardId: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  
+  const result = await db.select().from(userCards)
+    .where(and(eq(userCards.userId, userId), eq(userCards.cardId, cardId)))
+    .limit(1);
+  return result.length > 0;
+}
+
+// ユーザーにカードを追加
+export async function addUserCard(data: InsertUserCard): Promise<UserCard | null> {
+  const db = await getDb();
+  if (!db) return null;
+  
+  // 既に持っているか確認
+  const existing = await hasUserCard(data.userId, data.cardId);
+  if (existing) return null;
+  
+  await db.insert(userCards).values(data);
+  
+  // 追加したカードを取得
+  const result = await db.select().from(userCards)
+    .where(and(eq(userCards.userId, data.userId), eq(userCards.cardId, data.cardId)))
+    .limit(1);
+  return result[0] || null;
+}
+
+// ユーザーが取得したカード一覧を取得
+export async function getUserCards(userId: number): Promise<(UserCard & { card: Card })[]> {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const userCardList = await db.select().from(userCards)
+    .where(eq(userCards.userId, userId))
+    .orderBy(sql`${userCards.acquiredAt} DESC`);
+  
+  const result: (UserCard & { card: Card })[] = [];
+  for (const uc of userCardList) {
+    const card = await getCardById(uc.cardId);
+    if (card) {
+      result.push({ ...uc, card });
+    }
+  }
+  return result;
+}
+
+// ユーザーカードを更新（メモ、タグ、お気に入り）
+export async function updateUserCard(
+  userId: number, 
+  cardId: number, 
+  updates: { memo?: string; tags?: string[]; isFavorite?: number }
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  
+  await db.update(userCards).set(updates)
+    .where(and(eq(userCards.userId, userId), eq(userCards.cardId, cardId)));
+}
+
+// ユーザーカードの最終閲覧日時を更新
+export async function updateUserCardLastViewed(userId: number, cardId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  
+  await db.update(userCards).set({ lastViewedAt: new Date() })
+    .where(and(eq(userCards.userId, userId), eq(userCards.cardId, cardId)));
+}
+
+// ユーザーカードを削除
+export async function removeUserCard(userId: number, cardId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  
+  await db.delete(userCards)
+    .where(and(eq(userCards.userId, userId), eq(userCards.cardId, cardId)));
+}
+
+// カードタイプでフィルタリングしてユーザーカードを取得
+export async function getUserCardsByType(
+  userId: number, 
+  cardType: string
+): Promise<(UserCard & { card: Card })[]> {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const allUserCards = await getUserCards(userId);
+  return allUserCards.filter(uc => uc.card.cardType === cardType);
+}
+
+// お気に入りのユーザーカードを取得
+export async function getFavoriteUserCards(userId: number): Promise<(UserCard & { card: Card })[]> {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const allUserCards = await getUserCards(userId);
+  return allUserCards.filter(uc => uc.isFavorite === 1);
+}
+
+// ユニークなカードコードを生成
+export async function generateUniqueCardCode(): Promise<string> {
+  const db = await getDb();
+  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  
+  let code: string;
+  let isUnique = false;
+  
+  do {
+    code = '';
+    for (let i = 0; i < 8; i++) {
+      code += characters.charAt(Math.floor(Math.random() * characters.length));
+    }
+    
+    // 既存のコードと重複しないか確認
+    const existing = await getCardByCode(code);
+    isUnique = !existing;
+  } while (!isUnique);
+  
+  return code;
+}
