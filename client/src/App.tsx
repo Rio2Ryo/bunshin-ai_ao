@@ -27,6 +27,7 @@ import Cards from "./pages/Cards";
 import CardDetail from "./pages/CardDetail";
 import CardCreate from "./pages/CardCreate";
 import MyCards from "./pages/MyCards";
+import CardGet from "./pages/CardGet";
 import { PWAInstallPrompt } from "./components/PWAInstallPrompt";
 
 
@@ -56,6 +57,7 @@ function Router() {
       <Route path="/cards/:id" component={CardDetail} />
       <Route path="/cards/create" component={CardCreate} />
       <Route path="/cards/my" component={MyCards} />
+      <Route path="/card/get/:code" component={CardGet} />
       <Route path="/admin/ai-provider" component={AdminAIProvider} />
 
       <Route path="/404" component={NotFound} />
