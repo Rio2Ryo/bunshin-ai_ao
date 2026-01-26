@@ -4,8 +4,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
@@ -21,10 +22,11 @@ import {
   Edit,
   Copy,
   QrCode,
-  Eye,
   BarChart3,
   Share2,
-  Smartphone
+  Smartphone,
+  CheckSquare,
+  X
 } from "lucide-react";
 
 // カードタイプの定義
@@ -42,9 +44,12 @@ type CardType = keyof typeof CARD_TYPES;
 export default function MyCards() {
   const [, navigate] = useLocation();
   const [selectedCard, setSelectedCard] = useState<any>(null);
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedCardIds, setSelectedCardIds] = useState<number[]>([]);
+  const [showBulkShareDialog, setShowBulkShareDialog] = useState(false);
 
   // 自分のカード一覧を取得
-  const { data: cards, isLoading, refetch } = trpc.cards.getOwnedCards.useQuery();
+  const { data: cards, isLoading } = trpc.cards.getOwnedCards.useQuery();
 
   // URLをコピー
   const copyCardUrl = (code: string) => {
@@ -57,6 +62,47 @@ export default function MyCards() {
   const copyCardCode = (code: string) => {
     navigator.clipboard.writeText(code);
     toast.success("カードコードをコピーしました");
+  };
+
+  // カード選択の切り替え
+  const toggleCardSelection = (cardId: number) => {
+    setSelectedCardIds(prev => 
+      prev.includes(cardId) 
+        ? prev.filter(id => id !== cardId)
+        : [...prev, cardId]
+    );
+  };
+
+  // 全選択/全解除
+  const toggleSelectAll = () => {
+    if (cards && selectedCardIds.length === cards.length) {
+      setSelectedCardIds([]);
+    } else if (cards) {
+      setSelectedCardIds(cards.map(c => c.id));
+    }
+  };
+
+  // 選択モードを終了
+  const exitSelectionMode = () => {
+    setIsSelectionMode(false);
+    setSelectedCardIds([]);
+  };
+
+  // まとめて共有URLを生成
+  const generateBulkShareUrl = () => {
+    if (selectedCardIds.length === 0) return "";
+    const selectedCards = cards?.filter(c => selectedCardIds.includes(c.id)) || [];
+    const codes = selectedCards.map(c => c.code).join(",");
+    return `${window.location.origin}/card/get-bulk/${codes}`;
+  };
+
+  // まとめて共有URLをコピー
+  const copyBulkShareUrl = () => {
+    const url = generateBulkShareUrl();
+    navigator.clipboard.writeText(url);
+    toast.success("まとめて共有URLをコピーしました");
+    setShowBulkShareDialog(false);
+    exitSelectionMode();
   };
 
   return (
@@ -76,14 +122,43 @@ export default function MyCards() {
               </p>
             </div>
           </div>
-           <Button variant="outline" onClick={() => navigate("/cards/nfc-guide")}>
-            <Smartphone className="mr-2 h-4 w-4" />
-            NFCガイド
-          </Button>
-          <Button onClick={() => navigate("/cards/create")}>
-            <Plus className="mr-2 h-4 w-4" />
-            名刺を作成
-          </Button>
+          <div className="flex gap-2 flex-wrap">
+            {isSelectionMode ? (
+              <>
+                <Button variant="outline" onClick={toggleSelectAll}>
+                  <CheckSquare className="mr-2 h-4 w-4" />
+                  {cards && selectedCardIds.length === cards.length ? "全解除" : "全選択"}
+                </Button>
+                <Button 
+                  variant="default" 
+                  onClick={() => setShowBulkShareDialog(true)}
+                  disabled={selectedCardIds.length === 0}
+                >
+                  <Share2 className="mr-2 h-4 w-4" />
+                  まとめて共有 ({selectedCardIds.length})
+                </Button>
+                <Button variant="ghost" onClick={exitSelectionMode}>
+                  <X className="mr-2 h-4 w-4" />
+                  キャンセル
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => setIsSelectionMode(true)}>
+                  <CheckSquare className="mr-2 h-4 w-4" />
+                  選択モード
+                </Button>
+                <Button variant="outline" onClick={() => navigate("/cards/nfc-guide")}>
+                  <Smartphone className="mr-2 h-4 w-4" />
+                  NFCガイド
+                </Button>
+                <Button onClick={() => navigate("/cards/create")}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  名刺を作成
+                </Button>
+              </>
+            )}
+          </div>
         </div>
 
         {/* カード一覧 */}
@@ -120,12 +195,30 @@ export default function MyCards() {
             {cards?.map((card) => {
               const cardType = CARD_TYPES[card.cardType as CardType] || CARD_TYPES.other;
               const CardIcon = cardType.icon;
+              const isSelected = selectedCardIds.includes(card.id);
               
               return (
-                <Card key={card.id} className="group">
+                <Card 
+                  key={card.id} 
+                  className={`group cursor-pointer transition-all ${
+                    isSelectionMode 
+                      ? isSelected 
+                        ? "ring-2 ring-primary" 
+                        : "opacity-70 hover:opacity-100"
+                      : ""
+                  }`}
+                  onClick={() => isSelectionMode && toggleCardSelection(card.id)}
+                >
                   <CardHeader className="pb-3">
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-2">
+                        {isSelectionMode && (
+                          <Checkbox 
+                            checked={isSelected}
+                            onCheckedChange={() => toggleCardSelection(card.id)}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        )}
                         <div className={`p-2 rounded-lg ${cardType.color}`}>
                           <CardIcon className="h-4 w-4 text-white" />
                         </div>
@@ -136,35 +229,37 @@ export default function MyCards() {
                           <Badge variant="outline" className="text-gray-500">非公開</Badge>
                         )}
                       </div>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => navigate(`/cards/edit/${card.id}`)}>
-                            <Edit className="mr-2 h-4 w-4" />
-                            編集
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => navigate(`/cards/share/${card.id}`)}>
-                            <Share2 className="mr-2 h-4 w-4" />
-                            共有する
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => copyCardUrl(card.code)}>
-                            <Copy className="mr-2 h-4 w-4" />
-                            URLをコピー
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => copyCardCode(card.code)}>
-                            <QrCode className="mr-2 h-4 w-4" />
-                            コードをコピー
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => setSelectedCard(card)}>
-                            <BarChart3 className="mr-2 h-4 w-4" />
-                            統計を見る
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      {!isSelectionMode && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => navigate(`/cards/edit/${card.id}`)}>
+                              <Edit className="mr-2 h-4 w-4" />
+                              編集
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => navigate(`/cards/share/${card.id}`)}>
+                              <Share2 className="mr-2 h-4 w-4" />
+                              共有する
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => copyCardUrl(card.code)}>
+                              <Copy className="mr-2 h-4 w-4" />
+                              URLをコピー
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => copyCardCode(card.code)}>
+                              <QrCode className="mr-2 h-4 w-4" />
+                              コードをコピー
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setSelectedCard(card)}>
+                              <BarChart3 className="mr-2 h-4 w-4" />
+                              統計を見る
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
                     </div>
                     <CardTitle className="mt-3 line-clamp-1">{card.title}</CardTitle>
                     {card.subtitle && (
@@ -237,6 +332,52 @@ export default function MyCards() {
                 </div>
               </div>
             )}
+          </DialogContent>
+        </Dialog>
+
+        {/* まとめて共有ダイアログ */}
+        <Dialog open={showBulkShareDialog} onOpenChange={setShowBulkShareDialog}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>まとめて共有</DialogTitle>
+              <DialogDescription>
+                選択した {selectedCardIds.length} 枚のカードをまとめて共有します
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              {/* 選択したカードのプレビュー */}
+              <div className="space-y-2">
+                <p className="text-sm font-medium">選択したカード:</p>
+                <div className="flex flex-wrap gap-2">
+                  {cards?.filter(c => selectedCardIds.includes(c.id)).map(card => (
+                    <Badge key={card.id} variant="secondary" className="py-1">
+                      {card.title}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+
+              {/* 共有URL */}
+              <div className="space-y-2">
+                <p className="text-sm font-medium">共有URL:</p>
+                <div className="p-3 bg-muted rounded-lg break-all text-sm font-mono">
+                  {generateBulkShareUrl()}
+                </div>
+              </div>
+
+              <p className="text-sm text-muted-foreground">
+                このURLを共有すると、相手は選択したすべてのカードを一度に取得できます。
+              </p>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowBulkShareDialog(false)}>
+                キャンセル
+              </Button>
+              <Button onClick={copyBulkShareUrl}>
+                <Copy className="mr-2 h-4 w-4" />
+                URLをコピー
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
