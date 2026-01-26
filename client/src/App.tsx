@@ -28,6 +28,8 @@ import CardDetail from "./pages/CardDetail";
 import CardCreate from "./pages/CardCreate";
 import MyCards from "./pages/MyCards";
 import CardGet from "./pages/CardGet";
+import CardShare from "./pages/CardShare";
+import NFCSetupGuide from "./pages/NFCSetupGuide";
 import { PWAInstallPrompt } from "./components/PWAInstallPrompt";
 
 
@@ -58,6 +60,8 @@ function Router() {
       <Route path="/cards/create" component={CardCreate} />
       <Route path="/cards/my" component={MyCards} />
       <Route path="/card/get/:code" component={CardGet} />
+      <Route path="/cards/share/:id" component={CardShare} />
+      <Route path="/cards/nfc-guide" component={NFCSetupGuide} />
       <Route path="/admin/ai-provider" component={AdminAIProvider} />
 
       <Route path="/404" component={NotFound} />

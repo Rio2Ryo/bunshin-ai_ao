@@ -22,7 +22,9 @@ import {
   Copy,
   QrCode,
   Eye,
-  BarChart3
+  BarChart3,
+  Share2,
+  Smartphone
 } from "lucide-react";
 
 // カードタイプの定義
@@ -46,7 +48,7 @@ export default function MyCards() {
 
   // URLをコピー
   const copyCardUrl = (code: string) => {
-    const url = `${window.location.origin}/api/card/get?code=${code}`;
+    const url = `${window.location.origin}/card/get/${code}`;
     navigator.clipboard.writeText(url);
     toast.success("URLをコピーしました");
   };
@@ -74,9 +76,13 @@ export default function MyCards() {
               </p>
             </div>
           </div>
+           <Button variant="outline" onClick={() => navigate("/cards/nfc-guide")}>
+            <Smartphone className="mr-2 h-4 w-4" />
+            NFCガイド
+          </Button>
           <Button onClick={() => navigate("/cards/create")}>
             <Plus className="mr-2 h-4 w-4" />
-            新しいカードを作成
+            名刺を作成
           </Button>
         </div>
 
@@ -140,6 +146,10 @@ export default function MyCards() {
                           <DropdownMenuItem onClick={() => navigate(`/cards/edit/${card.id}`)}>
                             <Edit className="mr-2 h-4 w-4" />
                             編集
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => navigate(`/cards/share/${card.id}`)}>
+                            <Share2 className="mr-2 h-4 w-4" />
+                            共有する
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => copyCardUrl(card.code)}>
                             <Copy className="mr-2 h-4 w-4" />

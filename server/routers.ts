@@ -2836,6 +2836,18 @@ ${dialogueText}`,
       return getCardsByOwner(ctx.user.id);
     }),
 
+    // 自分のカードをIDで取得
+    getOwnedCardById: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ ctx, input }) => {
+        const { getCardById } = await import("./db");
+        const card = await getCardById(input.id);
+        if (!card || card.ownerUserId !== ctx.user.id) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "カードが見つかりません" });
+        }
+        return card;
+      }),
+
     // 自分のカードを更新
     updateMyCard: protectedProcedure
       .input(z.object({
