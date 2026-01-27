@@ -42,6 +42,10 @@ import {
   generatePreviewUrl,
   type ParsedClawdbotResponse,
 } from "../services/clawdbotResponseParser";
+import {
+  proxyImageToS3,
+  needsProxy,
+} from "../services/imageProxyService";
 import type { LineMessage } from "../services/lineService";
 
 /**
@@ -518,7 +522,26 @@ async function handleMessageEvent(event: LineWebhookEvent) {
     // メディアコンテンツを追加（最大4つまで、LINEの制限）
     for (const media of parsedResponse.mediaContents.slice(0, 4)) {
       if (media.type === "image" && isValidLineMediaUrl(media.content)) {
-        const imageUrl = normalizeMediaUrl(media.content);
+        let imageUrl = normalizeMediaUrl(media.content);
+        
+        // 非公開ストレージの場合はプロキシ経由でS3に再アップロード
+        if (needsProxy(imageUrl)) {
+          console.log(`[LINE] Image needs proxy: ${imageUrl}`);
+          const proxyResult = await proxyImageToS3(imageUrl, userId);
+          if (proxyResult.success && proxyResult.url) {
+            imageUrl = proxyResult.url;
+            console.log(`[LINE] Proxied image URL: ${imageUrl}`);
+          } else {
+            console.error(`[LINE] Failed to proxy image: ${proxyResult.error}`);
+            // プロキシ失敗時はテキストで代替
+            lineMessages.push({
+              type: "text",
+              text: `🖼️ 画像を生成しましたが、表示できませんでした。`,
+            });
+            continue;
+          }
+        }
+        
         lineMessages.push({
           type: "image",
           originalContentUrl: imageUrl,
