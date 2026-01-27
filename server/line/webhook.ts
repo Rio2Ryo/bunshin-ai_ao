@@ -35,19 +35,38 @@ import {
   generateSystemPromptFromWaveform,
   setupClawdbotAgentOnLineLink,
 } from "../services/clawdbotAgentService";
+import {
+  parseClawdbotResponse,
+  isValidLineMediaUrl,
+  normalizeMediaUrl,
+  generatePreviewUrl,
+  type ParsedClawdbotResponse,
+} from "../services/clawdbotResponseParser";
+import type { LineMessage } from "../services/lineService";
 
 /**
  * Clawdbot経由で分身AIの応答を生成
+ * 画像やメディアを含む応答も対応
  */
+// テキストのみのフォールバック応答を作成
+function createTextOnlyResponse(text: string): ParsedClawdbotResponse {
+  return {
+    textContent: text,
+    mediaContents: [],
+    hasMedia: false,
+    rawResponse: text,
+  };
+}
+
 async function generateTwinResponseViaClawdbot(
   userId: number,
   twinId: number,
   userMessage: string,
   lineUserId: string
-): Promise<string> {
+): Promise<ParsedClawdbotResponse> {
   const db = await getDb();
   if (!db) {
-    return "申し訳ありません、システムエラーが発生しました。";
+    return createTextOnlyResponse("申し訳ありません、システムエラーが発生しました。");
   }
   
   // 分身AIの情報を取得
@@ -58,7 +77,7 @@ async function generateTwinResponseViaClawdbot(
     .limit(1);
   
   if (!twin) {
-    return "分身AIが見つかりません。Webアプリで分身AIを作成してください。";
+    return createTextOnlyResponse("分身AIが見つかりません。Webアプリで分身AIを作成してください。");
   }
   
   // LINE用のチャットセッションを検索
@@ -119,17 +138,20 @@ async function generateTwinResponseViaClawdbot(
       return await generateTwinResponseFallback(userId, twinId, userMessage, systemPrompt, conversationHistory);
     }
     
-    // Clawdbotの内部コマンドを除去
-    const assistantMessage = cleanClawdbotResponse(result.response || "");
+    // Clawdbotの応答をパース（画像やメディアを抽出）
+    const rawResponse = result.response || "";
+    const parsedResponse = parseClawdbotResponse(rawResponse);
     
-    if (!assistantMessage) {
+    console.log(`[LINE] Parsed response: text=${parsedResponse.textContent.length} chars, media=${parsedResponse.mediaContents.length} items`);
+    
+    if (!parsedResponse.textContent && !parsedResponse.hasMedia) {
       return await generateTwinResponseFallback(userId, twinId, userMessage, systemPrompt, conversationHistory);
     }
     
-    // 会話をDBに保存
-    await saveConversation(db, userId, twinId, userMessage, assistantMessage);
+    // 会話をDBに保存（生の応答を保存）
+    await saveConversation(db, userId, twinId, userMessage, rawResponse);
     
-    return assistantMessage;
+    return parsedResponse;
   } catch (error) {
     console.error("[LINE] Clawdbot error:", error);
     return await generateTwinResponseFallback(userId, twinId, userMessage, systemPrompt, conversationHistory);
@@ -145,10 +167,10 @@ async function generateTwinResponseFallback(
   userMessage: string,
   systemPrompt: string,
   conversationHistory: { role: "user" | "assistant"; content: string }[]
-): Promise<string> {
+): Promise<ParsedClawdbotResponse> {
   const db = await getDb();
   if (!db) {
-    return "申し訳ありません、システムエラーが発生しました。";
+    return createTextOnlyResponse("申し訳ありません、システムエラーが発生しました。");
   }
   
   try {
@@ -169,22 +191,23 @@ async function generateTwinResponseFallback(
     // 会話をDBに保存
     await saveConversation(db, userId, twinId, userMessage, assistantMessage);
     
-    return assistantMessage;
+    return createTextOnlyResponse(assistantMessage);
   } catch (error) {
     console.error("[LINE] LLM fallback error:", error);
-    return "申し訳ありません、応答の生成中にエラーが発生しました。";
+    return createTextOnlyResponse("申し訳ありません、応答の生成中にエラーが発生しました。");
   }
 }
 
 /**
  * 分身AIの応答を生成（メインエントリーポイント）
+ * 画像やメディアを含む応答も対応
  */
 async function generateTwinResponse(
   userId: number,
   twinId: number,
   userMessage: string,
   lineUserId: string
-): Promise<string> {
+): Promise<ParsedClawdbotResponse> {
   // Clawdbotが有効な場合はClawdbot経由で応答
   if (isClawdbotEnabled()) {
     return await generateTwinResponseViaClawdbot(userId, twinId, userMessage, lineUserId);
@@ -193,7 +216,7 @@ async function generateTwinResponse(
   // Clawdbotが無効な場合は直接LLMを使用
   console.log("[LINE] Clawdbot not configured, using direct LLM");
   const db = await getDb();
-  if (!db) return "申し訳ありません、システムエラーが発生しました。";
+  if (!db) return createTextOnlyResponse("申し訳ありません、システムエラーが発生しました。");
   
   // 分身AIの情報を取得
   const [twin] = await db
@@ -203,7 +226,7 @@ async function generateTwinResponse(
     .limit(1);
   
   if (!twin) {
-    return "分身AIが見つかりません。Webアプリで分身AIを作成してください。";
+    return createTextOnlyResponse("分身AIが見つかりません。Webアプリで分身AIを作成してください。");
   }
   
   const systemPrompt = buildSystemPrompt(twin);
@@ -453,10 +476,10 @@ async function handleMessageEvent(event: LineWebhookEvent) {
       userMessage
     );
     
-    // 分身AIの応答を生成（Clawdbot経由）
-    const response = await generateTwinResponse(userId, twinId, userMessage, lineUserId);
+    // 分身AIの応答を生成（Clawdbot経由、画像やメディアを含む可能性あり）
+    const parsedResponse = await generateTwinResponse(userId, twinId, userMessage, lineUserId);
     
-    // 応答を保存
+    // 応答を保存（生の応答を保存）
     await saveLineMessage(
       connectionId,
       userId,
@@ -464,16 +487,56 @@ async function handleMessageEvent(event: LineWebhookEvent) {
       undefined,
       "outgoing",
       "text",
-      response
+      parsedResponse.rawResponse
     );
     
-    // LINEに返信
-    await replyToLine(event.replyToken, [
-      {
+    // LINEメッセージを構築（テキスト+メディア）
+    const lineMessages: LineMessage[] = [];
+    
+    // テキストコンテンツがあれば追加
+    if (parsedResponse.textContent) {
+      lineMessages.push({
         type: "text",
-        text: response,
-      },
-    ]);
+        text: parsedResponse.textContent,
+      });
+    }
+    
+    // メディアコンテンツを追加（最大4つまで、LINEの制限）
+    for (const media of parsedResponse.mediaContents.slice(0, 4)) {
+      if (media.type === "image" && isValidLineMediaUrl(media.content)) {
+        const imageUrl = normalizeMediaUrl(media.content);
+        lineMessages.push({
+          type: "image",
+          originalContentUrl: imageUrl,
+          previewImageUrl: generatePreviewUrl(imageUrl),
+        });
+        console.log(`[LINE] Adding image message: ${imageUrl}`);
+      } else if (media.type === "video" && isValidLineMediaUrl(media.content)) {
+        const videoUrl = normalizeMediaUrl(media.content);
+        // 動画の場合はプレビュー画像が必要（今はテキストで代替）
+        lineMessages.push({
+          type: "text",
+          text: `🎬 動画: ${videoUrl}`,
+        });
+      } else if (media.type === "audio" && isValidLineMediaUrl(media.content)) {
+        // 音声の場合はテキストで代替
+        lineMessages.push({
+          type: "text",
+          text: `🎵 音声: ${media.content}`,
+        });
+      }
+    }
+    
+    // メッセージが空の場合はデフォルトメッセージ
+    if (lineMessages.length === 0) {
+      lineMessages.push({
+        type: "text",
+        text: "応答を生成できませんでした。",
+      });
+    }
+    
+    // LINEに返信（最大5メッセージまで）
+    await replyToLine(event.replyToken, lineMessages.slice(0, 5));
   } else {
     // テキスト以外のメッセージ
     await replyToLine(event.replyToken, [

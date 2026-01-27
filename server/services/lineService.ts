@@ -226,17 +226,20 @@ export async function saveLineMessage(
   return result.insertId;
 }
 
+// LINEメッセージの型定義
+export type LineMessage = 
+  | { type: "text"; text: string }
+  | { type: "image"; originalContentUrl: string; previewImageUrl: string }
+  | { type: "flex"; altText: string; contents: unknown }
+  | { type: "video"; originalContentUrl: string; previewImageUrl: string }
+  | { type: "audio"; originalContentUrl: string; duration: number };
+
 /**
  * LINEにメッセージを送信（Reply）
  */
 export async function replyToLine(
   replyToken: string,
-  messages: Array<{
-    type: "text" | "flex";
-    text?: string;
-    altText?: string;
-    contents?: unknown;
-  }>
+  messages: LineMessage[]
 ) {
   const config = getLineConfig();
   if (!config) {
@@ -275,12 +278,7 @@ export async function replyToLine(
  */
 export async function pushToLine(
   to: string,
-  messages: Array<{
-    type: "text" | "flex";
-    text?: string;
-    altText?: string;
-    contents?: unknown;
-  }>
+  messages: LineMessage[]
 ) {
   const config = getLineConfig();
   if (!config) {
