@@ -306,6 +306,13 @@ function buildSystemPrompt(twin: any): string {
   parts.push("検索や調べ物を求められた場合は、Web検索ツールを使用してください。");
   parts.push("ツールを使用できないと言わずに、実際にツールを実行して結果を返してください。");
   
+  // 画像URLの出力形式の指示
+  parts.push("\n【重要: 画像の出力形式】");
+  parts.push("画像を生成した場合は、必ずMarkdown形式で画像URLを出力してください。");
+  parts.push("例: ![cat](https://example.com/image.png)");
+  parts.push("画像URLを出力しないと、ユーザーは画像を見ることができません。");
+  parts.push("「画像を表示できない」「画像をお届けできない」とは言わず、必ずURLを出力してください。");
+  
   return parts.join("\n");
 }
 
