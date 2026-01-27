@@ -184,6 +184,13 @@ export async function generateSystemPromptFromWaveform(userId: number): Promise<
 
   parts.push("\n\n会話では、上記の性格・価値観を自然に反映してください。");
   parts.push("LINEでの会話なので、簡潔で親しみやすい返答を心がけてください。");
+  
+  // ツール使用の指示を追加
+  parts.push("\n\n【利用可能なツール】");
+  parts.push("ユーザーから画像生成を求められた場合は、積極的に画像生成ツールを使用してください。");
+  parts.push("「画像を作って」「絵を描いて」「イラストを生成して」などのリクエストには、generate_imageツールを使用して画像を生成してください。");
+  parts.push("検索や調べ物を求められた場合は、Web検索ツールを使用してください。");
+  parts.push("ツールを使用できないと言わずに、実際にツールを実行して結果を返してください。");
 
   return parts.join("\n");
 }
@@ -193,7 +200,13 @@ export async function generateSystemPromptFromWaveform(userId: number): Promise<
  */
 function getDefaultSystemPrompt(): string {
   return `あなたは分身AIです。ユーザーの代わりに会話し、親切で思いやりのある応答をしてください。
-LINEでの会話なので、簡潔で親しみやすい返答を心がけてください。`;
+LINEでの会話なので、簡潔で親しみやすい返答を心がけてください。
+
+【利用可能なツール】
+ユーザーから画像生成を求められた場合は、積極的に画像生成ツールを使用してください。
+「画像を作って」「絵を描いて」「イラストを生成して」などのリクエストには、generate_imageツールを使用して画像を生成してください。
+検索や調べ物を求められた場合は、Web検索ツールを使用してください。
+ツールを使用できないと言わずに、実際にツールを実行して結果を返してください。`;
 }
 
 /**
