@@ -2665,6 +2665,91 @@ ${dialogueText}`,
         return { success: true };
       }),
   }),
+
+  // ============ Image Generation Settings ============
+  imageGeneration: router({
+    // 画像生成AI設定を取得
+    getSettings: protectedProcedure.query(async ({ ctx }) => {
+      const { getUserImageGenerationSettings } = await import("./services/imageGenerationService");
+      const { imageGenerationProviders } = await import("../drizzle/schema");
+      
+      const settings = await getUserImageGenerationSettings(ctx.user.id);
+      
+      return {
+        currentProvider: settings.provider,
+        settings: settings.settings,
+        availableProviders: Object.entries(imageGenerationProviders).map(([key, value]) => ({
+          id: key,
+          ...value,
+        })),
+      };
+    }),
+
+    // 画像生成AI設定を更新
+    updateSettings: protectedProcedure
+      .input(z.object({
+        provider: z.enum(["nano_banana_pro", "dall_e", "stable_diffusion", "midjourney", "flux"]),
+        settings: z.object({
+          defaultSize: z.string().optional(),
+          defaultQuality: z.string().optional(),
+          defaultStyle: z.string().optional(),
+          apiKey: z.string().optional(),
+          modelVersion: z.string().optional(),
+        }).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { updateUserImageGenerationSettings } = await import("./services/imageGenerationService");
+        
+        const success = await updateUserImageGenerationSettings(
+          ctx.user.id,
+          input.provider,
+          input.settings
+        );
+        
+        if (!success) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "設定の更新に失敗しました" });
+        }
+        
+        return { success: true };
+      }),
+
+    // 画像を生成
+    generate: protectedProcedure
+      .input(z.object({
+        prompt: z.string().min(1).max(1000),
+        size: z.string().optional(),
+        quality: z.string().optional(),
+        style: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { generateImage, uploadImageToS3 } = await import("./services/imageGenerationService");
+        
+        const result = await generateImage({
+          prompt: input.prompt,
+          size: input.size,
+          quality: input.quality,
+          style: input.style,
+          userId: ctx.user.id,
+        });
+        
+        if (!result.success || !result.imageUrl) {
+          throw new TRPCError({ 
+            code: "INTERNAL_SERVER_ERROR", 
+            message: result.error || "画像生成に失敗しました" 
+          });
+        }
+        
+        // S3にアップロードして公開URLを取得
+        const uploadResult = await uploadImageToS3(result.imageUrl, ctx.user.id);
+        
+        return {
+          success: true,
+          imageUrl: uploadResult.url || result.imageUrl,
+          provider: result.provider,
+          generationTimeMs: result.generationTimeMs,
+        };
+      }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;

@@ -1323,3 +1323,75 @@ export const webhookDebugLogs = mysqlTable("webhook_debug_logs", {
 
 export type WebhookDebugLog = typeof webhookDebugLogs.$inferSelect;
 export type InsertWebhookDebugLog = typeof webhookDebugLogs.$inferInsert;
+
+
+/**
+ * Image Generation AI Settings - 画像生成AI設定
+ * ユーザーごとの画像生成AIの設定を管理
+ */
+export const imageGenerationSettings = mysqlTable("image_generation_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().unique(),
+  // 使用する画像生成AI
+  provider: mysqlEnum("provider", [
+    "nano_banana_pro",  // Nano Banana Pro（デフォルト）
+    "dall_e",           // DALL-E
+    "stable_diffusion", // Stable Diffusion
+    "midjourney",       // Midjourney
+    "flux",             // Flux
+  ]).default("nano_banana_pro").notNull(),
+  // プロバイダー固有の設定
+  settings: json("settings").$type<{
+    // 共通設定
+    defaultSize?: string;      // デフォルト画像サイズ
+    defaultQuality?: string;   // デフォルト品質
+    defaultStyle?: string;     // デフォルトスタイル
+    // プロバイダー固有の設定
+    apiKey?: string;           // カスタムAPIキー（オプション）
+    modelVersion?: string;     // モデルバージョン
+  }>(),
+  // 使用統計
+  totalGenerations: int("totalGenerations").default(0).notNull(),
+  lastGeneratedAt: timestamp("lastGeneratedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ImageGenerationSetting = typeof imageGenerationSettings.$inferSelect;
+export type InsertImageGenerationSetting = typeof imageGenerationSettings.$inferInsert;
+
+// 利用可能な画像生成AIプロバイダーの情報
+export const imageGenerationProviders = {
+  nano_banana_pro: {
+    name: "Nano Banana Pro",
+    description: "高品質な画像生成AI（デフォルト）",
+    isDefault: true,
+    requiresApiKey: false,
+  },
+  dall_e: {
+    name: "DALL-E",
+    description: "OpenAIの画像生成AI",
+    isDefault: false,
+    requiresApiKey: true,
+  },
+  stable_diffusion: {
+    name: "Stable Diffusion",
+    description: "オープンソースの画像生成AI",
+    isDefault: false,
+    requiresApiKey: true,
+  },
+  midjourney: {
+    name: "Midjourney",
+    description: "アート特化の画像生成AI",
+    isDefault: false,
+    requiresApiKey: true,
+  },
+  flux: {
+    name: "Flux",
+    description: "高速な画像生成AI",
+    isDefault: false,
+    requiresApiKey: false,
+  },
+} as const;
+
+export type ImageGenerationProvider = keyof typeof imageGenerationProviders;

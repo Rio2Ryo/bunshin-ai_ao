@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE IF NOT EXISTS `image_generation_settings` (\n  `id` int AUTO_INCREMENT PRIMARY KEY,\n  `userId` int NOT NULL UNIQUE,\n  `provider` enum('nano_banana_pro', 'dall_e', 'stable_diffusion', 'midjourney', 'flux') NOT NULL DEFAULT 'nano_banana_pro',\n  `settings` json,\n  `totalGenerations` int NOT NULL DEFAULT 0,\n  `lastGeneratedAt` timestamp,\n  `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute CREATE TABLE IF NOT EXISTS `image_generation_settings` (\n  `id` int AUTO_INCREMENT PRIMARY KEY,\n  `userId` int NOT NULL UNIQUE,\n  `provider` enum('nano_banana_pro', 'dall_e', 'stable_diffusion', 'midjourney', 'flux') NOT NULL DEFAULT 'nano_banana_pro',\n  `settings` json,\n  `totalGenerations` int NOT NULL DEFAULT 0,\n  `lastGeneratedAt` timestamp,\n  `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1682
+}

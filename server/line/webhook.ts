@@ -68,36 +68,44 @@ async function generateTwinResponseViaClawdbot(
   userMessage: string,
   lineUserId: string
 ): Promise<ParsedClawdbotResponse> {
+  const startTime = Date.now();
+  console.log(`[LINE] Starting response generation for user: ${userId}`);
+  
   const db = await getDb();
   if (!db) {
     return createTextOnlyResponse("申し訳ありません、システムエラーが発生しました。");
   }
   
-  // 分身AIの情報を取得
-  const [twin] = await db
-    .select()
-    .from(digitalTwins)
-    .where(eq(digitalTwins.id, twinId))
-    .limit(1);
-  
-  if (!twin) {
-    return createTextOnlyResponse("分身AIが見つかりません。Webアプリで分身AIを作成してください。");
-  }
-  
-  // LINE用のチャットセッションを検索
-  const [lineSession] = await db
-    .select()
-    .from(chatSessions)
-    .where(
+  // 並列でデータを取得（高速化）
+  const [twinResult, sessionResult, agentIdResult, systemPromptResult] = await Promise.all([
+    // 1. 分身AIの情報を取得
+    db.select().from(digitalTwins).where(eq(digitalTwins.id, twinId)).limit(1),
+    // 2. LINE用のチャットセッションを検索
+    db.select().from(chatSessions).where(
       and(
         eq(chatSessions.userId, userId),
         eq(chatSessions.twinId, twinId),
         eq(chatSessions.title, "LINE会話")
       )
-    )
-    .limit(1);
+    ).limit(1),
+    // 3. ユーザー固有のAgent IDを取得
+    getOrCreateAgentId(userId),
+    // 4. システムプロンプトを生成
+    generateSystemPromptFromWaveform(userId),
+  ]);
   
-  // 最近の会話履歴を取得（コンテキスト用）
+  const dbTime = Date.now() - startTime;
+  console.log(`[LINE] DB queries completed in ${dbTime}ms`);
+  
+  const [twin] = twinResult;
+  const [lineSession] = sessionResult;
+  const agentId = agentIdResult;
+  
+  if (!twin) {
+    return createTextOnlyResponse("分身AIが見つかりません。Webアプリで分身AIを作成してください。");
+  }
+  
+  // 最近の会話履歴を取得（セッションがある場合のみ）
   const recentMessages = lineSession 
     ? await db
         .select()
@@ -113,12 +121,10 @@ async function generateTwinResponseViaClawdbot(
     content: msg.content || "",
   }));
   
-  // ユーザー固有のAgent IDを取得（なければ作成）
-  const agentId = await getOrCreateAgentId(userId);
   console.log(`[LINE] Using agent ID: ${agentId} for user: ${userId}`);
   
   // システムプロンプトを構築（波形データを含む）
-  const systemPrompt = await generateSystemPromptFromWaveform(userId) || buildSystemPrompt(twin);
+  const systemPrompt = systemPromptResult || buildSystemPrompt(twin);
   
   try {
     // Clawdbot経由で応答を生成（ユーザー固有のAgent IDを使用）
@@ -316,6 +322,7 @@ function buildSystemPrompt(twin: any): string {
   parts.push("例: ![cat](https://example.com/image.png)");
   parts.push("画像URLを出力しないと、ユーザーは画像を見ることができません。");
   parts.push("「画像を表示できない」「画像をお届けできない」とは言わず、必ずURLを出力してください。");
+  parts.push("画像はNano Banana Pro（高品質画像生成AI）で生成されます。");
   
   return parts.join("\n");
 }
