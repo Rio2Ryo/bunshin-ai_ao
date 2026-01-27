@@ -5,18 +5,38 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { toast } from "sonner";
-import { UserPlus, Users, Loader2, Check, X, Bot, Copy, Share2, QrCode, Link } from "lucide-react";
+import { UserPlus, Users, Loader2, Check, X, Bot, Copy, Share2, QrCode, Link, Heart, Sparkles, TrendingUp } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { QRCodeSVG } from "qrcode.react";
+
+// 相性レベルに応じた色を取得
+function getCompatibilityColor(score: number): string {
+  if (score >= 80) return "text-green-500";
+  if (score >= 60) return "text-cyan-500";
+  if (score >= 40) return "text-yellow-500";
+  return "text-gray-500";
+}
+
+// 相性レベルに応じたラベルを取得
+function getCompatibilityLabel(score: number): string {
+  if (score >= 80) return "最高の相性";
+  if (score >= 60) return "良い相性";
+  if (score >= 40) return "普通";
+  return "まだ分析中";
+}
 
 export default function Friends() {
   const { user } = useAuth();
   const { data: friends, isLoading, refetch } = trpc.friends.list.useQuery();
   const { data: requests, refetch: refetchRequests } = trpc.friends.pendingRequests.useQuery();
   const { data: friendCodeData } = trpc.plan.getFriendCode.useQuery();
+  const { data: compatibilityData } = trpc.friends.getAllWaveformCompatibilities.useQuery();
 
   const sendRequest = trpc.friends.sendRequest.useMutation();
   const acceptRequest = trpc.friends.acceptRequest.useMutation();
@@ -33,6 +53,12 @@ export default function Friends() {
   const shareUrl = typeof window !== "undefined" 
     ? `${window.location.origin}/friends?code=${myFriendCode}`
     : "";
+
+  // 友達の相性データを取得
+  const getCompatibility = (friendId: number) => {
+    if (!compatibilityData?.compatibilities) return null;
+    return compatibilityData.compatibilities.find((c: { friendId: number }) => c.friendId === friendId);
+  };
 
   const handleCopyCode = () => {
     navigator.clipboard.writeText(myFriendCode);
@@ -259,28 +285,91 @@ export default function Friends() {
               </div>
             ) : friends && friends.length > 0 ? (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {friends.map((friend) => (
-                  <Card key={friend.friendship.id}>
-                    <CardContent className="pt-6">
-                      <div className="flex items-center gap-4">
-                        <div className="h-12 w-12 rounded-full bg-primary/20 flex items-center justify-center">
-                          <Users className="h-6 w-6 text-primary" />
+                {friends.map((friend) => {
+                  const compatibility = getCompatibility(friend.friend.id);
+                  const hasCompatibility = compatibility && 'overallCompatibility' in compatibility;
+                  
+                  return (
+                    <Card key={friend.friendship.id} className="overflow-hidden">
+                      <CardContent className="pt-6">
+                        <div className="flex items-start gap-4">
+                          <div className="h-12 w-12 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                            <Users className="h-6 w-6 text-primary" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium truncate">{friend.friend.name || "名前未設定"}</p>
+                            {friend.twin ? (
+                              <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                                <Bot className="h-3 w-3" />
+                                <span className="truncate">{friend.twin.name}</span>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-muted-foreground">分身AI未作成</p>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex-1">
-                          <p className="font-medium">{friend.friend.name || "名前未設定"}</p>
-                          {friend.twin ? (
-                            <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                              <Bot className="h-3 w-3" />
-                              <span>{friend.twin.name}</span>
-                            </div>
-                          ) : (
-                            <p className="text-sm text-muted-foreground">分身AI未作成</p>
-                          )}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+
+                        {/* 相性表示 */}
+                        {friend.twin && (
+                          <div className="mt-4 pt-4 border-t">
+                            {hasCompatibility ? (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <div className="space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                          <Heart className={`h-4 w-4 ${getCompatibilityColor(compatibility.overallCompatibility)}`} />
+                                          <span className="text-sm font-medium">相性スコア</span>
+                                        </div>
+                                        <Badge variant="secondary" className={getCompatibilityColor(compatibility.overallCompatibility)}>
+                                          {compatibility.overallCompatibility}%
+                                        </Badge>
+                                      </div>
+                                      <Progress 
+                                        value={compatibility.overallCompatibility} 
+                                        className="h-2"
+                                      />
+                                      <p className={`text-xs text-center ${getCompatibilityColor(compatibility.overallCompatibility)}`}>
+                                        {getCompatibilityLabel(compatibility.overallCompatibility)}
+                                      </p>
+                                    </div>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="bottom" className="max-w-xs">
+                                    <div className="space-y-2 text-sm">
+                                      <div className="flex justify-between">
+                                        <span>価値観の類似度:</span>
+                                        <span className="font-medium">{compatibility.waveformSimilarity}%</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span>徳の相性:</span>
+                                        <span className="font-medium">{compatibility.virtueCompatibility}%</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span>地雷回避度:</span>
+                                        <span className="font-medium">{compatibility.mineCompatibility}%</span>
+                                      </div>
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            ) : compatibility && !('overallCompatibility' in compatibility) ? (
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <TrendingUp className="h-4 w-4" />
+                                <span>波形データ収集中...</span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <Sparkles className="h-4 w-4" />
+                                <span>波形を生成すると相性が表示されます</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
             ) : (
               <Card>

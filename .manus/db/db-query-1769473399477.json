@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE IF NOT EXISTS line_group_observations (\n  id INT AUTO_INCREMENT PRIMARY KEY,\n  groupId VARCHAR(255) NOT NULL,\n  groupName VARCHAR(255),\n  observedLineUserId VARCHAR(255) NOT NULL,\n  observedUserId INT NOT NULL,\n  messageContent TEXT NOT NULL,\n  messageType VARCHAR(50) DEFAULT 'text' NOT NULL,\n  analyzedTraits JSON,\n  isProcessed BOOLEAN DEFAULT FALSE NOT NULL,\n  processedAt TIMESTAMP NULL,\n  createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,\n  INDEX idx_group_id (groupId),\n  INDEX idx_observed_user (observedUserId),\n  INDEX idx_is_processed (isProcessed)\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute CREATE TABLE IF NOT EXISTS line_group_observations (\n  id INT AUTO_INCREMENT PRIMARY KEY,\n  groupId VARCHAR(255) NOT NULL,\n  groupName VARCHAR(255),\n  observedLineUserId VARCHAR(255) NOT NULL,\n  observedUserId INT NOT NULL,\n  messageContent TEXT NOT NULL,\n  messageType VARCHAR(50) DEFAULT 'text' NOT NULL,\n  analyzedTraits JSON,\n  isProcessed BOOLEAN DEFAULT FALSE NOT NULL,\n  processedAt TIMESTAMP NULL,\n  createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,\n  INDEX idx_group_id (groupId),\n  INDEX idx_observed_user (observedUserId),\n  INDEX idx_is_processed (isProcessed)\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1696
+}

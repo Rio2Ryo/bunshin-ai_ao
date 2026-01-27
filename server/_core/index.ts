@@ -10,7 +10,6 @@ import { serveStatic, setupVite } from "./vite";
 import { handleStripeWebhook } from "../stripe/webhook";
 import { handleClawdbotWebhook, getClawdbotWebhookInfo } from "../clawdbot/webhook";
 import { handleLineWebhook, getLineWebhookInfo } from "../line/webhook";
-import { handleCardAcquire, handleCardCallback, handleCardInfo } from "../card/api";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -45,11 +44,6 @@ async function startServer() {
   // LINE webhook routes
   app.get("/api/line/webhook", getLineWebhookInfo);
   app.post("/api/line/webhook", express.json(), handleLineWebhook);
-  
-  // Card API routes (NFC名刺システム)
-  app.get("/api/card/get", handleCardAcquire);
-  app.get("/api/card/callback", handleCardCallback);
-  app.get("/api/card/info", handleCardInfo);
   
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));

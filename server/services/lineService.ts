@@ -220,12 +220,10 @@ export async function saveLineMessage(
 export async function replyToLine(
   replyToken: string,
   messages: Array<{
-    type: "text" | "flex" | "image";
+    type: "text" | "flex";
     text?: string;
     altText?: string;
     contents?: unknown;
-    originalContentUrl?: string;
-    previewImageUrl?: string;
   }>
 ) {
   const config = getLineConfig();

@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, json, decimal } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, json, decimal, boolean } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -1066,6 +1066,34 @@ export type LineConnection = typeof lineConnections.$inferSelect;
 export type InsertLineConnection = typeof lineConnections.$inferInsert;
 
 /**
+ * LINE group observations - グループLINE観察データ
+ */
+export const lineGroupObservations = mysqlTable("line_group_observations", {
+  id: int("id").autoincrement().primaryKey(),
+  groupId: varchar("groupId", { length: 255 }).notNull(),
+  groupName: varchar("groupName", { length: 255 }),
+  // 観察対象のユーザー（LINE連携済み）
+  observedLineUserId: varchar("observedLineUserId", { length: 255 }).notNull(),
+  observedUserId: int("observedUserId").notNull(),
+  // 観察データ
+  messageContent: text("messageContent").notNull(),
+  messageType: varchar("messageType", { length: 50 }).default("text").notNull(),
+  // 分析結果
+  analyzedTraits: json("analyzedTraits").$type<{
+    communicationStyle?: string;
+    topics?: string[];
+    sentiment?: string;
+    keywords?: string[];
+  }>(),
+  isProcessed: boolean("isProcessed").default(false).notNull(),
+  processedAt: timestamp("processedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type LineGroupObservation = typeof lineGroupObservations.$inferSelect;
+export type InsertLineGroupObservation = typeof lineGroupObservations.$inferInsert;
+
+/**
  * LINE message history - LINEメッセージ履歴
  */
 export const lineMessages = mysqlTable("line_messages", {
@@ -1292,99 +1320,3 @@ export const webhookDebugLogs = mysqlTable("webhook_debug_logs", {
 
 export type WebhookDebugLog = typeof webhookDebugLogs.$inferSelect;
 export type InsertWebhookDebugLog = typeof webhookDebugLogs.$inferInsert;
-
-
-// ============================================
-// NFC名刺（カード）システム
-// ============================================
-
-/**
- * カードタイプの定義
- */
-export type CardType = "business_card" | "shop_card" | "idol_sign" | "membership" | "event" | "other";
-
-/**
- * Cards - NFC名刺・カード情報
- * 名刺、ショップカード、アイドルサインなど様々なカードを管理
- */
-export const cards = mysqlTable("cards", {
-  id: int("id").autoincrement().primaryKey(),
-  // カード識別
-  code: varchar("code", { length: 32 }).notNull().unique(), // NFCに書き込むユニークコード
-  // 所有者情報
-  ownerUserId: int("ownerUserId"), // 登録したユーザー（nullの場合は管理者登録）
-  // カードタイプ
-  cardType: mysqlEnum("cardType", ["business_card", "shop_card", "idol_sign", "membership", "event", "other"]).default("business_card").notNull(),
-  // 基本情報
-  title: varchar("title", { length: 255 }).notNull(), // カード名（名前、店名、アイドル名など）
-  subtitle: varchar("subtitle", { length: 255 }), // サブタイトル（会社名、グループ名など）
-  description: text("description"), // 説明文
-  // 画像
-  imageUrl: varchar("imageUrl", { length: 1000 }), // メイン画像（名刺画像、サイン画像など）
-  thumbnailUrl: varchar("thumbnailUrl", { length: 1000 }), // サムネイル
-  // 連絡先情報（名刺の場合）
-  contactInfo: json("contactInfo").$type<{
-    email?: string;
-    phone?: string;
-    website?: string;
-    address?: string;
-    // SNS
-    twitter?: string;
-    instagram?: string;
-    facebook?: string;
-    linkedin?: string;
-    line?: string;
-    // その他
-    custom?: { label: string; value: string }[];
-  }>(),
-  // ビジネス情報（名刺の場合）
-  businessInfo: json("businessInfo").$type<{
-    company?: string;
-    position?: string;
-    department?: string;
-    industry?: string;
-  }>(),
-  // カスタムフィールド（汎用）
-  customFields: json("customFields").$type<{
-    label: string;
-    value: string;
-    type?: "text" | "url" | "email" | "phone";
-  }[]>(),
-  // 公開設定
-  isPublic: int("isPublic").default(1).notNull(), // 公開/非公開
-  // 統計
-  totalScans: int("totalScans").default(0).notNull(), // スキャン回数
-  totalSaves: int("totalSaves").default(0).notNull(), // 保存回数
-  lastScannedAt: timestamp("lastScannedAt"),
-  // メタデータ
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
-
-export type Card = typeof cards.$inferSelect;
-export type InsertCard = typeof cards.$inferInsert;
-
-/**
- * User cards - ユーザーが取得したカード
- * ユーザーが受け取った名刺・カードを管理
- */
-export const userCards = mysqlTable("user_cards", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(), // カードを取得したユーザー
-  cardId: int("cardId").notNull(), // 取得したカード
-  // 取得情報
-  acquiredAt: timestamp("acquiredAt").defaultNow().notNull(), // 取得日時
-  acquiredMethod: mysqlEnum("acquiredMethod", ["nfc_scan", "qr_scan", "link", "manual"]).default("nfc_scan").notNull(),
-  // ユーザーのメモ
-  memo: text("memo"),
-  tags: json("tags").$type<string[]>(), // ユーザーが付けたタグ
-  // お気に入り
-  isFavorite: int("isFavorite").default(0).notNull(),
-  // 最終閲覧
-  lastViewedAt: timestamp("lastViewedAt"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
-
-export type UserCard = typeof userCards.$inferSelect;
-export type InsertUserCard = typeof userCards.$inferInsert;

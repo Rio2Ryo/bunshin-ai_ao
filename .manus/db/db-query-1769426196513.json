@@ -1,9 +1,0 @@
-{
-  "query": "CREATE TABLE IF NOT EXISTS `user_cards` (\n  `id` int NOT NULL AUTO_INCREMENT,\n  `userId` int NOT NULL,\n  `cardId` int NOT NULL,\n  `acquiredAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  `acquiredMethod` enum('nfc_scan','qr_scan','link','manual') NOT NULL DEFAULT 'nfc_scan',\n  `memo` text,\n  `tags` json DEFAULT NULL,\n  `isFavorite` int NOT NULL DEFAULT 0,\n  `lastViewedAt` timestamp NULL DEFAULT NULL,\n  `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`),\n  UNIQUE KEY `user_cards_userId_cardId_unique` (`userId`, `cardId`)\n);",
-  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute CREATE TABLE IF NOT EXISTS `user_cards` (\n  `id` int NOT NULL AUTO_INCREMENT,\n  `userId` int NOT NULL,\n  `cardId` int NOT NULL,\n  `acquiredAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  `acquiredMethod` enum('nfc_scan','qr_scan','link','manual') NOT NULL DEFAULT 'nfc_scan',\n  `memo` text,\n  `tags` json DEFAULT NULL,\n  `isFavorite` int NOT NULL DEFAULT 0,\n  `lastViewedAt` timestamp NULL DEFAULT NULL,\n  `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`),\n  UNIQUE KEY `user_cards_userId_cardId_unique` (`userId`, `cardId`)\n);",
-  "rows": [],
-  "messages": [],
-  "stdout": "",
-  "stderr": "",
-  "execution_time_ms": 1742
-}
