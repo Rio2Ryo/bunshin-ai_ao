@@ -62,6 +62,71 @@ function createTextOnlyResponse(text: string): ParsedClawdbotResponse {
   };
 }
 
+/**
+ * 画像生成リクエストを検出
+ */
+function detectImageGenerationRequest(message: string): { isImageRequest: boolean; prompt: string } {
+  const patterns = [
+    /(画像|絵|イラスト|写真|ピクチャー|アート)を?(作って|描いて|生成して|作成して|書いて|見せて)/i,
+    /(generate|create|draw|make|show).*(image|picture|illustration|art|photo)/i,
+    /(画像生成|イラスト生成)/i,
+  ];
+  
+  for (const pattern of patterns) {
+    if (pattern.test(message)) {
+      // プロンプトを抽出（リクエスト部分を除いた内容）
+      const prompt = message
+        .replace(/(画像|絵|イラスト|写真|ピクチャー|アート)を?(作って|描いて|生成して|作成して|書いて|見せて)/gi, "")
+        .replace(/(generate|create|draw|make|show).*(image|picture|illustration|art|photo)/gi, "")
+        .replace(/(画像生成|イラスト生成)/gi, "")
+        .replace(/[。、！？.!?]/g, "")
+        .trim();
+      
+      return {
+        isImageRequest: true,
+        prompt: prompt || message, // プロンプトが空の場合は元のメッセージを使用
+      };
+    }
+  }
+  
+  return { isImageRequest: false, prompt: "" };
+}
+
+/**
+ * 分身AI側で直接画像を生成
+ */
+async function generateImageDirectly(
+  prompt: string,
+  userId: number
+): Promise<{ success: boolean; imageUrl?: string; error?: string }> {
+  try {
+    console.log(`[LINE] Generating image directly with Nano Banana Pro: ${prompt}`);
+    
+    const { generateImage } = await import("../_core/imageGeneration");
+    const result = await generateImage({ prompt });
+    
+    if (result.url) {
+      console.log(`[LINE] Image generated successfully: ${result.url}`);
+      return {
+        success: true,
+        imageUrl: result.url,
+      };
+    }
+    
+    return {
+      success: false,
+      error: "Failed to generate image",
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[LINE] Direct image generation error: ${errorMessage}`);
+    return {
+      success: false,
+      error: errorMessage,
+    };
+  }
+}
+
 async function generateTwinResponseViaClawdbot(
   userId: number,
   twinId: number,
@@ -70,6 +135,31 @@ async function generateTwinResponseViaClawdbot(
 ): Promise<ParsedClawdbotResponse> {
   const startTime = Date.now();
   console.log(`[LINE] Starting response generation for user: ${userId}`);
+  
+  // 画像生成リクエストを検出
+  const imageRequest = detectImageGenerationRequest(userMessage);
+  if (imageRequest.isImageRequest) {
+    console.log(`[LINE] Image generation request detected: ${imageRequest.prompt}`);
+    
+    // 分身AI側で直接画像を生成（Nano Banana Pro）
+    const imageResult = await generateImageDirectly(imageRequest.prompt, userId);
+    
+    if (imageResult.success && imageResult.imageUrl) {
+      // 画像生成成功時はテキストと画像を返す
+      return {
+        textContent: `「${imageRequest.prompt}」の画像を生成しました！`,
+        mediaContents: [{
+          type: "image",
+          content: imageResult.imageUrl,
+        }],
+        hasMedia: true,
+        rawResponse: `画像を生成しました: ${imageResult.imageUrl}`,
+      };
+    } else {
+      // 画像生成失敗時はエラーメッセージを返す
+      return createTextOnlyResponse(`画像の生成に失敗しました。もう一度お試しください。`);
+    }
+  }
   
   const db = await getDb();
   if (!db) {
