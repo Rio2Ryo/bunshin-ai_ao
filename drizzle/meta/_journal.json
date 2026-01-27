@@ -127,6 +127,13 @@
       "when": 1769474582478,
       "tag": "0017_productive_big_bertha",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "5",
+      "when": 1769485899175,
+      "tag": "0018_panoramic_slayback",
+      "breakpoints": true
     }
   ]
 }

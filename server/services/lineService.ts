@@ -143,6 +143,7 @@ export async function createLineConnection(
 
 /**
  * LINE連携を分身AIユーザーと紐付け
+ * 同時にユーザー固有のClawdbotエージェントを作成
  */
 export async function linkLineToUser(
   lineUserId: string,
@@ -152,6 +153,11 @@ export async function linkLineToUser(
   const db = await getDb();
   if (!db) throw new Error("Database not initialized");
   
+  // Clawdbotエージェントを作成
+  const { setupClawdbotAgentOnLineLink } = await import("./clawdbotAgentService");
+  const agentResult = await setupClawdbotAgentOnLineLink(userId, lineUserId);
+  
+  // LINE連携を更新（Agent IDも保存）
   await db
     .update(lineConnections)
     .set({
@@ -159,8 +165,14 @@ export async function linkLineToUser(
       twinId,
       status: "active",
       connectedAt: new Date(),
+      ...(agentResult.agentId && {
+        clawdbotAgentId: agentResult.agentId,
+        clawdbotAgentCreatedAt: new Date(),
+      }),
     })
     .where(eq(lineConnections.lineUserId, lineUserId));
+  
+  console.log(`[LINE] User ${userId} linked with LINE ${lineUserId}, Agent: ${agentResult.agentId || "default"}`);
   
   return true;
 }

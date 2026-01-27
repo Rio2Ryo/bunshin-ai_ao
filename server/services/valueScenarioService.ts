@@ -709,6 +709,15 @@ export async function updateCumulativeWaveform(userId: number, twinId: number): 
       evaluatorBreakdown,
     });
   }
+
+  // Clawdbotエージェントのシステムプロンプトを更新（波形同期）
+  try {
+    const { updateAgentSystemPrompt } = await import("./clawdbotAgentService");
+    await updateAgentSystemPrompt(userId);
+    console.log(`[Waveform] Clawdbot agent system prompt updated for user: ${userId}`);
+  } catch (error) {
+    console.error(`[Waveform] Failed to update Clawdbot agent system prompt:`, error);
+  }
 }
 
 // 既存のシナリオ回答に対して評価を再実行する（ランダム5人）

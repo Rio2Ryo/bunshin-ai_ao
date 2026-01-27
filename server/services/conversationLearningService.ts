@@ -488,6 +488,15 @@ export async function analyzeAndUpdatePersonality(userId: number, twinId: number
   // 分身AIのpersonalityフィールドを更新
   await updateTwinPersonalityFromLearning(userId, twinId, mergedTraits);
 
+  // Clawdbotエージェントのシステムプロンプトを更新（双方向同期）
+  try {
+    const { updateAgentSystemPrompt } = await import("./clawdbotAgentService");
+    await updateAgentSystemPrompt(userId);
+    console.log(`[ConversationLearning] Clawdbot agent system prompt updated for user: ${userId}`);
+  } catch (error) {
+    console.error(`[ConversationLearning] Failed to update Clawdbot agent:`, error);
+  }
+
   console.log(`[ConversationLearning] Analyzed ${snippets.length} snippets for user ${userId}`);
 
   return { analyzed: snippets.length, traits: mergedTraits };

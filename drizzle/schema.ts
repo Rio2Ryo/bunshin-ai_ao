@@ -1053,6 +1053,9 @@ export const lineConnections = mysqlTable("line_connections", {
     allowVoiceMessages: boolean; // 音声メッセージを許可
     language: string; // 言語設定
   }>(),
+  // Clawdbotエージェント設定
+  clawdbotAgentId: varchar("clawdbotAgentId", { length: 255 }), // ユーザー固有のClawdbotエージェントID (bunshin_user_{userId})
+  clawdbotAgentCreatedAt: timestamp("clawdbotAgentCreatedAt"), // エージェント作成日時
   // 統計
   totalMessages: int("totalMessages").default(0).notNull(),
   lastMessageAt: timestamp("lastMessageAt"),

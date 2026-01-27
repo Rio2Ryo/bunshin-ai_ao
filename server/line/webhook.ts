@@ -30,6 +30,11 @@ import {
   sendToClawdbot,
   cleanClawdbotResponse,
 } from "../services/clawdbotGatewayService";
+import {
+  getOrCreateAgentId,
+  generateSystemPromptFromWaveform,
+  setupClawdbotAgentOnLineLink,
+} from "../services/clawdbotAgentService";
 
 /**
  * Clawdbot経由で分身AIの応答を生成
@@ -85,11 +90,15 @@ async function generateTwinResponseViaClawdbot(
     content: msg.content || "",
   }));
   
-  // システムプロンプトを構築
-  const systemPrompt = buildSystemPrompt(twin);
+  // ユーザー固有のAgent IDを取得（なければ作成）
+  const agentId = await getOrCreateAgentId(userId);
+  console.log(`[LINE] Using agent ID: ${agentId} for user: ${userId}`);
+  
+  // システムプロンプトを構築（波形データを含む）
+  const systemPrompt = await generateSystemPromptFromWaveform(userId) || buildSystemPrompt(twin);
   
   try {
-    // Clawdbot経由で応答を生成
+    // Clawdbot経由で応答を生成（ユーザー固有のAgent IDを使用）
     const result = await sendToClawdbot(
       [
         { role: "system", content: systemPrompt },
@@ -97,6 +106,8 @@ async function generateTwinResponseViaClawdbot(
         { role: "user", content: userMessage },
       ],
       {
+        // ユーザー固有のAgent IDを使用（各ユーザーが独立した「魂」を持つ）
+        agentId,
         // LINEユーザーIDをセッションキーとして使用（会話の継続性を保持）
         sessionKey: `line_${lineUserId}`,
       }
