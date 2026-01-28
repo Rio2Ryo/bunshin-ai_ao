@@ -674,3 +674,8 @@
 ## Manus内蔵API停止・Nano Banana Pro専用化（2026-01-28）
 - [x] LINE webhookからManus APIフォールバックを削除
 - [x] Gemini API（Nano Banana Pro）のみ使用に変更
+
+
+## buildSystemPrompt画像生成指示の修正（2026-01-28）
+- [x] generate_imageツール参照を削除
+- [x] 具体的なexecコマンド手順に変更（nano-banana-pro + Gyazo）

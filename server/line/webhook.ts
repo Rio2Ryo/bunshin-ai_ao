@@ -414,18 +414,23 @@ function buildSystemPrompt(twin: any): string {
   
   // ツール使用の指示を追加
   parts.push("\n【利用可能なツール】");
-  parts.push("ユーザーから画像生成を求められた場合は、積極的に画像生成ツールを使用してください。");
-  parts.push("「画像を作って」「絵を描いて」「イラストを生成して」などのリクエストには、generate_imageツールを使用して画像を生成してください。");
   parts.push("検索や調べ物を求められた場合は、Web検索ツールを使用してください。");
   parts.push("ツールを使用できないと言わずに、実際にツールを実行して結果を返してください。");
+  
+  // 画像生成の具体的な手順
+  parts.push("\n【画像生成の手順】");
+  parts.push("画像生成を求められたら、execツールで以下を順番に実行してください:");
+  parts.push("1. uv run /Users/mr/clawd/skills/nano-banana-pro/scripts/generate_image.py --prompt \"<英語の描画内容>\" --filename \"<タイムスタンプ>-image.png\" --resolution 1K");
+  parts.push("2. curl -s -F \"access_token=$GYAZO_ACCESS_TOKEN\" -F \"imagedata=@/Users/mr/clawd/<ファイル名>\" https://upload.gyazo.com/api/upload");
+  parts.push("3. アップロード結果のJSONのurlフィールドを使い、![image](url) 形式で出力");
   
   // 画像URLの出力形式の指示
   parts.push("\n【重要: 画像の出力形式】");
   parts.push("画像を生成した場合は、必ずMarkdown形式で画像URLを出力してください。");
-  parts.push("例: ![cat](https://example.com/image.png)");
+  parts.push("例: ![image](https://gyazo.com/xxxxx.png)");
   parts.push("画像URLを出力しないと、ユーザーは画像を見ることができません。");
   parts.push("「画像を表示できない」「画像をお届けできない」とは言わず、必ずURLを出力してください。");
-  parts.push("画像はNano Banana Pro（高品質画像生成AI）で生成されます。");
+  parts.push("架空のURLを出力しないでください。必ず実際に生成・アップロードしたURLを使用してください。");
   
   return parts.join("\n");
 }
