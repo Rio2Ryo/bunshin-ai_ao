@@ -6,6 +6,11 @@ import {
   milestoneDefinitions,
   getRequiredExperience,
 } from "../../drizzle/schema";
+import {
+  getAIProviderForSkill,
+  getAvailableSkillPoints,
+  getSkillDefinitions,
+} from "./growthService";
 
 // 定義のテスト
 describe("Growth System Definitions", () => {
@@ -44,13 +49,10 @@ describe("Growth System Definitions", () => {
     it("should have all required skill types", () => {
       const requiredSkills = [
         "conversation",
-        "empathy",
-        "creativity",
+        "imageGeneration",
         "analysis",
-        "prediction",
-        "memory",
-        "wisdom",
-        "humor",
+        "diagnosis",
+        "matching",
       ];
       
       for (const skill of requiredSkills) {
@@ -58,13 +60,23 @@ describe("Growth System Definitions", () => {
         expect(skillDefinitions[skill as keyof typeof skillDefinitions]).toHaveProperty("name");
         expect(skillDefinitions[skill as keyof typeof skillDefinitions]).toHaveProperty("description");
         expect(skillDefinitions[skill as keyof typeof skillDefinitions]).toHaveProperty("maxLevel");
+        expect(skillDefinitions[skill as keyof typeof skillDefinitions]).toHaveProperty("aiProviders");
       }
     });
 
-    it("should have valid max levels", () => {
+    it("should have max level of 5 for all skills", () => {
       for (const [skill, def] of Object.entries(skillDefinitions)) {
-        expect(def.maxLevel).toBeGreaterThanOrEqual(5);
-        expect(def.maxLevel).toBeLessThanOrEqual(20);
+        expect(def.maxLevel).toBe(5);
+      }
+    });
+
+    it("should have AI providers for levels 1-5", () => {
+      for (const [skill, def] of Object.entries(skillDefinitions)) {
+        expect(def.aiProviders[1]).toBeDefined();
+        expect(def.aiProviders[2]).toBeDefined();
+        expect(def.aiProviders[3]).toBeDefined();
+        expect(def.aiProviders[4]).toBeDefined();
+        expect(def.aiProviders[5]).toBeDefined();
       }
     });
   });
@@ -196,5 +208,89 @@ describe("Evolution Conditions", () => {
   it("should have legendary as the highest evolution", () => {
     expect(evolutionTypes.legendary).toBeDefined();
     expect(evolutionTypes.legendary.name).toBe("レジェンド型");
+  });
+});
+
+// AIプロバイダー取得のテスト
+describe("getAIProviderForSkill", () => {
+  it("should return correct AI provider for conversation skill at level 1", () => {
+    const result = getAIProviderForSkill("conversation", 1);
+    expect(result).toEqual({ provider: "builtin", model: "basic", cost: 0 });
+  });
+
+  it("should return correct AI provider for conversation skill at level 5", () => {
+    const result = getAIProviderForSkill("conversation", 5);
+    expect(result).toEqual({ provider: "anthropic", model: "claude-3-5-sonnet", cost: 3 });
+  });
+
+  it("should return correct AI provider for imageGeneration skill at level 1", () => {
+    const result = getAIProviderForSkill("imageGeneration", 1);
+    expect(result).toEqual({ provider: "dalle", model: "dall-e-2", cost: 1 });
+  });
+
+  it("should return correct AI provider for imageGeneration skill at level 5", () => {
+    const result = getAIProviderForSkill("imageGeneration", 5);
+    expect(result).toEqual({ provider: "nano_banana_pro", model: "latest", cost: 3 });
+  });
+
+  it("should return correct AI provider for analysis skill at level 3", () => {
+    const result = getAIProviderForSkill("analysis", 3);
+    expect(result).toEqual({ provider: "openai", model: "gpt-4o-mini", cost: 2 });
+  });
+
+  it("should return default provider for invalid skill type", () => {
+    // @ts-expect-error Testing invalid input
+    const result = getAIProviderForSkill("invalid", 1);
+    expect(result).toEqual({ provider: "builtin", model: "basic", cost: 0 });
+  });
+});
+
+// スキルポイントのテスト
+describe("getAvailableSkillPoints", () => {
+  it("should return 15 points for normal mode", () => {
+    const result = getAvailableSkillPoints(false);
+    expect(result).toBe(15);
+  });
+
+  it("should return 25 points for campaign mode", () => {
+    const result = getAvailableSkillPoints(true);
+    expect(result).toBe(25);
+  });
+});
+
+// スキル定義取得のテスト
+describe("getSkillDefinitions", () => {
+  it("should return all skill definitions", () => {
+    const result = getSkillDefinitions();
+    expect(result).toBeDefined();
+    expect(result.conversation).toBeDefined();
+    expect(result.imageGeneration).toBeDefined();
+    expect(result.analysis).toBeDefined();
+    expect(result.diagnosis).toBeDefined();
+    expect(result.matching).toBeDefined();
+  });
+
+  it("should have correct structure for each skill", () => {
+    const result = getSkillDefinitions();
+    
+    for (const [key, skill] of Object.entries(result)) {
+      expect(skill.name).toBeDefined();
+      expect(skill.description).toBeDefined();
+      expect(skill.icon).toBeDefined();
+      expect(skill.maxLevel).toBe(5);
+      expect(skill.aiProviders).toBeDefined();
+      expect(skill.aiProviders[1]).toBeDefined();
+      expect(skill.aiProviders[5]).toBeDefined();
+    }
+  });
+
+  it("should have increasing cost for higher levels", () => {
+    const result = getSkillDefinitions();
+    
+    for (const [key, skill] of Object.entries(result)) {
+      const level1Cost = skill.aiProviders[1].cost;
+      const level5Cost = skill.aiProviders[5].cost;
+      expect(level5Cost).toBeGreaterThanOrEqual(level1Cost);
+    }
   });
 });

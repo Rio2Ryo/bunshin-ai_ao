@@ -2839,6 +2839,81 @@ ${dialogueText}`,
       const { milestoneDefinitions } = await import("../drizzle/schema");
       return milestoneDefinitions;
     }),
+
+    // スキルが設定済みかどうかを確認
+    areSkillsConfigured: protectedProcedure.query(async ({ ctx }) => {
+      const { areSkillsConfigured } = await import("./services/growthService");
+      
+      const twin = await getDigitalTwinByUser(ctx.user.id);
+      if (!twin) {
+        return false;
+      }
+      
+      return areSkillsConfigured(twin.id);
+    }),
+
+    // 利用可能なスキルポイントを取得
+    getAvailableSkillPoints: protectedProcedure
+      .input(z.object({ isCampaign: z.boolean().optional() }).optional())
+      .query(async ({ input }) => {
+        const { getAvailableSkillPoints } = await import("./services/growthService");
+        return getAvailableSkillPoints(input?.isCampaign ?? false);
+      }),
+
+    // スキルレベルを設定
+    setSkillLevels: protectedProcedure
+      .input(z.object({
+        skillLevels: z.object({
+          conversation: z.number().min(1).max(5),
+          imageGeneration: z.number().min(1).max(5),
+          analysis: z.number().min(1).max(5),
+          diagnosis: z.number().min(1).max(5),
+          matching: z.number().min(1).max(5),
+        }),
+        isCampaign: z.boolean().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { setSkillLevels, getOrCreateGrowthStatus } = await import("./services/growthService");
+        
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        }
+        
+        // 育成ステータスが存在することを確認
+        await getOrCreateGrowthStatus(twin.id, ctx.user.id);
+        
+        const result = await setSkillLevels(twin.id, input.skillLevels, input.isCampaign ?? false);
+        
+        if (!result.success) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: result.error || "スキル設定に失敗しました" });
+        }
+        
+        return { success: true };
+      }),
+
+    // 現在のスキルレベルを取得
+    getSkillLevels: protectedProcedure.query(async ({ ctx }) => {
+      const { getSkillLevels } = await import("./services/growthService");
+      
+      const twin = await getDigitalTwinByUser(ctx.user.id);
+      if (!twin) {
+        return null;
+      }
+      
+      return getSkillLevels(twin.id);
+    }),
+
+    // スキルに対応するAIプロバイダー情報を取得
+    getAIProviderForSkill: protectedProcedure
+      .input(z.object({
+        skillType: z.enum(["conversation", "imageGeneration", "analysis", "diagnosis", "matching"]),
+        level: z.number().min(1).max(5),
+      }))
+      .query(async ({ input }) => {
+        const { getAIProviderForSkill } = await import("./services/growthService");
+        return getAIProviderForSkill(input.skillType, input.level);
+      }),
   }),
 });
 

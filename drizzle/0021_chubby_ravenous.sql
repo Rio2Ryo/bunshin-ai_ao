@@ -1,0 +1,1 @@
+ALTER TABLE `twin_skills` ADD `isUserSet` int DEFAULT 0 NOT NULL;

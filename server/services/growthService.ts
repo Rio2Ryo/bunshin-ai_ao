@@ -15,9 +15,15 @@ import {
   type MilestoneType,
   type TwinGrowthStatus,
   type TwinSkill,
-  type TwinMilestone,
 } from "../../drizzle/schema";
 import { eq, and, desc } from "drizzle-orm";
+
+// スキルタイプの一覧
+const ALL_SKILL_TYPES: SkillType[] = ["conversation", "imageGeneration", "analysis", "diagnosis", "matching"];
+
+// 初期スキルレベルの合計ポイント（キャンペーン時は25=オール5）
+const DEFAULT_SKILL_POINTS = 15; // 通常は15ポイント（平均3）
+const CAMPAIGN_SKILL_POINTS = 25; // キャンペーン時は25ポイント（オール5）
 
 /**
  * 育成ステータスを取得または作成
@@ -46,19 +52,103 @@ export async function getOrCreateGrowthStatus(twinId: number, userId: number): P
     evolutionHistory: [{ type: "basic", evolvedAt: new Date().toISOString(), level: 1 }],
   });
   
-  // 初期スキルを付与
-  const initialSkills: SkillType[] = ["conversation", "empathy"];
-  for (const skillType of initialSkills) {
+  // 初期スキルを付与（レベル1で作成、ユーザーが後で割り振り）
+  for (const skillType of ALL_SKILL_TYPES) {
     await db.insert(twinSkills).values({
       twinId,
       skillType,
       level: 1,
+      isUserSet: 0,
       experience: 0,
     });
   }
   
   const created = await db.select().from(twinGrowthStatus).where(eq(twinGrowthStatus.twinId, twinId)).limit(1);
   return created[0] || null;
+}
+
+/**
+ * スキルレベルを設定（ユーザーによる割り振り）
+ */
+export async function setSkillLevels(
+  twinId: number, 
+  skillLevels: Partial<Record<SkillType, number>>,
+  isCampaign: boolean = false
+): Promise<{ success: boolean; error?: string }> {
+  const db = await getDb();
+  if (!db) return { success: false, error: "Database not available" };
+  
+  // 合計ポイントをチェック
+  const totalPoints = Object.values(skillLevels).reduce((sum, level) => sum + (level || 0), 0);
+  const maxPoints = isCampaign ? CAMPAIGN_SKILL_POINTS : DEFAULT_SKILL_POINTS;
+  
+  if (totalPoints > maxPoints) {
+    return { success: false, error: `合計ポイントが上限（${maxPoints}）を超えています` };
+  }
+  
+  // 各スキルレベルをチェック（1-5の範囲）
+  for (const [skillType, level] of Object.entries(skillLevels)) {
+    if (level < 1 || level > 5) {
+      return { success: false, error: `スキルレベルは1-5の範囲で設定してください` };
+    }
+  }
+  
+  // スキルレベルを更新
+  for (const [skillType, level] of Object.entries(skillLevels)) {
+    await db.update(twinSkills)
+      .set({
+        level,
+        isUserSet: 1,
+      })
+      .where(and(
+        eq(twinSkills.twinId, twinId),
+        eq(twinSkills.skillType, skillType)
+      ));
+  }
+  
+  return { success: true };
+}
+
+/**
+ * スキルレベルを取得
+ */
+export async function getSkillLevels(twinId: number): Promise<Record<SkillType, number> | null> {
+  const db = await getDb();
+  if (!db) return null;
+  
+  const skills = await db.select().from(twinSkills).where(eq(twinSkills.twinId, twinId));
+  
+  const result: Record<string, number> = {};
+  for (const skill of skills) {
+    result[skill.skillType] = skill.level;
+  }
+  
+  return result as Record<SkillType, number>;
+}
+
+/**
+ * スキルが設定済みかどうかを確認
+ */
+export async function areSkillsConfigured(twinId: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  
+  const skills = await db.select().from(twinSkills).where(eq(twinSkills.twinId, twinId));
+  
+  return skills.some(skill => skill.isUserSet === 1);
+}
+
+/**
+ * スキルレベルに基づいてAIプロバイダー情報を取得
+ */
+export function getAIProviderForSkill(skillType: SkillType, level: number): { provider: string; model: string; cost: number } {
+  const skillDef = skillDefinitions[skillType];
+  if (!skillDef || !skillDef.aiProviders) {
+    return { provider: "builtin", model: "basic", cost: 0 };
+  }
+  
+  const aiProvider = skillDef.aiProviders[level as 1 | 2 | 3 | 4 | 5];
+  return aiProvider || { provider: "builtin", model: "basic", cost: 0 };
 }
 
 /**
@@ -132,7 +222,7 @@ export async function gainExperience(
   // 進化チェック
   const evolutionResult = await checkEvolution(twinId);
   
-  // スキル経験値も付与
+  // スキル経験値も付与（レベリング用）
   await gainSkillExperience(twinId, action);
   
   return {
@@ -302,25 +392,26 @@ async function checkEvolution(twinId: number): Promise<{ evolved: boolean; newTy
 }
 
 /**
- * スキル経験値を獲得
+ * スキル経験値を獲得（レベリング用、スキルレベル自体は変わらない）
  */
 async function gainSkillExperience(twinId: number, action: ExperienceAction) {
   const db = await getDb();
   if (!db) return;
   
+  // アクションとスキルの対応
   const actionSkillMap: Partial<Record<ExperienceAction, SkillType[]>> = {
-    conversation: ["conversation", "empathy"],
-    imageGeneration: ["creativity"],
-    friendPrediction: ["prediction", "analysis"],
-    scenarioAnswer: ["analysis", "wisdom"],
-    diagnosticComplete: ["analysis"],
-    dailyLogin: ["memory"],
-    consecutiveLogin7: ["memory"],
-    consecutiveLogin30: ["memory"],
-    knowledgeAdd: ["wisdom", "memory"],
-    friendAdd: ["empathy"],
-    matchingComplete: ["prediction"],
-    praiseReceived: ["humor", "empathy"],
+    conversation: ["conversation"],
+    imageGeneration: ["imageGeneration"],
+    friendPrediction: ["matching"],
+    scenarioAnswer: ["analysis", "diagnosis"],
+    diagnosticComplete: ["diagnosis"],
+    dailyLogin: [],
+    consecutiveLogin7: [],
+    consecutiveLogin30: [],
+    knowledgeAdd: ["analysis"],
+    friendAdd: [],
+    matchingComplete: ["matching"],
+    praiseReceived: [],
   };
   
   const skillTypes = actionSkillMap[action] || [];
@@ -335,33 +426,14 @@ async function gainSkillExperience(twinId: number, action: ExperienceAction) {
     const skill = skillArr[0];
     
     if (skill) {
-      // スキル経験値を追加
+      // スキル経験値を追加（レベリング用、スキルレベル自体は変わらない）
       const newExp = skill.experience + 10;
-      const skillDef = skillDefinitions[skillType as SkillType];
-      const maxLevel = skillDef?.maxLevel || 10;
-      
-      // スキルレベルアップチェック
-      let newLevel = skill.level;
-      const expPerLevel = 100;
-      while (newLevel < maxLevel && newExp >= newLevel * expPerLevel) {
-        newLevel++;
-      }
       
       await db.update(twinSkills)
         .set({
           experience: newExp,
-          level: newLevel,
-          maxedAt: newLevel >= maxLevel ? new Date() : null,
         })
         .where(eq(twinSkills.id, skill.id));
-    } else {
-      // 新しいスキルをアンロック
-      await db.insert(twinSkills).values({
-        twinId,
-        skillType,
-        level: 1,
-        experience: 10,
-      });
     }
   }
 }
@@ -571,16 +643,35 @@ export async function getGrowthDetails(twinId: number) {
   // 進化タイプの情報
   const evolutionInfo = evolutionTypes[status.evolutionType as EvolutionType];
   
+  // スキルが設定済みかどうか
+  const skillsConfigured = skills.some(s => s.isUserSet === 1);
+  
   return {
     ...status,
     skills: skills.map((s: TwinSkill) => ({
       ...s,
       definition: skillDefinitions[s.skillType as SkillType],
+      aiProvider: getAIProviderForSkill(s.skillType as SkillType, s.level),
     })),
+    skillsConfigured,
     milestones,
     recentExperience: recentExp,
     expToNextLevel,
     progressToNextLevel: Math.min(100, Math.max(0, progressToNextLevel)),
     evolutionInfo,
   };
+}
+
+/**
+ * スキル定義を取得
+ */
+export function getSkillDefinitions() {
+  return skillDefinitions;
+}
+
+/**
+ * 利用可能なスキルポイントを取得
+ */
+export function getAvailableSkillPoints(isCampaign: boolean = false): number {
+  return isCampaign ? CAMPAIGN_SKILL_POINTS : DEFAULT_SKILL_POINTS;
 }

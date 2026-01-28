@@ -1455,55 +1455,75 @@ export const evolutionTypes = {
 
 export type EvolutionType = keyof typeof evolutionTypes;
 
-// スキルの定義
+// スキルの定義（AIプロバイダーとの対応付き）
+// スキルレベルによって使用するAIの精度が変わる
+// 高レベル = 高精度AI（課金発生）、低レベル = 低精度AI（無料または低コスト）
 export const skillDefinitions = {
   conversation: {
     name: "会話スキル",
     description: "会話の質と深さ",
     icon: "💬",
-    maxLevel: 10,
+    maxLevel: 5,
+    // レベルごとのAIプロバイダー（将来実装用）
+    aiProviders: {
+      1: { provider: "builtin", model: "basic", cost: 0 },
+      2: { provider: "builtin", model: "standard", cost: 0 },
+      3: { provider: "gemini", model: "gemini-flash", cost: 1 },
+      4: { provider: "openai", model: "gpt-4o-mini", cost: 2 },
+      5: { provider: "anthropic", model: "claude-3-5-sonnet", cost: 3 },
+    },
   },
-  empathy: {
-    name: "共感スキル",
-    description: "相手の気持ちを理解する力",
-    icon: "💖",
-    maxLevel: 10,
-  },
-  creativity: {
-    name: "創造スキル",
-    description: "新しいアイデアを生み出す力",
+  imageGeneration: {
+    name: "画像生成スキル",
+    description: "画像を生成する力",
     icon: "🎨",
-    maxLevel: 10,
+    maxLevel: 5,
+    aiProviders: {
+      1: { provider: "dalle", model: "dall-e-2", cost: 1 },
+      2: { provider: "dalle", model: "dall-e-3", cost: 2 },
+      3: { provider: "stable_diffusion", model: "sd-xl", cost: 2 },
+      4: { provider: "midjourney", model: "v6", cost: 3 },
+      5: { provider: "nano_banana_pro", model: "latest", cost: 3 },
+    },
   },
   analysis: {
     name: "分析スキル",
     description: "情報を整理・分析する力",
     icon: "📊",
-    maxLevel: 10,
+    maxLevel: 5,
+    aiProviders: {
+      1: { provider: "builtin", model: "basic", cost: 0 },
+      2: { provider: "gemini", model: "gemini-flash", cost: 1 },
+      3: { provider: "openai", model: "gpt-4o-mini", cost: 2 },
+      4: { provider: "anthropic", model: "claude-3-5-sonnet", cost: 3 },
+      5: { provider: "openai", model: "gpt-4o", cost: 4 },
+    },
   },
-  memory: {
-    name: "記憶スキル",
-    description: "過去の会話を覚えている力",
-    icon: "🧠",
-    maxLevel: 10,
-  },
-  prediction: {
-    name: "予測スキル",
-    description: "相手の行動を予測する力",
+  diagnosis: {
+    name: "診断スキル",
+    description: "性格や価値観を診断する力",
     icon: "🔮",
-    maxLevel: 10,
+    maxLevel: 5,
+    aiProviders: {
+      1: { provider: "builtin", model: "basic", cost: 0 },
+      2: { provider: "gemini", model: "gemini-flash", cost: 1 },
+      3: { provider: "openai", model: "gpt-4o-mini", cost: 2 },
+      4: { provider: "anthropic", model: "claude-3-5-sonnet", cost: 3 },
+      5: { provider: "openai", model: "gpt-4o", cost: 4 },
+    },
   },
-  humor: {
-    name: "ユーモアスキル",
-    description: "楽しい会話をする力",
-    icon: "😄",
-    maxLevel: 10,
-  },
-  wisdom: {
-    name: "知恵スキル",
-    description: "適切なアドバイスをする力",
-    icon: "📚",
-    maxLevel: 10,
+  matching: {
+    name: "マッチングスキル",
+    description: "相性の良い人を見つける力",
+    icon: "🤝",
+    maxLevel: 5,
+    aiProviders: {
+      1: { provider: "builtin", model: "basic", cost: 0 },
+      2: { provider: "gemini", model: "gemini-flash", cost: 1 },
+      3: { provider: "openai", model: "gpt-4o-mini", cost: 2 },
+      4: { provider: "anthropic", model: "claude-3-5-sonnet", cost: 3 },
+      5: { provider: "openai", model: "gpt-4o", cost: 4 },
+    },
   },
 } as const;
 
@@ -1600,12 +1620,15 @@ export type TwinGrowthStatus = typeof twinGrowthStatus.$inferSelect;
 export type InsertTwinGrowthStatus = typeof twinGrowthStatus.$inferInsert;
 
 // スキルテーブル
+// ユーザーが初期にスキルレベルを割り振り可能
+// スキルレベルによって使用するAIの精度が変わる
 export const twinSkills = mysqlTable("twin_skills", {
   id: int("id").autoincrement().primaryKey(),
   twinId: int("twinId").notNull(),
   skillType: varchar("skillType", { length: 50 }).notNull(),
-  level: int("level").default(1).notNull(),
-  experience: int("experience").default(0).notNull(),
+  level: int("level").default(1).notNull(), // 1-5のレベル（ユーザーが設定）
+  isUserSet: int("isUserSet").default(0).notNull(), // ユーザーが設定したかどうか
+  experience: int("experience").default(0).notNull(), // 経験値（レベリング用）
   unlockedAt: timestamp("unlockedAt").defaultNow().notNull(),
   maxedAt: timestamp("maxedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

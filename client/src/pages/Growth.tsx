@@ -3,17 +3,42 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
-import { Sparkles, Star, Trophy, Heart, Zap, Brain, MessageSquare, Users, Palette, Search, Target, Crown, Loader2 } from "lucide-react";
+import { Sparkles, Star, Trophy, Heart, Zap, Brain, MessageSquare, Users, Palette, Search, Target, Crown, Loader2, Settings, ImageIcon, Stethoscope, Handshake, Info } from "lucide-react";
+import { useState, useEffect } from "react";
+import { toast } from "sonner";
 
 // スキルアイコンのマッピング
 const skillIcons: Record<string, React.ElementType> = {
   conversation: MessageSquare,
-  empathy: Heart,
+  imageGeneration: ImageIcon,
   analysis: Brain,
-  creativity: Palette,
-  social: Users,
-  research: Search,
+  diagnosis: Stethoscope,
+  matching: Handshake,
+};
+
+// スキル情報
+const skillInfo: Record<string, { name: string; description: string; icon: string }> = {
+  conversation: { name: "会話スキル", description: "会話の質と深さ", icon: "💬" },
+  imageGeneration: { name: "画像生成スキル", description: "画像を生成する力", icon: "🎨" },
+  analysis: { name: "分析スキル", description: "情報を整理・分析する力", icon: "📊" },
+  diagnosis: { name: "診断スキル", description: "性格や価値観を診断する力", icon: "🔮" },
+  matching: { name: "マッチングスキル", description: "相性の良い人を見つける力", icon: "🤝" },
+};
+
+// AIプロバイダー表示名
+const aiProviderNames: Record<string, string> = {
+  builtin: "基本AI",
+  gemini: "Gemini",
+  openai: "OpenAI",
+  anthropic: "Claude",
+  dalle: "DALL-E",
+  stable_diffusion: "Stable Diffusion",
+  midjourney: "Midjourney",
+  nano_banana_pro: "Nano Banana Pro",
 };
 
 // 進化タイプアイコンのマッピング
@@ -27,12 +52,74 @@ const evolutionIcons: Record<string, string> = {
   legendary: "👑",
 };
 
+type SkillType = "conversation" | "imageGeneration" | "analysis" | "diagnosis" | "matching";
+
 export default function Growth() {
-  const { data: growthStatus, isLoading: statusLoading } = trpc.growth.getStatus.useQuery();
-  const { data: skillsData, isLoading: skillsLoading } = trpc.growth.getSkills.useQuery();
+  const { data: growthStatus, isLoading: statusLoading, refetch: refetchStatus } = trpc.growth.getStatus.useQuery();
+  const { data: skillsData, isLoading: skillsLoading, refetch: refetchSkills } = trpc.growth.getSkills.useQuery();
   const { data: milestonesData, isLoading: milestonesLoading } = trpc.growth.getMilestones.useQuery();
+  const { data: areSkillsConfigured } = trpc.growth.areSkillsConfigured.useQuery();
+  const { data: availablePoints } = trpc.growth.getAvailableSkillPoints.useQuery({ isCampaign: true }); // キャンペーン中
+  const { data: skillDefinitions } = trpc.growth.getSkillDefinitions.useQuery();
+
+  const setSkillLevelsMutation = trpc.growth.setSkillLevels.useMutation({
+    onSuccess: () => {
+      toast.success("スキルレベルを設定しました！");
+      refetchStatus();
+      refetchSkills();
+      setShowSkillSetup(false);
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const [showSkillSetup, setShowSkillSetup] = useState(false);
+  const [skillLevels, setSkillLevels] = useState<Record<SkillType, number>>({
+    conversation: 3,
+    imageGeneration: 3,
+    analysis: 3,
+    diagnosis: 3,
+    matching: 3,
+  });
 
   const isLoading = statusLoading || skillsLoading || milestonesLoading;
+
+  // スキルが未設定の場合は自動でダイアログを表示
+  useEffect(() => {
+    if (areSkillsConfigured === false && !showSkillSetup && growthStatus) {
+      setShowSkillSetup(true);
+    }
+  }, [areSkillsConfigured, showSkillSetup, growthStatus]);
+
+  const totalPoints = Object.values(skillLevels).reduce((sum, level) => sum + level, 0);
+  const maxPoints = availablePoints || 25; // キャンペーン時は25
+  const remainingPoints = maxPoints - totalPoints;
+
+  const handleSkillChange = (skill: SkillType, value: number[]) => {
+    const newValue = value[0];
+    const currentValue = skillLevels[skill];
+    const diff = newValue - currentValue;
+    
+    // ポイントが足りない場合は変更しない
+    if (diff > 0 && remainingPoints < diff) {
+      return;
+    }
+    
+    setSkillLevels(prev => ({ ...prev, [skill]: newValue }));
+  };
+
+  const handleSaveSkills = () => {
+    if (totalPoints > maxPoints) {
+      toast.error(`合計ポイントが上限（${maxPoints}）を超えています`);
+      return;
+    }
+    
+    setSkillLevelsMutation.mutate({
+      skillLevels,
+      isCampaign: true, // キャンペーン中
+    });
+  };
 
   if (isLoading) {
     return (
@@ -61,7 +148,35 @@ export default function Growth() {
               あなたの分身AIを育てて、より強力なパートナーに成長させましょう
             </p>
           </div>
+          <Button 
+            variant="outline" 
+            onClick={() => setShowSkillSetup(true)}
+            className="flex items-center gap-2"
+          >
+            <Settings className="h-4 w-4" />
+            スキル設定
+          </Button>
         </div>
+
+        {/* キャンペーンバナー */}
+        {!areSkillsConfigured && (
+          <Card className="bg-gradient-to-r from-yellow-500/10 via-orange-500/10 to-red-500/10 border-yellow-500/30">
+            <CardContent className="py-4">
+              <div className="flex items-center gap-4">
+                <div className="text-4xl">🎉</div>
+                <div className="flex-1">
+                  <h3 className="font-bold text-lg">オープニングキャンペーン実施中！</h3>
+                  <p className="text-sm text-muted-foreground">
+                    今なら全スキルをレベル5（最大）でスタートできます！通常は15ポイントのところ、25ポイント（オール5）で開始可能！
+                  </p>
+                </div>
+                <Button onClick={() => setShowSkillSetup(true)} className="bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600">
+                  スキルを設定する
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* メインステータスカード */}
         <Card className="bg-gradient-to-br from-primary/10 via-background to-secondary/10 border-primary/20">
@@ -167,29 +282,39 @@ export default function Growth() {
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {skillsData?.map((skill) => {
                 const Icon = skillIcons[skill.skillType] || Target;
-                const nextLevelExp = (skill.level + 1) * 100; // 簡易計算
-                const progress = (skill.experience / nextLevelExp) * 100;
+                const info = skillInfo[skill.skillType] || { name: skill.skillType, description: "スキル", icon: "⭐" };
+                const aiProvider = skill.aiProvider;
+                
                 return (
                   <Card key={skill.skillType} className="hover:shadow-md transition-shadow">
                     <CardHeader className="pb-2">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center text-xl">
-                            {skill.definition?.icon || "⭐"}
+                            {info.icon}
                           </div>
                           <div>
-                            <CardTitle className="text-base">{skill.definition?.name || skill.skillType}</CardTitle>
-                            <CardDescription className="text-xs">Lv.{skill.level}</CardDescription>
+                            <CardTitle className="text-base">{info.name}</CardTitle>
+                            <CardDescription className="text-xs">Lv.{skill.level} / 5</CardDescription>
                           </div>
                         </div>
-                        <Badge variant="outline">{skill.experience} EXP</Badge>
+                        <Badge variant="outline" className="text-xs">
+                          {aiProviderNames[aiProvider?.provider || "builtin"] || aiProvider?.provider}
+                        </Badge>
                       </div>
                     </CardHeader>
                     <CardContent>
-                      <p className="text-sm text-muted-foreground mb-3">{skill.definition?.description || "スキル"}</p>
-                      <Progress value={progress} className="h-2" />
-                      <p className="text-xs text-muted-foreground mt-1 text-right">
-                        次のレベルまで: {nextLevelExp - skill.experience} EXP
+                      <p className="text-sm text-muted-foreground mb-3">{info.description}</p>
+                      <div className="flex gap-1">
+                        {[1, 2, 3, 4, 5].map((level) => (
+                          <div
+                            key={level}
+                            className={`flex-1 h-2 rounded ${level <= skill.level ? 'bg-primary' : 'bg-muted'}`}
+                          />
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        使用AI: {aiProvider?.model || "basic"}
                       </p>
                     </CardContent>
                   </Card>
@@ -199,8 +324,10 @@ export default function Growth() {
                 <Card className="col-span-full">
                   <CardContent className="py-8 text-center text-muted-foreground">
                     <Zap className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                    <p>まだスキルを習得していません</p>
-                    <p className="text-sm">分身AIを使い続けるとスキルが習得されます</p>
+                    <p>まだスキルを設定していません</p>
+                    <Button onClick={() => setShowSkillSetup(true)} className="mt-4">
+                      スキルを設定する
+                    </Button>
                   </CardContent>
                 </Card>
               )}
@@ -296,6 +423,117 @@ export default function Growth() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* スキル設定ダイアログ */}
+      <Dialog open={showSkillSetup} onOpenChange={setShowSkillSetup}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings className="h-5 w-5" />
+              スキルレベル設定
+            </DialogTitle>
+            <DialogDescription>
+              各スキルにポイントを割り振ってください。スキルレベルが高いほど、高精度なAIが使用されます（課金が発生する場合があります）。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6 py-4">
+            {/* ポイント表示 */}
+            <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
+              <div className="flex items-center gap-2">
+                <Zap className="h-5 w-5 text-primary" />
+                <span className="font-medium">残りポイント</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`text-2xl font-bold ${remainingPoints < 0 ? 'text-destructive' : 'text-primary'}`}>
+                  {remainingPoints}
+                </span>
+                <span className="text-muted-foreground">/ {maxPoints}</span>
+              </div>
+            </div>
+
+            {/* キャンペーン情報 */}
+            <div className="flex items-start gap-2 p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/30">
+              <Info className="h-5 w-5 text-yellow-600 mt-0.5" />
+              <div className="text-sm">
+                <p className="font-medium text-yellow-700">オープニングキャンペーン中！</p>
+                <p className="text-yellow-600">通常15ポイントのところ、25ポイント（オール5）で開始できます。</p>
+              </div>
+            </div>
+
+            {/* スキルスライダー */}
+            <div className="space-y-6">
+              {(Object.keys(skillInfo) as SkillType[]).map((skillType) => {
+                const info = skillInfo[skillType];
+                const Icon = skillIcons[skillType] || Target;
+                const level = skillLevels[skillType];
+                
+                // スキル定義からAIプロバイダー情報を取得
+                const skillDef = skillDefinitions?.[skillType];
+                const aiProvider = skillDef?.aiProviders?.[level as 1 | 2 | 3 | 4 | 5];
+                
+                return (
+                  <div key={skillType} className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center text-lg">
+                          {info.icon}
+                        </div>
+                        <div>
+                          <p className="font-medium">{info.name}</p>
+                          <p className="text-xs text-muted-foreground">{info.description}</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <Badge variant="secondary" className="text-lg px-3">
+                          Lv.{level}
+                        </Badge>
+                        {aiProvider && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {aiProviderNames[aiProvider.provider] || aiProvider.provider} ({aiProvider.model})
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <Slider
+                      value={[level]}
+                      onValueChange={(value) => handleSkillChange(skillType, value)}
+                      min={1}
+                      max={5}
+                      step={1}
+                      className="w-full"
+                    />
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>Lv.1 (基本)</span>
+                      <span>Lv.3 (標準)</span>
+                      <span>Lv.5 (最高)</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSkillSetup(false)}>
+              キャンセル
+            </Button>
+            <Button 
+              onClick={handleSaveSkills}
+              disabled={remainingPoints < 0 || setSkillLevelsMutation.isPending}
+            >
+              {setSkillLevelsMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  保存中...
+                </>
+              ) : (
+                "スキルを設定"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }
