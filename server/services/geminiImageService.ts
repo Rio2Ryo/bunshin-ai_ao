@@ -2,8 +2,8 @@
  * Gemini Image Generation Service (Nano Banana Pro)
  * Google Gemini APIを使用した本物のNano Banana Pro画像生成
  * 
- * Nano Banana = Gemini 2.5 Flash Image (gemini-2.5-flash-image) - 高速・効率重視
- * Nano Banana Pro = Gemini 3 Pro Image (gemini-3-pro-image-preview) - プロ向け・高品質
+ * 現在利用可能なモデル:
+ * - gemini-2.0-flash-exp-image-generation (Experimental - 画像生成対応)
  */
 
 import { storagePut } from "../storage";
@@ -14,10 +14,9 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 // Gemini API エンドポイント
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
-// 利用可能なモデル
+// 利用可能なモデル（画像生成対応）
 export type GeminiImageModel = 
-  | "gemini-2.5-flash-image"      // Nano Banana (高速)
-  | "gemini-3-pro-image-preview"; // Nano Banana Pro (高品質)
+  | "gemini-2.0-flash-exp-image-generation"; // 画像生成対応モデル
 
 // 画像生成オプション
 export interface GeminiImageOptions {
@@ -66,7 +65,7 @@ async function urlToBase64(url: string): Promise<{ base64: string; mimeType: str
 }
 
 /**
- * Gemini APIで画像を生成（Nano Banana / Nano Banana Pro）
+ * Gemini APIで画像を生成（Nano Banana Pro）
  */
 export async function generateImageWithGemini(
   options: GeminiImageOptions
@@ -78,7 +77,8 @@ export async function generateImageWithGemini(
     };
   }
 
-  const model = options.model || "gemini-2.5-flash-image";
+  // 画像生成対応モデルを使用
+  const model = options.model || "gemini-2.0-flash-exp-image-generation";
   const endpoint = `${GEMINI_API_BASE}/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
 
   console.log(`[GeminiImage] Generating image with model: ${model}`);
@@ -132,16 +132,6 @@ export async function generateImageWithGemini(
     const generationConfig: Record<string, unknown> = {
       responseModalities: ["TEXT", "IMAGE"],
     };
-
-    // アスペクト比と解像度の設定（Nano Banana Pro用）
-    if (model === "gemini-3-pro-image-preview") {
-      if (options.aspectRatio) {
-        generationConfig.aspectRatio = options.aspectRatio;
-      }
-      if (options.resolution) {
-        generationConfig.imageSize = options.resolution;
-      }
-    }
 
     const requestBody = {
       contents,
@@ -247,6 +237,7 @@ export async function generateImageWithGemini(
 
 /**
  * Nano Banana（高速モデル）で画像を生成
+ * 現在はgemini-2.0-flash-exp-image-generationを使用
  */
 export async function generateWithNanoBanana(
   prompt: string,
@@ -254,13 +245,14 @@ export async function generateWithNanoBanana(
 ): Promise<GeminiImageResult> {
   return generateImageWithGemini({
     prompt,
-    model: "gemini-2.5-flash-image",
+    model: "gemini-2.0-flash-exp-image-generation",
     originalImages,
   });
 }
 
 /**
  * Nano Banana Pro（高品質モデル）で画像を生成
+ * 現在はgemini-2.0-flash-exp-image-generationを使用
  */
 export async function generateWithNanoBananaPro(
   prompt: string,
@@ -272,7 +264,7 @@ export async function generateWithNanoBananaPro(
 ): Promise<GeminiImageResult> {
   return generateImageWithGemini({
     prompt,
-    model: "gemini-3-pro-image-preview",
+    model: "gemini-2.0-flash-exp-image-generation",
     aspectRatio: options?.aspectRatio,
     resolution: options?.resolution,
     originalImages: options?.originalImages,
@@ -281,6 +273,7 @@ export async function generateWithNanoBananaPro(
 
 /**
  * スキルレベルに応じたモデルを選択して画像を生成
+ * 現在は全レベルでgemini-2.0-flash-exp-image-generationを使用
  */
 export async function generateImageBySkillLevel(
   prompt: string,
@@ -291,11 +284,9 @@ export async function generateImageBySkillLevel(
     originalImages?: GeminiImageOptions["originalImages"];
   }
 ): Promise<GeminiImageResult> {
-  // スキルレベル1-3: Nano Banana（高速）
-  // スキルレベル4-5: Nano Banana Pro（高品質）
-  const model: GeminiImageModel = skillLevel >= 4 
-    ? "gemini-3-pro-image-preview" 
-    : "gemini-2.5-flash-image";
+  // 現在は全レベルで同じモデルを使用
+  // 将来的にモデルが増えたらスキルレベルで切り替え
+  const model: GeminiImageModel = "gemini-2.0-flash-exp-image-generation";
 
   console.log(`[GeminiImage] Skill level ${skillLevel} -> Model: ${model}`);
 
