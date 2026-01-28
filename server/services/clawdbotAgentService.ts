@@ -73,18 +73,28 @@ export async function generateSystemPromptFromWaveform(userId: number): Promise<
   const db = await getDb();
   if (!db) return getDefaultSystemPrompt();
 
-  // 分身AI情報、会話学習データ、累積波形データを並列で取得（高速化）
-  const [twinResult, learningResult, waveformResult] = await Promise.all([
-    db.select().from(digitalTwins).where(eq(digitalTwins.userId, userId)).limit(1),
-    db.select().from(conversationLearning).where(eq(conversationLearning.userId, userId)).limit(1),
-    db.select().from(cumulativeWaveforms).where(eq(cumulativeWaveforms.userId, userId)).limit(1),
-  ]);
+  // 分身AI情報を取得
+  const [twin] = await db
+    .select()
+    .from(digitalTwins)
+    .where(eq(digitalTwins.userId, userId))
+    .limit(1);
 
-  const [twin] = twinResult;
   if (!twin) return getDefaultSystemPrompt();
 
-  const [learning] = learningResult;
-  const [waveform] = waveformResult;
+  // 会話学習データを取得
+  const [learning] = await db
+    .select()
+    .from(conversationLearning)
+    .where(eq(conversationLearning.userId, userId))
+    .limit(1);
+
+  // 累積波形データを取得
+  const [waveform] = await db
+    .select()
+    .from(cumulativeWaveforms)
+    .where(eq(cumulativeWaveforms.userId, userId))
+    .limit(1);
 
   // システムプロンプトを構築
   const parts: string[] = [];

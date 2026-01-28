@@ -63,6 +63,82 @@ function createTextOnlyResponse(text: string): ParsedClawdbotResponse {
   };
 }
 
+/**
+ * 画像生成リクエストを検出
+ */
+function detectImageGenerationRequest(message: string): { isImageRequest: boolean; prompt: string } {
+  const patterns = [
+    /(画像|絵|イラスト|写真|ピクチャー|アート)を?(作って|描いて|生成して|作成して|書いて|見せて)/i,
+    /(generate|create|draw|make|show).*(image|picture|illustration|art|photo)/i,
+    /(画像生成|イラスト生成)/i,
+  ];
+  
+  for (const pattern of patterns) {
+    if (pattern.test(message)) {
+      // プロンプトを抽出（リクエスト部分を除いた内容）
+      const prompt = message
+        .replace(/(画像|絵|イラスト|写真|ピクチャー|アート)を?(作って|描いて|生成して|作成して|書いて|見せて)/gi, "")
+        .replace(/(generate|create|draw|make|show).*(image|picture|illustration|art|photo)/gi, "")
+        .replace(/(画像生成|イラスト生成)/gi, "")
+        .replace(/[。、！？.!?]/g, "")
+        .trim();
+      
+      return {
+        isImageRequest: true,
+        prompt: prompt || message, // プロンプトが空の場合は元のメッセージを使用
+      };
+    }
+  }
+  
+  return { isImageRequest: false, prompt: "" };
+}
+
+/**
+ * 分身AI側で直接画像を生成（Gemini Nano Banana Proのみ使用）
+ */
+async function generateImageDirectly(
+  prompt: string,
+  userId: number
+): Promise<{ success: boolean; imageUrl?: string; error?: string; model?: string }> {
+  try {
+    // Gemini API（Nano Banana Pro）のみ使用
+    const { isGeminiImageEnabled, generateWithNanoBananaPro } = await import("../services/geminiImageService");
+    
+    if (!isGeminiImageEnabled()) {
+      console.error(`[LINE] Gemini API is not configured. GEMINI_API_KEY is required.`);
+      return {
+        success: false,
+        error: "画像生成機能が設定されていません。管理者にお問い合わせください。",
+      };
+    }
+    
+    console.log(`[LINE] Generating image with Gemini Nano Banana Pro: ${prompt}`);
+    
+    const geminiResult = await generateWithNanoBananaPro(prompt);
+    
+    if (geminiResult.success && geminiResult.imageUrl) {
+      console.log(`[LINE] Gemini image generated successfully: ${geminiResult.imageUrl}`);
+      return {
+        success: true,
+        imageUrl: geminiResult.imageUrl,
+        model: "nano-banana-pro",
+      };
+    }
+    
+    console.error(`[LINE] Gemini image generation failed: ${geminiResult.error}`);
+    return {
+      success: false,
+      error: geminiResult.error || "画像生成に失敗しました。しばらくしてから再度お試しください。",
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[LINE] Direct image generation error: ${errorMessage}`);
+    return {
+      success: false,
+      error: `画像生成中にエラーが発生しました: ${errorMessage}`,
+    };
+  }
+}
 
 async function generateTwinResponseViaClawdbot(
   userId: number,
@@ -73,8 +149,30 @@ async function generateTwinResponseViaClawdbot(
   const startTime = Date.now();
   console.log(`[LINE] Starting response generation for user: ${userId}`);
   
-  // 画像生成リクエストも含め、すべてClawdbot経由で処理
-  // Clawdbotが画像生成を判断し、適切なAIを呼び出す
+  // 画像生成リクエストを検出
+  const imageRequest = detectImageGenerationRequest(userMessage);
+  if (imageRequest.isImageRequest) {
+    console.log(`[LINE] Image generation request detected: ${imageRequest.prompt}`);
+    
+    // 分身AI側で直接画像を生成（Nano Banana Pro）
+    const imageResult = await generateImageDirectly(imageRequest.prompt, userId);
+    
+    if (imageResult.success && imageResult.imageUrl) {
+      // 画像生成成功時はテキストと画像を返す
+      return {
+        textContent: `「${imageRequest.prompt}」の画像を生成しました！`,
+        mediaContents: [{
+          type: "image",
+          content: imageResult.imageUrl,
+        }],
+        hasMedia: true,
+        rawResponse: `画像を生成しました: ${imageResult.imageUrl}`,
+      };
+    } else {
+      // 画像生成失敗時はエラーメッセージを返す
+      return createTextOnlyResponse(`画像の生成に失敗しました。もう一度お試しください。`);
+    }
+  }
   
   const db = await getDb();
   if (!db) {
@@ -110,14 +208,14 @@ async function generateTwinResponseViaClawdbot(
     return createTextOnlyResponse("分身AIが見つかりません。Webアプリで分身AIを作成してください。");
   }
   
-  // 最近の会話履歴を取得（セッションがある場合のみ、最小限の履歴で高速化）
+  // 最近の会話履歴を取得（セッションがある場合のみ）
   const recentMessages = lineSession 
     ? await db
-        .select({ role: chatMessages.role, content: chatMessages.content })
+        .select()
         .from(chatMessages)
         .where(eq(chatMessages.sessionId, lineSession.id))
         .orderBy(desc(chatMessages.createdAt))
-        .limit(5) // 10から5に削減して高速化
+        .limit(10)
     : [];
   
   // 会話履歴をメッセージ形式に変換
@@ -316,32 +414,18 @@ function buildSystemPrompt(twin: any): string {
   
   // ツール使用の指示を追加
   parts.push("\n【利用可能なツール】");
+  parts.push("ユーザーから画像生成を求められた場合は、積極的に画像生成ツールを使用してください。");
+  parts.push("「画像を作って」「絵を描いて」「イラストを生成して」などのリクエストには、generate_imageツールを使用して画像を生成してください。");
   parts.push("検索や調べ物を求められた場合は、Web検索ツールを使用してください。");
   parts.push("ツールを使用できないと言わずに、実際にツールを実行して結果を返してください。");
   
-  // 画像生成の具体的な手順
-  parts.push("\n【重要: 画像生成の手順】");
-  parts.push("「画像を作って」「絵を描いて」「イラストを生成して」などのリクエストには、以下のexecコマンドを順番に実行してください：");
-  parts.push("");
-  parts.push("ステップ1: 画像生成（nano-banana-pro）");
-  parts.push("```");
-  parts.push("uv run /Users/mr/clawd/skills/nano-banana-pro/scripts/generate_image.py --prompt \"<英語で描画内容を記述>\" --filename \"<YYYY-MM-DD-HH-MM-SS>-image.png\" --resolution 1K");
-  parts.push("```");
-  parts.push("※ワーキングディレクトリは /Users/mr/clawd/ で実行");
-  parts.push("");
-  parts.push("ステップ2: Gyazoにアップロード（公開URL取得）");
-  parts.push("```");
-  parts.push("curl -s -F \"access_token=$GYAZO_ACCESS_TOKEN\" -F \"imagedata=@/Users/mr/clawd/<生成したファイル名>\" https://upload.gyazo.com/api/upload");
-  parts.push("```");
-  parts.push("");
-  parts.push("ステップ3: 結果のJSONからurlフィールドを取得し、Markdown形式で出力");
-  parts.push("例: ![generated image](https://i.gyazo.com/xxxxx.png)");
-  parts.push("");
-  parts.push("【注意】");
-  parts.push("- generate_imageツールは存在しません。必ずexecツールで上記コマンドを実行してください。");
-  parts.push("- 架空のURLを出力してはいけません。必ず実際にGyazoにアップロードした結果のURLを使用してください。");
-  parts.push("- 画像URLを出力しないと、ユーザーはLINEで画像を見ることができません。");
-  parts.push("- 「画像を表示できない」「画像をお届けできない」とは絶対に言わず、必ず上記手順で画像を生成・アップロードしてください。");
+  // 画像URLの出力形式の指示
+  parts.push("\n【重要: 画像の出力形式】");
+  parts.push("画像を生成した場合は、必ずMarkdown形式で画像URLを出力してください。");
+  parts.push("例: ![cat](https://example.com/image.png)");
+  parts.push("画像URLを出力しないと、ユーザーは画像を見ることができません。");
+  parts.push("「画像を表示できない」「画像をお届けできない」とは言わず、必ずURLを出力してください。");
+  parts.push("画像はNano Banana Pro（高品質画像生成AI）で生成されます。");
   
   return parts.join("\n");
 }
