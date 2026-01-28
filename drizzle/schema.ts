@@ -1395,3 +1395,299 @@ export const imageGenerationProviders = {
 } as const;
 
 export type ImageGenerationProvider = keyof typeof imageGenerationProviders;
+
+
+// ==========================================
+// 分身AI育成システム（たまごっち・ポケモン的）
+// ==========================================
+
+// 進化タイプの定義
+export const evolutionTypes = {
+  basic: {
+    name: "ベーシック",
+    description: "生まれたての分身AI",
+    minLevel: 1,
+    icon: "🥚",
+  },
+  social: {
+    name: "ソーシャル型",
+    description: "コミュニケーションが得意な分身AI",
+    minLevel: 20,
+    icon: "💬",
+    requirements: { conversations: 100, friendPredictions: 20 },
+  },
+  creative: {
+    name: "クリエイティブ型",
+    description: "創造性が高い分身AI",
+    minLevel: 20,
+    icon: "🎨",
+    requirements: { imageGenerations: 30, conversations: 50 },
+  },
+  analyst: {
+    name: "アナリスト型",
+    description: "分析力が高い分身AI",
+    minLevel: 20,
+    icon: "📊",
+    requirements: { scenarioAnswers: 18, diagnosticsCompleted: 3 },
+  },
+  empath: {
+    name: "エンパス型",
+    description: "共感力が高い分身AI",
+    minLevel: 30,
+    icon: "💖",
+    requirements: { conversations: 200, intimacyScoreAvg: 70 },
+  },
+  sage: {
+    name: "賢者型",
+    description: "知識が豊富な分身AI",
+    minLevel: 50,
+    icon: "📚",
+    requirements: { knowledgeEntries: 50, conversations: 300 },
+  },
+  legendary: {
+    name: "レジェンド型",
+    description: "すべてを極めた分身AI",
+    minLevel: 80,
+    icon: "👑",
+    requirements: { level: 80, allSkillsMaxed: true },
+  },
+} as const;
+
+export type EvolutionType = keyof typeof evolutionTypes;
+
+// スキルの定義
+export const skillDefinitions = {
+  conversation: {
+    name: "会話スキル",
+    description: "会話の質と深さ",
+    icon: "💬",
+    maxLevel: 10,
+  },
+  empathy: {
+    name: "共感スキル",
+    description: "相手の気持ちを理解する力",
+    icon: "💖",
+    maxLevel: 10,
+  },
+  creativity: {
+    name: "創造スキル",
+    description: "新しいアイデアを生み出す力",
+    icon: "🎨",
+    maxLevel: 10,
+  },
+  analysis: {
+    name: "分析スキル",
+    description: "情報を整理・分析する力",
+    icon: "📊",
+    maxLevel: 10,
+  },
+  memory: {
+    name: "記憶スキル",
+    description: "過去の会話を覚えている力",
+    icon: "🧠",
+    maxLevel: 10,
+  },
+  prediction: {
+    name: "予測スキル",
+    description: "相手の行動を予測する力",
+    icon: "🔮",
+    maxLevel: 10,
+  },
+  humor: {
+    name: "ユーモアスキル",
+    description: "楽しい会話をする力",
+    icon: "😄",
+    maxLevel: 10,
+  },
+  wisdom: {
+    name: "知恵スキル",
+    description: "適切なアドバイスをする力",
+    icon: "📚",
+    maxLevel: 10,
+  },
+} as const;
+
+export type SkillType = keyof typeof skillDefinitions;
+
+// レベルごとの必要経験値
+export const levelExperienceTable: Record<number, number> = {
+  1: 0,
+  2: 100,
+  3: 250,
+  4: 450,
+  5: 700,
+  6: 1000,
+  7: 1350,
+  8: 1750,
+  9: 2200,
+  10: 2700,
+  // 以降は (level - 1) * 300 + 前のレベルの必要経験値
+};
+
+// レベルに必要な経験値を計算
+export function getRequiredExperience(level: number): number {
+  if (level <= 10) {
+    return levelExperienceTable[level] || 0;
+  }
+  // レベル11以降は線形増加
+  let exp = levelExperienceTable[10];
+  for (let i = 11; i <= level; i++) {
+    exp += (i - 1) * 300;
+  }
+  return exp;
+}
+
+// 経験値獲得アクションの定義
+export const experienceActions = {
+  conversation: { exp: 5, description: "会話1回" },
+  imageGeneration: { exp: 10, description: "画像生成1回" },
+  friendPrediction: { exp: 8, description: "友達予測1回" },
+  scenarioAnswer: { exp: 15, description: "シナリオ回答1回" },
+  diagnosticComplete: { exp: 50, description: "診断完了" },
+  dailyLogin: { exp: 10, description: "デイリーログイン" },
+  consecutiveLogin7: { exp: 50, description: "7日連続ログイン" },
+  consecutiveLogin30: { exp: 200, description: "30日連続ログイン" },
+  knowledgeAdd: { exp: 20, description: "ナレッジ追加" },
+  friendAdd: { exp: 30, description: "友達追加" },
+  matchingComplete: { exp: 25, description: "マッチング完了" },
+  praiseReceived: { exp: 5, description: "褒められた" },
+} as const;
+
+export type ExperienceAction = keyof typeof experienceActions;
+
+// 育成ステータステーブル
+export const twinGrowthStatus = mysqlTable("twin_growth_status", {
+  id: int("id").autoincrement().primaryKey(),
+  twinId: int("twinId").notNull().unique(),
+  userId: int("userId").notNull(),
+  
+  // 基本ステータス
+  level: int("level").default(1).notNull(),
+  experience: int("experience").default(0).notNull(),
+  evolutionType: varchar("evolutionType", { length: 50 }).default("basic").notNull(),
+  
+  // お世話ステータス (0-100)
+  energy: int("energy").default(100).notNull(), // 元気度
+  fullness: int("fullness").default(100).notNull(), // 満腹度
+  mood: int("mood").default(100).notNull(), // 機嫌
+  bond: int("bond").default(0).notNull(), // 絆（親密度）
+  
+  // 統計
+  totalConversations: int("totalConversations").default(0).notNull(),
+  totalImageGenerations: int("totalImageGenerations").default(0).notNull(),
+  totalFriendPredictions: int("totalFriendPredictions").default(0).notNull(),
+  totalScenarioAnswers: int("totalScenarioAnswers").default(0).notNull(),
+  totalDiagnosticsCompleted: int("totalDiagnosticsCompleted").default(0).notNull(),
+  totalKnowledgeEntries: int("totalKnowledgeEntries").default(0).notNull(),
+  
+  // ログイン関連
+  lastInteractionAt: timestamp("lastInteractionAt"),
+  consecutiveLoginDays: int("consecutiveLoginDays").default(0).notNull(),
+  lastLoginDate: varchar("lastLoginDate", { length: 10 }), // YYYY-MM-DD
+  
+  // 進化履歴
+  evolutionHistory: json("evolutionHistory").$type<{
+    type: string;
+    evolvedAt: string;
+    level: number;
+  }[]>(),
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type TwinGrowthStatus = typeof twinGrowthStatus.$inferSelect;
+export type InsertTwinGrowthStatus = typeof twinGrowthStatus.$inferInsert;
+
+// スキルテーブル
+export const twinSkills = mysqlTable("twin_skills", {
+  id: int("id").autoincrement().primaryKey(),
+  twinId: int("twinId").notNull(),
+  skillType: varchar("skillType", { length: 50 }).notNull(),
+  level: int("level").default(1).notNull(),
+  experience: int("experience").default(0).notNull(),
+  unlockedAt: timestamp("unlockedAt").defaultNow().notNull(),
+  maxedAt: timestamp("maxedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type TwinSkill = typeof twinSkills.$inferSelect;
+export type InsertTwinSkill = typeof twinSkills.$inferInsert;
+
+// マイルストーン・図鑑テーブル
+export const twinMilestones = mysqlTable("twin_milestones", {
+  id: int("id").autoincrement().primaryKey(),
+  twinId: int("twinId").notNull(),
+  milestoneType: varchar("milestoneType", { length: 100 }).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  icon: varchar("icon", { length: 10 }),
+  achievedAt: timestamp("achievedAt").defaultNow().notNull(),
+  metadata: json("metadata").$type<Record<string, unknown>>(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type TwinMilestone = typeof twinMilestones.$inferSelect;
+export type InsertTwinMilestone = typeof twinMilestones.$inferInsert;
+
+// マイルストーンの定義
+export const milestoneDefinitions = {
+  // 会話系
+  first_conversation: { title: "はじめての会話", description: "分身AIと初めて会話した", icon: "💬", category: "conversation" },
+  conversations_10: { title: "おしゃべり好き", description: "10回会話した", icon: "💬", category: "conversation" },
+  conversations_50: { title: "話し上手", description: "50回会話した", icon: "💬", category: "conversation" },
+  conversations_100: { title: "会話マスター", description: "100回会話した", icon: "🗣️", category: "conversation" },
+  conversations_500: { title: "会話の達人", description: "500回会話した", icon: "👑", category: "conversation" },
+  
+  // 画像生成系
+  first_image: { title: "はじめての画像", description: "初めて画像を生成した", icon: "🎨", category: "creative" },
+  images_10: { title: "アーティスト", description: "10枚画像を生成した", icon: "🎨", category: "creative" },
+  images_50: { title: "クリエイター", description: "50枚画像を生成した", icon: "🖼️", category: "creative" },
+  
+  // 診断系
+  bigfive_complete: { title: "自己分析家", description: "ビッグファイブ診断を完了した", icon: "📊", category: "diagnostic" },
+  mbti_complete: { title: "性格探求者", description: "MBTI診断を完了した", icon: "🔮", category: "diagnostic" },
+  all_diagnostics: { title: "完全分析", description: "すべての診断を完了した", icon: "🏆", category: "diagnostic" },
+  
+  // 友達系
+  first_friend: { title: "はじめての友達", description: "初めて友達ができた", icon: "👋", category: "social" },
+  friends_5: { title: "社交的", description: "友達が5人になった", icon: "👥", category: "social" },
+  friends_10: { title: "人気者", description: "友達が10人になった", icon: "🌟", category: "social" },
+  
+  // レベル系
+  level_10: { title: "成長中", description: "レベル10に到達した", icon: "⬆️", category: "growth" },
+  level_25: { title: "一人前", description: "レベル25に到達した", icon: "⭐", category: "growth" },
+  level_50: { title: "熟練者", description: "レベル50に到達した", icon: "🌟", category: "growth" },
+  level_100: { title: "マスター", description: "レベル100に到達した", icon: "👑", category: "growth" },
+  
+  // 進化系
+  first_evolution: { title: "はじめての進化", description: "初めて進化した", icon: "✨", category: "evolution" },
+  evolution_social: { title: "ソーシャル進化", description: "ソーシャル型に進化した", icon: "💬", category: "evolution" },
+  evolution_creative: { title: "クリエイティブ進化", description: "クリエイティブ型に進化した", icon: "🎨", category: "evolution" },
+  evolution_analyst: { title: "アナリスト進化", description: "アナリスト型に進化した", icon: "📊", category: "evolution" },
+  evolution_empath: { title: "エンパス進化", description: "エンパス型に進化した", icon: "💖", category: "evolution" },
+  evolution_sage: { title: "賢者進化", description: "賢者型に進化した", icon: "📚", category: "evolution" },
+  evolution_legendary: { title: "伝説の進化", description: "レジェンド型に進化した", icon: "👑", category: "evolution" },
+  
+  // 特別系
+  birthday: { title: "お誕生日", description: "分身AIの誕生日を祝った", icon: "🎂", category: "special" },
+  week_streak: { title: "1週間連続", description: "7日連続でログインした", icon: "🔥", category: "special" },
+  month_streak: { title: "1ヶ月連続", description: "30日連続でログインした", icon: "🔥", category: "special" },
+} as const;
+
+export type MilestoneType = keyof typeof milestoneDefinitions;
+
+// 経験値獲得履歴テーブル
+export const experienceHistory = mysqlTable("experience_history", {
+  id: int("id").autoincrement().primaryKey(),
+  twinId: int("twinId").notNull(),
+  action: varchar("action", { length: 50 }).notNull(),
+  experienceGained: int("experienceGained").notNull(),
+  description: text("description"),
+  metadata: json("metadata").$type<Record<string, unknown>>(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ExperienceHistoryEntry = typeof experienceHistory.$inferSelect;
+export type InsertExperienceHistoryEntry = typeof experienceHistory.$inferInsert;

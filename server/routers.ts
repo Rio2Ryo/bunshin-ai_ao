@@ -2750,6 +2750,96 @@ ${dialogueText}`,
         };
       }),
   }),
+
+  // ============ 育成システム ============
+  growth: router({
+    // 育成ステータスを取得
+    getStatus: protectedProcedure.query(async ({ ctx }) => {
+      const { getOrCreateGrowthStatus, getGrowthDetails, checkDailyLogin } = await import("./services/growthService");
+      
+      const twin = await getDigitalTwinByUser(ctx.user.id);
+      if (!twin) {
+        return null;
+      }
+      
+      // デイリーログインチェック
+      await checkDailyLogin(twin.id, ctx.user.id);
+      
+      // 詳細情報を取得
+      return getGrowthDetails(twin.id);
+    }),
+
+    // お世話アクション：褒める
+    praise: protectedProcedure.mutation(async ({ ctx }) => {
+      const { praise } = await import("./services/growthService");
+      
+      const twin = await getDigitalTwinByUser(ctx.user.id);
+      if (!twin) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+      }
+      
+      return praise(twin.id);
+    }),
+
+    // スキル一覧を取得
+    getSkills: protectedProcedure.query(async ({ ctx }) => {
+      const { getGrowthDetails } = await import("./services/growthService");
+      
+      const twin = await getDigitalTwinByUser(ctx.user.id);
+      if (!twin) {
+        return [];
+      }
+      
+      const details = await getGrowthDetails(twin.id);
+      return details?.skills || [];
+    }),
+
+    // マイルストーン一覧を取得
+    getMilestones: protectedProcedure.query(async ({ ctx }) => {
+      const { getGrowthDetails } = await import("./services/growthService");
+      
+      const twin = await getDigitalTwinByUser(ctx.user.id);
+      if (!twin) {
+        return [];
+      }
+      
+      const details = await getGrowthDetails(twin.id);
+      return details?.milestones || [];
+    }),
+
+    // 経験値履歴を取得
+    getExperienceHistory: protectedProcedure
+      .input(z.object({ limit: z.number().optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        const { getGrowthDetails } = await import("./services/growthService");
+        
+        const twin = await getDigitalTwinByUser(ctx.user.id);
+        if (!twin) {
+          return [];
+        }
+        
+        const details = await getGrowthDetails(twin.id);
+        return details?.recentExperience || [];
+      }),
+
+    // 進化タイプ一覧を取得
+    getEvolutionTypes: protectedProcedure.query(async () => {
+      const { evolutionTypes } = await import("../drizzle/schema");
+      return evolutionTypes;
+    }),
+
+    // スキル定義一覧を取得
+    getSkillDefinitions: protectedProcedure.query(async () => {
+      const { skillDefinitions } = await import("../drizzle/schema");
+      return skillDefinitions;
+    }),
+
+    // マイルストーン定義一覧を取得
+    getMilestoneDefinitions: protectedProcedure.query(async () => {
+      const { milestoneDefinitions } = await import("../drizzle/schema");
+      return milestoneDefinitions;
+    }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;

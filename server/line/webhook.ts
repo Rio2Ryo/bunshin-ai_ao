@@ -47,6 +47,7 @@ import {
   needsProxy,
 } from "../services/imageProxyService";
 import type { LineMessage } from "../services/lineService";
+import { gainExperience } from "../services/growthService";
 
 /**
  * Clawdbot経由で分身AIの応答を生成
@@ -593,6 +594,14 @@ async function handleMessageEvent(event: LineWebhookEvent) {
     
     // 分身AIの応答を生成（Clawdbot経由、画像やメディアを含む可能性あり）
     const parsedResponse = await generateTwinResponse(userId, twinId, userMessage, lineUserId);
+    
+    // 育成システム: 会話経験値を獲得
+    try {
+      await gainExperience(twinId, "conversation", { source: "line", messageLength: userMessage.length });
+      console.log(`[LINE] Gained conversation experience for twin: ${twinId}`);
+    } catch (expError) {
+      console.warn(`[LINE] Failed to gain experience:`, expError);
+    }
     
     // 応答を保存（生の応答を保存）
     await saveLineMessage(
