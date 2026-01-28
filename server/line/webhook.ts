@@ -94,59 +94,48 @@ function detectImageGenerationRequest(message: string): { isImageRequest: boolea
 }
 
 /**
- * 分身AI側で直接画像を生成（Gemini Nano Banana Pro使用）
+ * 分身AI側で直接画像を生成（Gemini Nano Banana Proのみ使用）
  */
 async function generateImageDirectly(
   prompt: string,
   userId: number
 ): Promise<{ success: boolean; imageUrl?: string; error?: string; model?: string }> {
   try {
-    // まずGemini（本物のNano Banana Pro）を試す
+    // Gemini API（Nano Banana Pro）のみ使用
     const { isGeminiImageEnabled, generateWithNanoBananaPro } = await import("../services/geminiImageService");
     
-    if (isGeminiImageEnabled()) {
-      console.log(`[LINE] Generating image with Gemini Nano Banana Pro: ${prompt}`);
-      
-      const geminiResult = await generateWithNanoBananaPro(prompt);
-      
-      if (geminiResult.success && geminiResult.imageUrl) {
-        console.log(`[LINE] Gemini image generated successfully: ${geminiResult.imageUrl}`);
-        return {
-          success: true,
-          imageUrl: geminiResult.imageUrl,
-          model: geminiResult.model,
-        };
-      }
-      
-      console.warn(`[LINE] Gemini image generation failed: ${geminiResult.error}, falling back to Manus API`);
-    } else {
-      console.log(`[LINE] Gemini API not configured, using Manus API`);
-    }
-    
-    // フォールバック: Manus内蔵API
-    console.log(`[LINE] Generating image with Manus API (fallback): ${prompt}`);
-    const { generateImage } = await import("../_core/imageGeneration");
-    const result = await generateImage({ prompt });
-    
-    if (result.url) {
-      console.log(`[LINE] Manus image generated successfully: ${result.url}`);
+    if (!isGeminiImageEnabled()) {
+      console.error(`[LINE] Gemini API is not configured. GEMINI_API_KEY is required.`);
       return {
-        success: true,
-        imageUrl: result.url,
-        model: "manus-internal",
+        success: false,
+        error: "画像生成機能が設定されていません。管理者にお問い合わせください。",
       };
     }
     
+    console.log(`[LINE] Generating image with Gemini Nano Banana Pro: ${prompt}`);
+    
+    const geminiResult = await generateWithNanoBananaPro(prompt);
+    
+    if (geminiResult.success && geminiResult.imageUrl) {
+      console.log(`[LINE] Gemini image generated successfully: ${geminiResult.imageUrl}`);
+      return {
+        success: true,
+        imageUrl: geminiResult.imageUrl,
+        model: "nano-banana-pro",
+      };
+    }
+    
+    console.error(`[LINE] Gemini image generation failed: ${geminiResult.error}`);
     return {
       success: false,
-      error: "Failed to generate image",
+      error: geminiResult.error || "画像生成に失敗しました。しばらくしてから再度お試しください。",
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     console.error(`[LINE] Direct image generation error: ${errorMessage}`);
     return {
       success: false,
-      error: errorMessage,
+      error: `画像生成中にエラーが発生しました: ${errorMessage}`,
     };
   }
 }

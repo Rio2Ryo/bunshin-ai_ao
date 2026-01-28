@@ -669,3 +669,8 @@
 - [x] Gemini画像生成サービスの実装（GEMINI_API_KEY使用）
 - [x] LINE webhookでGemini画像生成を使用
 - [x] テスト作成・実行
+
+
+## Manus内蔵API停止・Nano Banana Pro専用化（2026-01-28）
+- [x] LINE webhookからManus APIフォールバックを削除
+- [x] Gemini API（Nano Banana Pro）のみ使用に変更
