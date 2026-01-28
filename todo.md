@@ -679,3 +679,8 @@
 ## buildSystemPrompt画像生成指示の修正（2026-01-28）
 - [x] generate_imageツール参照を削除
 - [x] 具体的なexecコマンド手順に変更（nano-banana-pro + Gyazo）
+
+
+## Clawdbot画像生成デバッグ情報追加（2026-01-28）
+- [x] LINE応答にデバッグ情報を追加（画像生成の成功/失敗を判別可能に）
+- [x] サーバーログに詳細な処理状況を出力

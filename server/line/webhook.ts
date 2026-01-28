@@ -255,7 +255,18 @@ async function generateTwinResponseViaClawdbot(
     const rawResponse = result.response || "";
     const parsedResponse = parseClawdbotResponse(rawResponse);
     
-    console.log(`[LINE] Parsed response: text=${parsedResponse.textContent.length} chars, media=${parsedResponse.mediaContents.length} items`);
+    // デバッグ情報を詳細にログ出力
+    console.log(`[LINE] ===== Clawdbot Response Debug =====`);
+    console.log(`[LINE] Raw response length: ${rawResponse.length} chars`);
+    console.log(`[LINE] Raw response (first 500 chars): ${rawResponse.substring(0, 500)}`);
+    console.log(`[LINE] Parsed text: ${parsedResponse.textContent.length} chars`);
+    console.log(`[LINE] Media items found: ${parsedResponse.mediaContents.length}`);
+    if (parsedResponse.mediaContents.length > 0) {
+      parsedResponse.mediaContents.forEach((media, i) => {
+        console.log(`[LINE] Media[${i}]: type=${media.type}, url=${media.content}`);
+      });
+    }
+    console.log(`[LINE] ===== End Debug =====`);
     
     if (!parsedResponse.textContent && !parsedResponse.hasMedia) {
       return await generateTwinResponseFallback(userId, twinId, userMessage, systemPrompt, conversationHistory);
@@ -610,7 +621,18 @@ async function handleMessageEvent(event: LineWebhookEvent) {
     );
     
     // 分身AIの応答を生成（Clawdbot経由、画像やメディアを含む可能性あり）
+    const responseStartTime = Date.now();
     const parsedResponse = await generateTwinResponse(userId, twinId, userMessage, lineUserId);
+    const responseTime = Date.now() - responseStartTime;
+    
+    // デバッグ情報をログ出力
+    console.log(`[LINE] ===== Response Summary =====`);
+    console.log(`[LINE] Response time: ${responseTime}ms`);
+    console.log(`[LINE] Text content: ${parsedResponse.textContent.substring(0, 100)}...`);
+    console.log(`[LINE] Has media: ${parsedResponse.hasMedia}`);
+    console.log(`[LINE] Media count: ${parsedResponse.mediaContents.length}`);
+    console.log(`[LINE] Raw response preview: ${parsedResponse.rawResponse.substring(0, 200)}...`);
+    console.log(`[LINE] ===== End Summary =====`);
     
     // 育成システム: 会話経験値を獲得
     try {
@@ -692,6 +714,24 @@ async function handleMessageEvent(event: LineWebhookEvent) {
       lineMessages.push({
         type: "text",
         text: "応答を生成できませんでした。",
+      });
+    }
+    
+    // デバッグモード: 環境変数で有効化可能
+    const debugMode = process.env.LINE_DEBUG_MODE === "true";
+    if (debugMode) {
+      const debugInfo = [
+        `🔧 Debug Info:`,
+        `• 応答時間: ${responseTime}ms`,
+        `• メディア検出: ${parsedResponse.hasMedia ? "あり" : "なし"}`,
+        `• メディア数: ${parsedResponse.mediaContents.length}`,
+        `• Raw応答長: ${parsedResponse.rawResponse.length}文字`,
+      ].join("\n");
+      
+      // デバッグ情報を最後に追加
+      lineMessages.push({
+        type: "text",
+        text: debugInfo,
       });
     }
     
