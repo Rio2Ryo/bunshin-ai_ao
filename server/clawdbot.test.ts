@@ -16,7 +16,8 @@ describe("Clawdbot Gateway", () => {
     expect(AUTH_TOKEN).not.toBe("");
   });
 
-  it("should connect to Clawdbot Gateway and get response", async () => {
+  it.skip("should connect to Clawdbot Gateway and get response (external service)", async () => {
+    // このテストは外部サービス（ngrok）に依存するため、手動実行用にスキップ
     if (!GATEWAY_URL || !AUTH_TOKEN) {
       console.log("Skipping test: Clawdbot credentials not configured");
       return;

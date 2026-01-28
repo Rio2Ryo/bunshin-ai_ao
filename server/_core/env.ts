@@ -9,7 +9,7 @@ export const ENV = {
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
   // Clawdbot Gateway settings (system-wide)
   // Note: Hardcoded for now to ensure production works. Update when ngrok URL changes.
-  clawdbotGatewayUrl: process.env.CLAWDBOT_GATEWAY_URL || "https://e28a19488372.ngrok-free.app",
+  clawdbotGatewayUrl: process.env.CLAWDBOT_GATEWAY_URL || "https://0e0ea63578b8.ngrok-free.app",
   clawdbotAuthToken: process.env.CLAWDBOT_AUTH_TOKEN || "e1f9299784aa90cc8d33e510557be3d0b86ba341ee51ab54",
   clawdbotAgentId: process.env.CLAWDBOT_AGENT_ID || "main",
 };
