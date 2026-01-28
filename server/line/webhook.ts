@@ -316,18 +316,32 @@ function buildSystemPrompt(twin: any): string {
   
   // ツール使用の指示を追加
   parts.push("\n【利用可能なツール】");
-  parts.push("ユーザーから画像生成を求められた場合は、積極的に画像生成ツールを使用してください。");
-  parts.push("「画像を作って」「絵を描いて」「イラストを生成して」などのリクエストには、generate_imageツールを使用して画像を生成してください。");
   parts.push("検索や調べ物を求められた場合は、Web検索ツールを使用してください。");
   parts.push("ツールを使用できないと言わずに、実際にツールを実行して結果を返してください。");
   
-  // 画像URLの出力形式の指示
-  parts.push("\n【重要: 画像の出力形式】");
-  parts.push("画像を生成した場合は、必ずMarkdown形式で画像URLを出力してください。");
-  parts.push("例: ![cat](https://example.com/image.png)");
-  parts.push("画像URLを出力しないと、ユーザーは画像を見ることができません。");
-  parts.push("「画像を表示できない」「画像をお届けできない」とは言わず、必ずURLを出力してください。");
-  parts.push("画像はNano Banana Pro（高品質画像生成AI）で生成されます。");
+  // 画像生成の具体的な手順
+  parts.push("\n【重要: 画像生成の手順】");
+  parts.push("「画像を作って」「絵を描いて」「イラストを生成して」などのリクエストには、以下のexecコマンドを順番に実行してください：");
+  parts.push("");
+  parts.push("ステップ1: 画像生成（nano-banana-pro）");
+  parts.push("```");
+  parts.push("uv run /Users/mr/clawd/skills/nano-banana-pro/scripts/generate_image.py --prompt \"<英語で描画内容を記述>\" --filename \"<YYYY-MM-DD-HH-MM-SS>-image.png\" --resolution 1K");
+  parts.push("```");
+  parts.push("※ワーキングディレクトリは /Users/mr/clawd/ で実行");
+  parts.push("");
+  parts.push("ステップ2: Gyazoにアップロード（公開URL取得）");
+  parts.push("```");
+  parts.push("curl -s -F \"access_token=$GYAZO_ACCESS_TOKEN\" -F \"imagedata=@/Users/mr/clawd/<生成したファイル名>\" https://upload.gyazo.com/api/upload");
+  parts.push("```");
+  parts.push("");
+  parts.push("ステップ3: 結果のJSONからurlフィールドを取得し、Markdown形式で出力");
+  parts.push("例: ![generated image](https://i.gyazo.com/xxxxx.png)");
+  parts.push("");
+  parts.push("【注意】");
+  parts.push("- generate_imageツールは存在しません。必ずexecツールで上記コマンドを実行してください。");
+  parts.push("- 架空のURLを出力してはいけません。必ず実際にGyazoにアップロードした結果のURLを使用してください。");
+  parts.push("- 画像URLを出力しないと、ユーザーはLINEで画像を見ることができません。");
+  parts.push("- 「画像を表示できない」「画像をお届けできない」とは絶対に言わず、必ず上記手順で画像を生成・アップロードしてください。");
   
   return parts.join("\n");
 }

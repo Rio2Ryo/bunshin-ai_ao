@@ -31,7 +31,8 @@ interface ClawdbotResponse {
 }
 
 // デフォルトタイムアウト（ミリ秒）
-const DEFAULT_TIMEOUT_MS = 30000; // 30秒
+// 画像生成（nano-banana-pro + Gyazoアップロード）に60-90秒かかるため120秒に設定
+const DEFAULT_TIMEOUT_MS = 120000; // 120秒
 
 /**
  * Clawdbot Gatewayが有効かどうかを確認
