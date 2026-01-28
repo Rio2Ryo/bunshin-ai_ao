@@ -52,6 +52,7 @@ export async function sendToClawdbot(
   response?: string;
   error?: string;
   rawResponse?: ClawdbotResponse;
+  model?: string;
 }> {
   if (!isClawdbotEnabled()) {
     return {
@@ -95,6 +96,7 @@ export async function sendToClawdbot(
       success: true,
       response: assistantMessage,
       rawResponse: data,
+      model: data.model || "clawdbot",
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";

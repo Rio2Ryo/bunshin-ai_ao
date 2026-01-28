@@ -54,12 +54,14 @@ import { gainExperience } from "../services/growthService";
  * 画像やメディアを含む応答も対応
  */
 // テキストのみのフォールバック応答を作成
-function createTextOnlyResponse(text: string): ParsedClawdbotResponse {
+function createTextOnlyResponse(text: string, apiSource: string = "fallback", model: string = "manus-llm"): ParsedClawdbotResponse {
   return {
     textContent: text,
     mediaContents: [],
     hasMedia: false,
     rawResponse: text,
+    model,
+    apiSource,
   };
 }
 
@@ -167,6 +169,8 @@ async function generateTwinResponseViaClawdbot(
         }],
         hasMedia: true,
         rawResponse: `画像を生成しました: ${imageResult.imageUrl}`,
+        model: "gemini-2.0-flash-exp-image-generation",
+        apiSource: "gemini-direct",
       };
     } else {
       // 画像生成失敗時はエラーメッセージを返す
@@ -254,6 +258,10 @@ async function generateTwinResponseViaClawdbot(
     // Clawdbotの応答をパース（画像やメディアを抽出）
     const rawResponse = result.response || "";
     const parsedResponse = parseClawdbotResponse(rawResponse);
+    
+    // モデル情報を追加
+    parsedResponse.model = result.model || "clawdbot";
+    parsedResponse.apiSource = "clawdbot";
     
     // デバッグ情報を詳細にログ出力
     console.log(`[LINE] ===== Clawdbot Response Debug =====`);
@@ -722,10 +730,11 @@ async function handleMessageEvent(event: LineWebhookEvent) {
     if (debugMode) {
       const debugInfo = [
         `🔧 Debug Info:`,
+        `• 使用AI: ${parsedResponse.model || "unknown"}`,
+        `• APIソース: ${parsedResponse.apiSource || "unknown"}`,
         `• 応答時間: ${responseTime}ms`,
         `• メディア検出: ${parsedResponse.hasMedia ? "あり" : "なし"}`,
         `• メディア数: ${parsedResponse.mediaContents.length}`,
-        `• Raw応答長: ${parsedResponse.rawResponse.length}文字`,
       ].join("\n");
       
       // デバッグ情報を最後に追加

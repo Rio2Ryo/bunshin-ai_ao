@@ -21,6 +21,8 @@ export interface ParsedClawdbotResponse {
   mediaContents: ParsedContent[];
   hasMedia: boolean;
   rawResponse: string;
+  model?: string; // 使用したAIモデル名
+  apiSource?: string; // APIソース（clawdbot, fallbackなど）
 }
 
 /**
