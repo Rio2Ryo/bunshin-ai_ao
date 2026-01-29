@@ -1714,3 +1714,250 @@ export const experienceHistory = mysqlTable("experience_history", {
 
 export type ExperienceHistoryEntry = typeof experienceHistory.$inferSelect;
 export type InsertExperienceHistoryEntry = typeof experienceHistory.$inferInsert;
+
+
+// ==========================================
+// 名刺・カード登録システム
+// ==========================================
+
+/**
+ * カードタイプの定義
+ * 名刺だけでなく、様々なカードに対応
+ */
+export const cardTypes = {
+  business_card: {
+    name: "名刺",
+    description: "ビジネス名刺",
+    icon: "💼",
+    fields: ["name", "company", "position", "email", "phone", "address", "website"],
+  },
+  point_card: {
+    name: "ポイントカード",
+    description: "店舗のポイントカード",
+    icon: "🎁",
+    fields: ["storeName", "memberNumber", "expiryDate", "barcode"],
+  },
+  membership_card: {
+    name: "会員証",
+    description: "各種会員証・メンバーシップカード",
+    icon: "🎫",
+    fields: ["organizationName", "memberNumber", "memberName", "expiryDate", "membershipType"],
+  },
+  medical_card: {
+    name: "診察券",
+    description: "病院・クリニックの診察券",
+    icon: "🏥",
+    fields: ["hospitalName", "patientNumber", "patientName", "department", "phone"],
+  },
+  insurance_card: {
+    name: "保険証",
+    description: "健康保険証・各種保険証",
+    icon: "🏦",
+    fields: ["insurerName", "insurerNumber", "insuredNumber", "insuredName", "expiryDate"],
+  },
+  student_id: {
+    name: "学生証",
+    description: "学生証・学生ID",
+    icon: "🎓",
+    fields: ["schoolName", "studentNumber", "studentName", "department", "expiryDate"],
+  },
+  employee_id: {
+    name: "社員証",
+    description: "社員証・従業員ID",
+    icon: "🏢",
+    fields: ["companyName", "employeeNumber", "employeeName", "department", "position"],
+  },
+  library_card: {
+    name: "図書館カード",
+    description: "図書館の利用カード",
+    icon: "📚",
+    fields: ["libraryName", "memberNumber", "memberName", "expiryDate"],
+  },
+  credit_card: {
+    name: "クレジットカード",
+    description: "クレジットカード情報（下4桁のみ保存推奨）",
+    icon: "💳",
+    fields: ["cardBrand", "lastFourDigits", "cardholderName", "expiryDate"],
+  },
+  other: {
+    name: "その他",
+    description: "その他のカード",
+    icon: "📇",
+    fields: ["title", "description", "notes"],
+  },
+} as const;
+
+export type CardType = keyof typeof cardTypes;
+
+/**
+ * Cards - 登録されたカード情報
+ */
+export const cards = mysqlTable("cards", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  
+  // カードの基本情報
+  cardType: varchar("cardType", { length: 50 }).notNull(), // business_card, point_card, etc.
+  title: varchar("title", { length: 255 }).notNull(), // カードの表示名（例: "山田太郎 - ABC株式会社"）
+  
+  // 画像情報
+  frontImageUrl: varchar("frontImageUrl", { length: 1000 }), // 表面画像URL（S3）
+  frontImageKey: varchar("frontImageKey", { length: 500 }), // S3キー
+  backImageUrl: varchar("backImageUrl", { length: 1000 }), // 裏面画像URL（S3）
+  backImageKey: varchar("backImageKey", { length: 500 }), // S3キー
+  
+  // OCR/AI解析で抽出された情報（カードタイプごとに異なる構造）
+  extractedData: json("extractedData").$type<{
+    // 名刺用フィールド
+    name?: string;
+    nameKana?: string; // ふりがな
+    company?: string;
+    companyKana?: string;
+    position?: string;
+    department?: string;
+    email?: string;
+    phone?: string;
+    mobile?: string;
+    fax?: string;
+    address?: string;
+    postalCode?: string;
+    website?: string;
+    
+    // ポイントカード・会員証用フィールド
+    storeName?: string;
+    organizationName?: string;
+    memberNumber?: string;
+    memberName?: string;
+    membershipType?: string;
+    barcode?: string;
+    qrCode?: string;
+    
+    // 医療関連フィールド
+    hospitalName?: string;
+    patientNumber?: string;
+    patientName?: string;
+    insurerName?: string;
+    insurerNumber?: string;
+    insuredNumber?: string;
+    insuredName?: string;
+    
+    // 学校・会社関連フィールド
+    schoolName?: string;
+    studentNumber?: string;
+    studentName?: string;
+    employeeNumber?: string;
+    employeeName?: string;
+    
+    // 共通フィールド
+    expiryDate?: string;
+    issueDate?: string;
+    notes?: string;
+    
+    // その他の抽出データ
+    rawText?: string; // OCRの生テキスト
+    confidence?: number; // 解析の信頼度 (0-100)
+    additionalFields?: Record<string, string>; // 追加フィールド
+  }>(),
+  
+  // ユーザーによる手動編集データ（extractedDataを上書き）
+  manualData: json("manualData").$type<Record<string, string>>(),
+  
+  // メタデータ
+  tags: json("tags").$type<string[]>(), // タグ（検索用）
+  notes: text("notes"), // ユーザーメモ
+  isFavorite: int("isFavorite").default(0).notNull(), // お気に入り
+  isArchived: int("isArchived").default(0).notNull(), // アーカイブ済み
+  
+  // 解析状態
+  ocrStatus: mysqlEnum("ocrStatus", ["pending", "processing", "completed", "failed"]).default("pending").notNull(),
+  ocrError: text("ocrError"), // OCRエラーメッセージ
+  ocrCompletedAt: timestamp("ocrCompletedAt"),
+  
+  // LINE連携
+  lineMessageId: varchar("lineMessageId", { length: 255 }), // LINE経由で登録された場合のメッセージID
+  
+  // 統計
+  viewCount: int("viewCount").default(0).notNull(), // 閲覧回数
+  lastViewedAt: timestamp("lastViewedAt"),
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Card = typeof cards.$inferSelect;
+export type InsertCard = typeof cards.$inferInsert;
+
+/**
+ * Card contacts - カードから抽出された連絡先（名刺の場合）
+ * 名刺から連絡先として登録する場合に使用
+ */
+export const cardContacts = mysqlTable("card_contacts", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  cardId: int("cardId").notNull(), // 元のカードID
+  
+  // 連絡先情報
+  name: varchar("name", { length: 255 }).notNull(),
+  nameKana: varchar("nameKana", { length: 255 }),
+  company: varchar("company", { length: 255 }),
+  position: varchar("position", { length: 255 }),
+  department: varchar("department", { length: 255 }),
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 50 }),
+  mobile: varchar("mobile", { length: 50 }),
+  address: text("address"),
+  website: varchar("website", { length: 500 }),
+  
+  // メモ・タグ
+  notes: text("notes"),
+  tags: json("tags").$type<string[]>(),
+  
+  // 関係性
+  relationship: varchar("relationship", { length: 100 }), // 取引先、同僚、友人など
+  meetingContext: text("meetingContext"), // どこで会ったか
+  meetingDate: timestamp("meetingDate"), // いつ会ったか
+  
+  // 統計
+  lastContactedAt: timestamp("lastContactedAt"),
+  contactCount: int("contactCount").default(0).notNull(),
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type CardContact = typeof cardContacts.$inferSelect;
+export type InsertCardContact = typeof cardContacts.$inferInsert;
+
+/**
+ * Card scan history - カードスキャン履歴
+ * LINE経由でのスキャンや、アプリからのスキャン履歴を記録
+ */
+export const cardScanHistory = mysqlTable("card_scan_history", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  cardId: int("cardId"), // 登録されたカードID（登録前はnull）
+  
+  // スキャン情報
+  source: mysqlEnum("source", ["line", "web", "api"]).notNull(), // スキャン元
+  imageUrl: varchar("imageUrl", { length: 1000 }).notNull(), // スキャンした画像URL
+  imageKey: varchar("imageKey", { length: 500 }), // S3キー
+  
+  // 解析結果
+  detectedCardType: varchar("detectedCardType", { length: 50 }), // 検出されたカードタイプ
+  extractedText: text("extractedText"), // OCRで抽出されたテキスト
+  extractedData: json("extractedData").$type<Record<string, string>>(), // 構造化データ
+  confidence: int("confidence"), // 解析の信頼度 (0-100)
+  
+  // 処理状態
+  status: mysqlEnum("status", ["pending", "processing", "completed", "failed", "registered"]).default("pending").notNull(),
+  errorMessage: text("errorMessage"),
+  
+  // LINE連携
+  lineMessageId: varchar("lineMessageId", { length: 255 }),
+  lineReplyToken: varchar("lineReplyToken", { length: 255 }),
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CardScanHistory = typeof cardScanHistory.$inferSelect;
+export type InsertCardScanHistory = typeof cardScanHistory.$inferInsert;

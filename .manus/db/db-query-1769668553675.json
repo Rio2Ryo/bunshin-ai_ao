@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE IF NOT EXISTS `card_scan_history` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`cardId` int,\n\t`source` enum('line','web','api') NOT NULL,\n\t`imageUrl` varchar(1000) NOT NULL,\n\t`imageKey` varchar(500),\n\t`detectedCardType` varchar(50),\n\t`extractedText` text,\n\t`extractedData` json,\n\t`confidence` int,\n\t`status` enum('pending','processing','completed','failed','registered') NOT NULL DEFAULT 'pending',\n\t`errorMessage` text,\n\t`lineMessageId` varchar(255),\n\t`lineReplyToken` varchar(255),\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\tCONSTRAINT `card_scan_history_id` PRIMARY KEY(`id`)\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute CREATE TABLE IF NOT EXISTS `card_scan_history` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`cardId` int,\n\t`source` enum('line','web','api') NOT NULL,\n\t`imageUrl` varchar(1000) NOT NULL,\n\t`imageKey` varchar(500),\n\t`detectedCardType` varchar(50),\n\t`extractedText` text,\n\t`extractedData` json,\n\t`confidence` int,\n\t`status` enum('pending','processing','completed','failed','registered') NOT NULL DEFAULT 'pending',\n\t`errorMessage` text,\n\t`lineMessageId` varchar(255),\n\t`lineReplyToken` varchar(255),\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\tCONSTRAINT `card_scan_history_id` PRIMARY KEY(`id`)\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1683
+}

@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE IF NOT EXISTS `card_contacts` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`cardId` int NOT NULL,\n\t`name` varchar(255) NOT NULL,\n\t`nameKana` varchar(255),\n\t`company` varchar(255),\n\t`position` varchar(255),\n\t`department` varchar(255),\n\t`email` varchar(320),\n\t`phone` varchar(50),\n\t`mobile` varchar(50),\n\t`address` text,\n\t`website` varchar(500),\n\t`notes` text,\n\t`tags` json,\n\t`relationship` varchar(100),\n\t`meetingContext` text,\n\t`meetingDate` timestamp,\n\t`lastContactedAt` timestamp,\n\t`contactCount` int NOT NULL DEFAULT 0,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\t`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,\n\tCONSTRAINT `card_contacts_id` PRIMARY KEY(`id`)\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3xFGs8gxyVKN2Fy.7d1a6e11fc6b --database 7dnHzn9LN53aWPboB5GxFU --execute CREATE TABLE IF NOT EXISTS `card_contacts` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`cardId` int NOT NULL,\n\t`name` varchar(255) NOT NULL,\n\t`nameKana` varchar(255),\n\t`company` varchar(255),\n\t`position` varchar(255),\n\t`department` varchar(255),\n\t`email` varchar(320),\n\t`phone` varchar(50),\n\t`mobile` varchar(50),\n\t`address` text,\n\t`website` varchar(500),\n\t`notes` text,\n\t`tags` json,\n\t`relationship` varchar(100),\n\t`meetingContext` text,\n\t`meetingDate` timestamp,\n\t`lastContactedAt` timestamp,\n\t`contactCount` int NOT NULL DEFAULT 0,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\t`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,\n\tCONSTRAINT `card_contacts_id` PRIMARY KEY(`id`)\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1788
+}

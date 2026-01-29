@@ -1,4 +1,4 @@
-import { eq, and, desc, or, ne, sql } from "drizzle-orm";
+import { eq, and, desc, or, ne, sql, like } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users, User,
@@ -15,6 +15,10 @@ import {
   matchingDialogues, InsertMatchingDialogue, MatchingDialogue,
   matchingResults, InsertMatchingResult, MatchingResult,
   planLimits, PlanType, usageTracking, UsageTracking,
+  cards, Card, InsertCard,
+  cardContacts, CardContact, InsertCardContact,
+  cardScanHistory, CardScanHistory, InsertCardScanHistory,
+  cardTypes, CardType,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -692,4 +696,328 @@ export async function updateTwinPublicSettings(twinId: number, isPublic: boolean
     publicBio: publicBio || null,
     tags: tags || null,
   }).where(eq(digitalTwins.id, twinId));
+}
+
+
+// ============ Card Functions ============
+
+// カード作成
+export async function createCard(card: InsertCard): Promise<Card | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  
+  const result = await db.insert(cards).values(card);
+  const insertId = result[0].insertId;
+  
+  const created = await db.select().from(cards).where(eq(cards.id, insertId)).limit(1);
+  return created[0];
+}
+
+// カード取得（ID）
+export async function getCardById(id: number): Promise<Card | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  
+  const result = await db.select().from(cards).where(eq(cards.id, id)).limit(1);
+  return result[0];
+}
+
+// ユーザーのカード一覧取得
+export async function getCardsByUserId(
+  userId: number,
+  options?: {
+    cardType?: string;
+    isArchived?: boolean;
+    isFavorite?: boolean;
+    limit?: number;
+    offset?: number;
+  }
+): Promise<Card[]> {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const conditions = [eq(cards.userId, userId)];
+  
+  if (options?.cardType) {
+    conditions.push(eq(cards.cardType, options.cardType));
+  }
+  if (options?.isArchived !== undefined) {
+    conditions.push(eq(cards.isArchived, options.isArchived ? 1 : 0));
+  }
+  if (options?.isFavorite !== undefined) {
+    conditions.push(eq(cards.isFavorite, options.isFavorite ? 1 : 0));
+  }
+  
+  const result = await db.select().from(cards)
+    .where(and(...conditions))
+    .orderBy(desc(cards.createdAt))
+    .limit(options?.limit || 100)
+    .offset(options?.offset || 0);
+  
+  return result;
+}
+
+// カード更新
+export async function updateCard(
+  id: number,
+  updates: Partial<Omit<InsertCard, 'id' | 'userId' | 'createdAt'>>
+): Promise<Card | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  
+  await db.update(cards).set(updates).where(eq(cards.id, id));
+  return await getCardById(id);
+}
+
+// カード削除
+export async function deleteCard(id: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  
+  await db.delete(cards).where(eq(cards.id, id));
+  return true;
+}
+
+// カード検索（タイトル・タグ）
+export async function searchCards(
+  userId: number,
+  query: string,
+  options?: { cardType?: string; limit?: number }
+): Promise<Card[]> {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const conditions = [
+    eq(cards.userId, userId),
+    eq(cards.isArchived, 0),
+    or(
+      like(cards.title, `%${query}%`),
+      like(cards.notes, `%${query}%`)
+    )
+  ];
+  
+  if (options?.cardType) {
+    conditions.push(eq(cards.cardType, options.cardType));
+  }
+  
+  const result = await db.select().from(cards)
+    .where(and(...conditions))
+    .orderBy(desc(cards.createdAt))
+    .limit(options?.limit || 100);
+  
+  return result;
+}
+
+// カードの閲覧回数を増加
+export async function incrementCardViewCount(id: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  
+  await db.update(cards).set({
+    viewCount: sql`${cards.viewCount} + 1`,
+    lastViewedAt: new Date(),
+  }).where(eq(cards.id, id));
+}
+
+// お気に入り切り替え
+export async function toggleCardFavorite(id: number): Promise<Card | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  
+  const card = await getCardById(id);
+  if (!card) return undefined;
+  
+  await db.update(cards).set({
+    isFavorite: card.isFavorite ? 0 : 1,
+  }).where(eq(cards.id, id));
+  
+  return await getCardById(id);
+}
+
+// アーカイブ切り替え
+export async function toggleCardArchive(id: number): Promise<Card | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  
+  const card = await getCardById(id);
+  if (!card) return undefined;
+  
+  await db.update(cards).set({
+    isArchived: card.isArchived ? 0 : 1,
+  }).where(eq(cards.id, id));
+  
+  return await getCardById(id);
+}
+
+// OCRステータス更新
+export async function updateCardOcrStatus(
+  id: number,
+  status: 'pending' | 'processing' | 'completed' | 'failed',
+  extractedData?: Card['extractedData'],
+  error?: string
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  
+  const updates: Partial<InsertCard> = {
+    ocrStatus: status,
+  };
+  
+  if (extractedData) {
+    updates.extractedData = extractedData;
+  }
+  if (error) {
+    updates.ocrError = error;
+  }
+  if (status === 'completed') {
+    updates.ocrCompletedAt = new Date();
+  }
+  
+  await db.update(cards).set(updates).where(eq(cards.id, id));
+}
+
+// ============ Card Contact Functions ============
+
+// 連絡先作成
+export async function createCardContact(contact: InsertCardContact): Promise<CardContact | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  
+  const result = await db.insert(cardContacts).values(contact);
+  const insertId = result[0].insertId;
+  
+  const created = await db.select().from(cardContacts).where(eq(cardContacts.id, insertId)).limit(1);
+  return created[0];
+}
+
+// 連絡先取得（ID）
+export async function getCardContactById(id: number): Promise<CardContact | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  
+  const result = await db.select().from(cardContacts).where(eq(cardContacts.id, id)).limit(1);
+  return result[0];
+}
+
+// ユーザーの連絡先一覧取得
+export async function getCardContactsByUserId(
+  userId: number,
+  options?: { limit?: number; offset?: number }
+): Promise<CardContact[]> {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const result = await db.select().from(cardContacts)
+    .where(eq(cardContacts.userId, userId))
+    .orderBy(desc(cardContacts.createdAt))
+    .limit(options?.limit || 100)
+    .offset(options?.offset || 0);
+  
+  return result;
+}
+
+// 連絡先更新
+export async function updateCardContact(
+  id: number,
+  updates: Partial<Omit<InsertCardContact, 'id' | 'userId' | 'cardId' | 'createdAt'>>
+): Promise<CardContact | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  
+  await db.update(cardContacts).set(updates).where(eq(cardContacts.id, id));
+  return await getCardContactById(id);
+}
+
+// 連絡先削除
+export async function deleteCardContact(id: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  
+  await db.delete(cardContacts).where(eq(cardContacts.id, id));
+  return true;
+}
+
+// ============ Card Scan History Functions ============
+
+// スキャン履歴作成
+export async function createCardScanHistory(scan: InsertCardScanHistory): Promise<CardScanHistory | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  
+  const result = await db.insert(cardScanHistory).values(scan);
+  const insertId = result[0].insertId;
+  
+  const created = await db.select().from(cardScanHistory).where(eq(cardScanHistory.id, insertId)).limit(1);
+  return created[0];
+}
+
+// スキャン履歴取得（ID）
+export async function getCardScanHistoryById(id: number): Promise<CardScanHistory | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  
+  const result = await db.select().from(cardScanHistory).where(eq(cardScanHistory.id, id)).limit(1);
+  return result[0];
+}
+
+// ユーザーのスキャン履歴一覧取得
+export async function getCardScanHistoryByUserId(
+  userId: number,
+  options?: { status?: string; limit?: number }
+): Promise<CardScanHistory[]> {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const conditions = [eq(cardScanHistory.userId, userId)];
+  
+  if (options?.status) {
+    conditions.push(eq(cardScanHistory.status, options.status as 'pending' | 'processing' | 'completed' | 'failed' | 'registered'));
+  }
+  
+  const result = await db.select().from(cardScanHistory)
+    .where(and(...conditions))
+    .orderBy(desc(cardScanHistory.createdAt))
+    .limit(options?.limit || 100);
+  
+  return result;
+}
+
+// スキャン履歴ステータス更新
+export async function updateCardScanHistoryStatus(
+  id: number,
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'registered',
+  updates?: {
+    cardId?: number;
+    detectedCardType?: string;
+    extractedText?: string;
+    extractedData?: Record<string, string>;
+    confidence?: number;
+    errorMessage?: string;
+  }
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  
+  const updateData: Partial<InsertCardScanHistory> = {
+    status,
+    ...updates,
+  };
+  
+  await db.update(cardScanHistory).set(updateData).where(eq(cardScanHistory.id, id));
+}
+
+// カードタイプ別の統計取得
+export async function getCardStatsByUserId(userId: number): Promise<{ cardType: string; count: number }[]> {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const result = await db.select({
+    cardType: cards.cardType,
+    count: sql<number>`COUNT(*)`,
+  })
+    .from(cards)
+    .where(and(eq(cards.userId, userId), eq(cards.isArchived, 0)))
+    .groupBy(cards.cardType);
+  
+  return result;
 }

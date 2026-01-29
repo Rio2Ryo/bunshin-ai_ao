@@ -2915,6 +2915,306 @@ ${dialogueText}`,
         return getAIProviderForSkill(input.skillType, input.level);
       }),
   }),
+
+  // ============ カード管理 ============
+  cards: router({
+    // カード一覧を取得
+    list: protectedProcedure
+      .input(z.object({
+        cardType: z.string().optional(),
+        isArchived: z.boolean().optional(),
+        isFavorite: z.boolean().optional(),
+        limit: z.number().optional(),
+        offset: z.number().optional(),
+      }).optional())
+      .query(async ({ ctx, input }) => {
+        const { getCardsByUserId } = await import("./db");
+        return getCardsByUserId(ctx.user.id, input);
+      }),
+
+    // カード詳細を取得
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ ctx, input }) => {
+        const { getCardById, incrementCardViewCount } = await import("./db");
+        const card = await getCardById(input.id);
+        
+        if (!card || card.userId !== ctx.user.id) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "カードが見つかりません" });
+        }
+        
+        // 閲覧回数を増加
+        await incrementCardViewCount(input.id);
+        
+        return card;
+      }),
+
+    // カードを作成
+    create: protectedProcedure
+      .input(z.object({
+        cardType: z.string(),
+        title: z.string(),
+        frontImageUrl: z.string().optional(),
+        frontImageKey: z.string().optional(),
+        backImageUrl: z.string().optional(),
+        backImageKey: z.string().optional(),
+        extractedData: z.record(z.string(), z.any()).optional(),
+        manualData: z.record(z.string(), z.string()).optional(),
+        tags: z.array(z.string()).optional(),
+        notes: z.string().optional(),
+        lineMessageId: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { createCard } = await import("./db");
+        
+        const card = await createCard({
+          userId: ctx.user.id,
+          cardType: input.cardType,
+          title: input.title,
+          frontImageUrl: input.frontImageUrl,
+          frontImageKey: input.frontImageKey,
+          backImageUrl: input.backImageUrl,
+          backImageKey: input.backImageKey,
+          extractedData: input.extractedData,
+          manualData: input.manualData,
+          tags: input.tags,
+          notes: input.notes,
+          lineMessageId: input.lineMessageId,
+          ocrStatus: input.extractedData ? "completed" : "pending",
+        });
+        
+        return card;
+      }),
+
+    // カードを更新
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        title: z.string().optional(),
+        extractedData: z.record(z.string(), z.any()).optional(),
+        manualData: z.record(z.string(), z.string()).optional(),
+        tags: z.array(z.string()).optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { getCardById, updateCard } = await import("./db");
+        
+        const card = await getCardById(input.id);
+        if (!card || card.userId !== ctx.user.id) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "カードが見つかりません" });
+        }
+        
+        const { id, ...updates } = input;
+        return updateCard(id, updates);
+      }),
+
+    // カードを削除
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const { getCardById, deleteCard } = await import("./db");
+        
+        const card = await getCardById(input.id);
+        if (!card || card.userId !== ctx.user.id) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "カードが見つかりません" });
+        }
+        
+        await deleteCard(input.id);
+        return { success: true };
+      }),
+
+    // カードを検索
+    search: protectedProcedure
+      .input(z.object({
+        query: z.string(),
+        cardType: z.string().optional(),
+        limit: z.number().optional(),
+      }))
+      .query(async ({ ctx, input }) => {
+        const { searchCards } = await import("./db");
+        return searchCards(ctx.user.id, input.query, {
+          cardType: input.cardType,
+          limit: input.limit,
+        });
+      }),
+
+    // お気に入り切り替え
+    toggleFavorite: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const { getCardById, toggleCardFavorite } = await import("./db");
+        
+        const card = await getCardById(input.id);
+        if (!card || card.userId !== ctx.user.id) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "カードが見つかりません" });
+        }
+        
+        return toggleCardFavorite(input.id);
+      }),
+
+    // アーカイブ切り替え
+    toggleArchive: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const { getCardById, toggleCardArchive } = await import("./db");
+        
+        const card = await getCardById(input.id);
+        if (!card || card.userId !== ctx.user.id) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "カードが見つかりません" });
+        }
+        
+        return toggleCardArchive(input.id);
+      }),
+
+    // カードタイプ別統計を取得
+    getStats: protectedProcedure.query(async ({ ctx }) => {
+      const { getCardStatsByUserId } = await import("./db");
+      return getCardStatsByUserId(ctx.user.id);
+    }),
+
+    // カードタイプ一覧を取得
+    getCardTypes: protectedProcedure.query(async () => {
+      const { cardTypes } = await import("../drizzle/schema");
+      return cardTypes;
+    }),
+
+    // 画像をアップロード
+    uploadImage: protectedProcedure
+      .input(z.object({
+        imageData: z.string(), // base64エンコードされた画像データ
+        fileName: z.string(),
+        contentType: z.string(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { storagePut } = await import("./storage");
+        
+        // base64をBufferに変換
+        const buffer = Buffer.from(input.imageData, "base64");
+        
+        // S3にアップロード
+        const fileKey = `cards/${ctx.user.id}/${Date.now()}-${input.fileName}`;
+        const result = await storagePut(fileKey, buffer, input.contentType);
+        
+        return {
+          url: result.url,
+          key: fileKey,
+        };
+      }),
+
+    // OCR解析を実行
+    analyzeImage: protectedProcedure
+      .input(z.object({
+        imageUrl: z.string(),
+        cardType: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { analyzeCardImage } = await import("./services/cardOcrService");
+        return analyzeCardImage(input.imageUrl, input.cardType);
+      }),
+
+    // スキャン履歴を取得
+    getScanHistory: protectedProcedure
+      .input(z.object({
+        status: z.string().optional(),
+        limit: z.number().optional(),
+      }).optional())
+      .query(async ({ ctx, input }) => {
+        const { getCardScanHistoryByUserId } = await import("./db");
+        return getCardScanHistoryByUserId(ctx.user.id, input);
+      }),
+
+    // 名刺から連絡先を作成
+    createContact: protectedProcedure
+      .input(z.object({
+        cardId: z.number(),
+        name: z.string(),
+        nameKana: z.string().optional(),
+        company: z.string().optional(),
+        position: z.string().optional(),
+        department: z.string().optional(),
+        email: z.string().optional(),
+        phone: z.string().optional(),
+        mobile: z.string().optional(),
+        address: z.string().optional(),
+        website: z.string().optional(),
+        notes: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        relationship: z.string().optional(),
+        meetingContext: z.string().optional(),
+        meetingDate: z.date().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { getCardById, createCardContact } = await import("./db");
+        
+        // カードの所有者を確認
+        const card = await getCardById(input.cardId);
+        if (!card || card.userId !== ctx.user.id) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "カードが見つかりません" });
+        }
+        
+        return createCardContact({
+          userId: ctx.user.id,
+          ...input,
+        });
+      }),
+
+    // 連絡先一覧を取得
+    getContacts: protectedProcedure
+      .input(z.object({
+        limit: z.number().optional(),
+        offset: z.number().optional(),
+      }).optional())
+      .query(async ({ ctx, input }) => {
+        const { getCardContactsByUserId } = await import("./db");
+        return getCardContactsByUserId(ctx.user.id, input);
+      }),
+
+    // 連絡先を更新
+    updateContact: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        nameKana: z.string().optional(),
+        company: z.string().optional(),
+        position: z.string().optional(),
+        department: z.string().optional(),
+        email: z.string().optional(),
+        phone: z.string().optional(),
+        mobile: z.string().optional(),
+        address: z.string().optional(),
+        website: z.string().optional(),
+        notes: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        relationship: z.string().optional(),
+        meetingContext: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const { getCardContactById, updateCardContact } = await import("./db");
+        
+        const contact = await getCardContactById(input.id);
+        if (!contact || contact.userId !== ctx.user.id) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "連絡先が見つかりません" });
+        }
+        
+        const { id, ...updates } = input;
+        return updateCardContact(id, updates);
+      }),
+
+    // 連絡先を削除
+    deleteContact: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const { getCardContactById, deleteCardContact } = await import("./db");
+        
+        const contact = await getCardContactById(input.id);
+        if (!contact || contact.userId !== ctx.user.id) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "連絡先が見つかりません" });
+        }
+        
+        await deleteCardContact(input.id);
+        return { success: true };
+      }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;

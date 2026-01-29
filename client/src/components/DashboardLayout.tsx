@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/sidebar";
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Coins, Target, Link2, Cpu, Brain, MessageCircle, Sparkles } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Coins, Target, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -41,6 +41,7 @@ const menuItems = [
   { icon: MessageCircle, label: "LINE連携", path: "/line-link" },
   { icon: Brain, label: "学習した人格", path: "/learned-personality" },
   { icon: Sparkles, label: "育成", path: "/growth" },
+  { icon: CreditCard, label: "カード管理", path: "/cards" },
   { icon: Settings2, label: "AI API設定", path: "/ai-config" },
   { icon: Zap, label: "オーケストレーション", path: "/orchestration" },
   { icon: Crown, label: "プラン", path: "/plan" },
