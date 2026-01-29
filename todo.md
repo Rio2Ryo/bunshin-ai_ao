@@ -707,3 +707,14 @@
 - [x] テスト作成・実行
   - cards.test.ts（21テスト全てパス）
   - CRUD操作、権限チェック、検索、統計など
+
+## 画像生成ロジック変更（Clawdbot経由）
+- [x] 現在の画像生成ロジックを調査
+  - LINE webhookで画像生成リクエストを検出すると、generateImageDirectly()でGemini APIを直接呼び出している
+  - Clawdbot経由の応答生成は通常のテキストのみで、画像生成はバイパスされている
+- [x] Clawdbot経由の画像生成に変更
+  - generateTwinResponseViaClawdbot()内の画像生成バイパスを削除
+  - 画像生成リクエストもClawdbot経由で処理するように変更
+- [x] テストと動作確認
+  - imageGeneration.test.ts: 12テスト全てパス
+  - サーバー再起動完了

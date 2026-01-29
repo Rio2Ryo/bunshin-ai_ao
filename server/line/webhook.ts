@@ -151,31 +151,12 @@ async function generateTwinResponseViaClawdbot(
   const startTime = Date.now();
   console.log(`[LINE] Starting response generation for user: ${userId}`);
   
-  // 画像生成リクエストを検出
+  // 画像生成リクエストを検出（ログのみ、Clawdbotに任せる）
   const imageRequest = detectImageGenerationRequest(userMessage);
   if (imageRequest.isImageRequest) {
     console.log(`[LINE] Image generation request detected: ${imageRequest.prompt}`);
-    
-    // 分身AI側で直接画像を生成（Nano Banana Pro）
-    const imageResult = await generateImageDirectly(imageRequest.prompt, userId);
-    
-    if (imageResult.success && imageResult.imageUrl) {
-      // 画像生成成功時はテキストと画像を返す
-      return {
-        textContent: `「${imageRequest.prompt}」の画像を生成しました！`,
-        mediaContents: [{
-          type: "image",
-          content: imageResult.imageUrl,
-        }],
-        hasMedia: true,
-        rawResponse: `画像を生成しました: ${imageResult.imageUrl}`,
-        model: "gemini-2.0-flash-exp-image-generation",
-        apiSource: "gemini-direct",
-      };
-    } else {
-      // 画像生成失敗時はエラーメッセージを返す
-      return createTextOnlyResponse(`画像の生成に失敗しました。もう一度お試しください。`);
-    }
+    console.log(`[LINE] Delegating to Clawdbot for image generation`);
+    // 画像生成もClawdbot経由で処理する（下の通常フローで処理）
   }
   
   const db = await getDb();
