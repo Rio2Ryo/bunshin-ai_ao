@@ -5,7 +5,7 @@
 
 import type { Request, Response } from "express";
 import { getDb } from "../db";
-import { digitalTwins, chatSessions, chatMessages } from "../../drizzle/schema";
+import { digitalTwins, chatSessions, chatMessages, clawdbotConnections } from "../../drizzle/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
 import {
   verifyLineSignature,
@@ -165,7 +165,7 @@ async function generateTwinResponseViaClawdbot(
   }
   
   // 並列でデータを取得（高速化）
-  const [twinResult, sessionResult, agentIdResult, systemPromptResult] = await Promise.all([
+  const [twinResult, sessionResult, agentIdResult, systemPromptResult, clawdbotConnectionResult] = await Promise.all([
     // 1. 分身AIの情報を取得
     db.select().from(digitalTwins).where(eq(digitalTwins.id, twinId)).limit(1),
     // 2. LINE用のチャットセッションを検索
@@ -180,6 +180,8 @@ async function generateTwinResponseViaClawdbot(
     getOrCreateAgentId(userId),
     // 4. システムプロンプトを生成
     generateSystemPromptFromWaveform(userId),
+    // 5. ユーザーのClawdbot接続設定を取得（DB優先）
+    db.select().from(clawdbotConnections).where(eq(clawdbotConnections.userId, userId)).limit(1),
   ]);
   
   const dbTime = Date.now() - startTime;
@@ -188,6 +190,7 @@ async function generateTwinResponseViaClawdbot(
   const [twin] = twinResult;
   const [lineSession] = sessionResult;
   const agentId = agentIdResult;
+  const [clawdbotConnection] = clawdbotConnectionResult;
   
   if (!twin) {
     return createTextOnlyResponse("分身AIが見つかりません。Webアプリで分身AIを作成してください。");
@@ -216,6 +219,7 @@ async function generateTwinResponseViaClawdbot(
   
   try {
     // Clawdbot経由で応答を生成（ユーザー固有のAgent IDを使用）
+    // Priority: User's DB settings > ENV (system-wide default)
     const result = await sendToClawdbot(
       [
         { role: "system", content: systemPrompt },
@@ -227,6 +231,9 @@ async function generateTwinResponseViaClawdbot(
         agentId,
         // LINEユーザーIDをセッションキーとして使用（会話の継続性を保持）
         sessionKey: `line_${lineUserId}`,
+        // ユーザーのDB設定を優先、なければENVをフォールバック
+        gatewayUrl: clawdbotConnection?.gatewayUrl || undefined,
+        authToken: clawdbotConnection?.authToken || undefined,
       }
     );
     
@@ -562,7 +569,13 @@ async function handleMessageEvent(event: LineWebhookEvent) {
   
   console.log("[LINE] Message event from:", lineUserId, event.message.type);
   console.log("[LINE] Clawdbot enabled:", isClawdbotEnabled());
-  console.log("[LINE] Clawdbot URL:", process.env.CLAWDBOT_GATEWAY_URL || "not set");
+  console.log("[LINE] Clawdbot URL from ENV:", process.env.CLAWDBOT_GATEWAY_URL || "not set");
+  console.log("[LINE] Clawdbot Auth Token set:", !!process.env.CLAWDBOT_AUTH_TOKEN);
+  
+  // Import ENV directly to check
+  const { ENV } = await import("../_core/env");
+  console.log("[LINE] ENV.clawdbotGatewayUrl:", ENV.clawdbotGatewayUrl);
+  console.log("[LINE] ENV.clawdbotAuthToken set:", !!ENV.clawdbotAuthToken);
   
   // ユーザーを検索
   console.log("[LINE] Searching for user with lineUserId:", lineUserId);

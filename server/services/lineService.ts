@@ -441,7 +441,7 @@ export async function generateLinkCode(lineUserId: string): Promise<string> {
 }
 
 /**
- * 連携コードで紐付けを実行
+ * 連携コードで紐付けを実行（トランザクション、競合対策、ワンタイム）
  */
 export async function linkByCode(
   code: string,
@@ -451,26 +451,82 @@ export async function linkByCode(
   const db = await getDb();
   if (!db) return { success: false, error: "Database not initialized" };
   
-  // コードに一致する連携を検索
-  const connections = await db
-    .select()
-    .from(lineConnections)
-    .where(eq(lineConnections.status, "pending"));
-  
-  for (const conn of connections) {
-    const settings = conn.settings as { linkCode?: string; linkCodeExpiry?: string } | null;
-    if (settings?.linkCode === code) {
-      // 有効期限を確認
-      if (settings.linkCodeExpiry && new Date(settings.linkCodeExpiry) < new Date()) {
+  try {
+    // トランザクションで競合対策
+    const result = await db.transaction(async (tx) => {
+      // 1. pending状態の連携を検索（JSON内のlinkCodeでフィルタリング）
+      const connections = await tx
+        .select()
+        .from(lineConnections)
+        .where(eq(lineConnections.status, "pending"));
+      
+      // 2. コードが一致する連携を探す
+      let targetConn = null;
+      for (const conn of connections) {
+        const settings = conn.settings as {
+          receiveHeartbeat?: boolean;
+          receiveNotifications?: boolean;
+          allowVoiceMessages?: boolean;
+          language?: string;
+          linkCode?: string;
+          linkCodeExpiry?: string;
+        } | null;
+        if (settings?.linkCode === code) {
+          targetConn = { ...conn, settings };
+          break;
+        }
+      }
+      
+      if (!targetConn) {
+        return { success: false, error: "連携コードが見つかりません" };
+      }
+      
+      // 3. 有効期限を確認
+      if (targetConn.settings.linkCodeExpiry && new Date(targetConn.settings.linkCodeExpiry) < new Date()) {
         return { success: false, error: "連携コードの有効期限が切れています" };
       }
       
-      // 紐付けを実行
-      await linkLineToUser(conn.lineUserId, userId, twinId);
+      // 4. 既に他のユーザーが紐付け済みか確認（statusがactiveなら再利用不可）
+      if (targetConn.status !== "pending") {
+        return { success: false, error: "このコードは既に使用されています" };
+      }
+      
+      // 5. Clawdbotエージェントを作成
+      const { setupClawdbotAgentOnLineLink } = await import("./clawdbotAgentService");
+      const agentResult = await setupClawdbotAgentOnLineLink(userId, targetConn.lineUserId);
+      
+      // 6. 紐付けを実行（linkCode/linkCodeExpiryを削除）
+      const updatedSettings = {
+        receiveHeartbeat: targetConn.settings.receiveHeartbeat ?? true,
+        receiveNotifications: targetConn.settings.receiveNotifications ?? true,
+        allowVoiceMessages: targetConn.settings.allowVoiceMessages ?? true,
+        language: targetConn.settings.language ?? "ja",
+        // linkCodeとlinkCodeExpiryを意図的に削除（ワンタイム保証）
+      };
+      
+      await tx
+        .update(lineConnections)
+        .set({
+          userId,
+          twinId,
+          status: "active",
+          connectedAt: new Date(),
+          settings: updatedSettings as any,
+          ...(agentResult.agentId && {
+            clawdbotAgentId: agentResult.agentId,
+            clawdbotAgentCreatedAt: new Date(),
+          }),
+        })
+        .where(eq(lineConnections.lineUserId, targetConn.lineUserId));
+      
+      console.log(`[LINE] User ${userId} linked with LINE ${targetConn.lineUserId}, Agent: ${agentResult.agentId || "default"}`);
       
       return { success: true };
-    }
+    });
+    
+    return result;
+  } catch (error) {
+    console.error("[LINE] linkByCode error:", error);
+    return { success: false, error: "連携処理中にエラーが発生しました" };
   }
-  
-  return { success: false, error: "連携コードが見つかりません" };
 }

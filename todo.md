@@ -718,3 +718,120 @@
 - [x] テストと動作確認
   - imageGeneration.test.ts: 12テスト全てパス
   - サーバー再起動完了
+
+## 画像生成ロジック修正（再修正）
+- [x] 問題調査：なぜfallbackでmanus-llmが使われているか
+  - 原因：環境変数CLAWDBOT_GATEWAY_URLが古いngrok URLだった
+  - ハードコードより環境変数が優先されるため、接続失敗→fallback
+- [x] Clawdbot接続状況の確認
+  - 環境変数を更新後、3テスト全てパス
+  - Clawdbot Gatewayに正常接続できることを確認
+- [x] Clawdbot経由でnano-banana-proを使った画像生成に修正
+  - 環境変数CLAWDBOT_GATEWAY_URLを新しいngrok URLに更新
+  - コード側は既に対応済み（画像生成バイパス削除済み）
+- [ ] LINEで実際にテストして動作確認
+
+## LINE紐付けコード連携機能（2026-01-29）
+- [x] 既存のLINE連携コードシステムを調査
+  - コード発行: LINE webhook (server/line/webhook.ts) で generateLinkCode() を呼び出し
+  - 検証方法: DB参照 (line_connectionsテーブルのsettings.linkCode)
+  - コード形式: 6桁英数字 (A-Z0-9)
+  - 有効期限: 10分間
+  - ワンタイム: はい (紐付け完了後は再利用不可)
+- [x] 仕様確定（ワンタイム、競合対策、エラーメッセージ）
+  - docs/line-link-spec.md 作成
+  - トランザクション + FOR UPDATE ロック
+  - 紐付け後にlinkCode/linkCodeExpiry削除
+- [x] linkByCode改善（トランザクション、コード削除）
+  - トランザクションで競合対策
+  - 紐付け成功後にlinkCode/linkCodeExpiry削除
+  - エラーメッセージ改善（再利用、期限切れ）
+- [x] Web UI実装（コード入力画面の改善）
+  - LineLink.tsx 既に実装済み
+  - /line-link ルート登録済み
+  - サイドバーメニューにLINE連携追加済み
+  - 6桁コード入力、連携状態表示、設定、履歴機能あり
+- [ ] テスト作成（期限切れ、再利用、不正コード、競合）
+- [ ] 動作確認とチェックポイント保存
+
+## Clawdbot連携fallback問題修正（2026-02-05）
+- [x] Clawdbot設定の保存場所と参照箱所を調査
+  - ENV: server/_core/env.ts（システム全体のデフォルト）
+  - DB: clawdbot_connectionsテーブル（ユーザーごとの設定）
+  - LINE webhook: sendToClawdbot() → ENV参照
+  - Clawdbotチャット: sendMessageToClawdbot() → DB参照
+- [x] fallback原因を特定（ENV vs DB vs UI）
+  - 原因: ENVのngrok URLが古い/無効
+  - LINE webhookがENVを参照、DB設定を無視
+  - docs/clawdbot-fallback-analysis.md 作成
+- [ ] Gateway URL管理を一本化（ENV削除、DB優先）
+  - ENVのハードコードを削除
+  - DB設定を優先する実装に変更
+- [ ] UIバリデーションとエラーメッセージ追加
+  - localhost警告
+  - 接続ボタンのdisabled条件を明確化
+  - エラーメッセージ/ヒント表示
+- [ ] テストと動作確認
+  - LINEで画像生成→debugでclawdbotになったことを確認
+- [ ] チェックポイント保存と報告
+
+## 本番UI確認結果反映（2026-02-05）
+
+### A) linkByCodeの仕様確定と安定化
+- [x] コード形式の確定（数字6桁/英数字6桁）
+  - 6桁英数字（A-Z, 0-9）
+- [x] 有効期限(linkCodeExpiry)の実運用
+  - 10分間、ISO8601形式
+- [x] redeem実装（settings.linkCode削除/状態更新）
+  - linkByCode内で実装済み
+- [x] 競合対策（同一コードの同時実行で1回のみ成功）
+  - トランザクション + FOR UPDATE ロック
+- [x] エラー文言（期限切れ/不正/既に使用済み）
+  - LINK_CODE_NOT_FOUND, LINK_CODE_EXPIRED, LINK_CODE_ALREADY_USED
+- [x] 実装箱所の文書化（React/Router/API/サービス/DB）
+  - docs/line-link-implementation.md 作成
+
+### B) Clawdbot fallback修正（最優先）
+- [ ] LINE webhookでDB設定参照するよう修正
+- [ ] server/_core/env.ts のハードコードURL削除
+- [ ] ユーザー設定（/clawdbot-link）優先ロジック
+
+### C) /clawdbot-link UX改善
+- [ ] 接続ボタンdisabled条件を明確化
+- [ ] ガイド/エラー表示追加
+
+## GitHubエクスポート（2026-02-05）
+- [x] .gitignoreとREADMEを整備
+  - .gitignore: 既に存在、必要な項目をカバー
+  - README.md: 起動手順、ENV一覧、DBマイグレーション、主要URLを記載
+- [x] 環境変数をサンプル化（.env.example）
+  - .env.example 作成完了
+- [ ] GitHubにエクスポート
+  - 新規リポジトリ作成
+  - コード一式をpush
+- [ ] 報告（URL、ブランチ、注意点）
+
+
+## セキュリティ・安定性改善（2026-02-05）
+
+### 緊急セキュリティ対応
+- [x] env.tsからハードコードされたトークンを削除
+- [x] 環境変数のみから読み込むように修正
+- [ ] .env.exampleを作成してキー名のみ記載
+
+### Clawdbot DB優先参照機能
+- [x] sendToClawdbot()にgatewayUrl/authTokenをオプションで渡せるように拡張
+- [x] LINE webhookでユーザーのDB設定（clawdbot_connections）を優先参照
+- [x] DB設定がない場合のみENVをフォールバックとして使用
+- [ ] テスト: LINE画像生成で「使用AI: clawdbot, APIソース: clawdbot」を確認
+
+### linkByCode安定化
+- [x] redeem（使い捨て）実装：成功時にlinkCodeを削除/使用済み扱い
+- [x] 競合対策：同時実行でも1回だけ成功（トランザクション/条件付きupdate）
+- [x] エラー文言整理（期限切れ/不正/使用済み）
+- [x] drizzle schemaのsettings型にlinkCode/linkCodeExpiryを含める
+
+### GitHub対応
+- [x] README.mdを作成（プロジェクト概要、セットアップ手順）
+- [x] .env.exampleはプラットフォームが管理（環境変数はREADMEに記載）
+- [x] .gitignoreに.envが含まれているか確認

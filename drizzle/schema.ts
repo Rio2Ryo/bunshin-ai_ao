@@ -1052,6 +1052,8 @@ export const lineConnections = mysqlTable("line_connections", {
     receiveNotifications: boolean; // 通知を受信
     allowVoiceMessages: boolean; // 音声メッセージを許可
     language: string; // 言語設定
+    linkCode?: string; // 連携コード（pending状態のみ、使用後は削除）
+    linkCodeExpiry?: string; // 連携コード有効期限（ISO 8601形式）
   }>(),
   // Clawdbotエージェント設定
   clawdbotAgentId: varchar("clawdbotAgentId", { length: 255 }), // ユーザー固有のClawdbotエージェントID (bunshin_user_{userId})

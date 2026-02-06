@@ -39,6 +39,7 @@ export function isClawdbotEnabled(): boolean {
 
 /**
  * Clawdbot Gateway経由でチャット応答を生成
+ * Priority: options (user's DB settings) > ENV (system-wide default)
  */
 export async function sendToClawdbot(
   messages: ClawdbotMessage[],
@@ -46,6 +47,8 @@ export async function sendToClawdbot(
     agentId?: string;
     sessionKey?: string;
     stream?: boolean;
+    gatewayUrl?: string;
+    authToken?: string;
   }
 ): Promise<{
   success: boolean;
@@ -54,21 +57,24 @@ export async function sendToClawdbot(
   rawResponse?: ClawdbotResponse;
   model?: string;
 }> {
-  if (!isClawdbotEnabled()) {
+  // Priority: options (user's DB settings) > ENV (system-wide default)
+  const gatewayUrl = options?.gatewayUrl || ENV.clawdbotGatewayUrl;
+  const authToken = options?.authToken || ENV.clawdbotAuthToken;
+  const agentId = options?.agentId || ENV.clawdbotAgentId;
+
+  if (!gatewayUrl || !authToken) {
     return {
       success: false,
-      error: "Clawdbot Gateway is not configured",
+      error: "Clawdbot Gateway is not configured (missing gatewayUrl or authToken)",
     };
   }
-
-  const agentId = options?.agentId || ENV.clawdbotAgentId;
   
   try {
-    const response = await fetch(`${ENV.clawdbotGatewayUrl}/v1/chat/completions`, {
+    const response = await fetch(`${gatewayUrl}/v1/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${ENV.clawdbotAuthToken}`,
+        "Authorization": `Bearer ${authToken}`,
         "x-clawdbot-agent-id": agentId,
         "ngrok-skip-browser-warning": "true",
         ...(options?.sessionKey && { "x-clawdbot-session-key": options.sessionKey }),
@@ -111,12 +117,19 @@ export async function sendToClawdbot(
 /**
  * Clawdbot Gatewayの接続テスト
  */
-export async function testClawdbotConnection(): Promise<{
+export async function testClawdbotConnection(
+  gatewayUrl?: string,
+  authToken?: string
+): Promise<{
   success: boolean;
   message: string;
   responseTimeMs?: number;
 }> {
-  if (!isClawdbotEnabled()) {
+  // If custom URL/token provided, use them; otherwise use ENV
+  const url = gatewayUrl || ENV.clawdbotGatewayUrl;
+  const token = authToken || ENV.clawdbotAuthToken;
+
+  if (!url || !token) {
     return {
       success: false,
       message: "Clawdbot Gateway is not configured",
@@ -126,9 +139,10 @@ export async function testClawdbotConnection(): Promise<{
   const startTime = Date.now();
 
   try {
-    const result = await sendToClawdbot([
-      { role: "user", content: "ping" },
-    ]);
+    const result = await sendToClawdbot(
+      [{ role: "user", content: "ping" }],
+      { gatewayUrl: url, authToken: token }
+    );
 
     const responseTimeMs = Date.now() - startTime;
 
