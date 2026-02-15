@@ -25,6 +25,7 @@ export default function MyTwin() {
   const upsertMutation = trpc.myTwin.upsert.useMutation();
   const updateMutation = trpc.myTwin.update.useMutation();
   const updatePublicMutation = trpc.myTwin.updatePublicSettings.useMutation();
+  const resetMutation = trpc.myTwin.reset.useMutation();
   const runFullAnalysisMutation = trpc.myTwin.runFullAnalysis.useMutation();
   const generateSelfWaveformMutation = trpc.myTwin.generateSelfWaveform.useMutation();
   const evaluateByAllTwinsMutation = trpc.myTwin.evaluateByAllTwins.useMutation();
@@ -172,6 +173,19 @@ export default function MyTwin() {
 
   const isSaving = upsertMutation.isPending || updateMutation.isPending;
 
+  const handleResetAndCreate = async () => {
+    try {
+      await resetMutation.mutateAsync();
+      toast.success("分身AIを初期化しました。新しく作成できます");
+      setIsEditing(true);
+      setName("");
+      setRawInput("");
+      refetch();
+    } catch (error: any) {
+      toast.error(error?.message || "初期化に失敗しました");
+    }
+  };
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -265,7 +279,28 @@ export default function MyTwin() {
           </Card>
         ) : twin ? (
           // 分身AIの表示
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="space-y-4">
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                onClick={handleResetAndCreate}
+                disabled={resetMutation.isPending}
+              >
+                {resetMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    初期化中...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    新規作成（初期化）
+                  </>
+                )}
+              </Button>
+            </div>
+
+            <div className="grid gap-6 lg:grid-cols-2">
             {/* 基本情報 */}
             <Card>
               <CardHeader>
@@ -700,6 +735,7 @@ export default function MyTwin() {
                 )}
               </CardContent>
             </Card>
+          </div>
           </div>
         ) : null}
       </div>

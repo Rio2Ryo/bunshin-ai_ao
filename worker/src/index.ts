@@ -94,6 +94,31 @@ async function getMyTwin(db: D1Database, userId: number) {
   };
 }
 
+async function upsertMyTwin(ctx: Context, input: { name: string; rawInput?: string | null }) {
+  await ensureSchema(ctx.env.DB);
+
+  const existing = await getMyTwin(ctx.env.DB, ctx.userId);
+
+  if (!existing) {
+    const res = await ctx.env.DB
+      .prepare(
+        `INSERT INTO twins (userId, name, rawInput, updatedAt) VALUES (?, ?, ?, datetime('now'))`
+      )
+      .bind(ctx.userId, input.name, input.rawInput ?? null)
+      .run();
+
+    const id = Number(res.meta.last_row_id);
+    return await ctx.env.DB.prepare(`SELECT * FROM twins WHERE id = ?`).bind(id).first();
+  }
+
+  await ctx.env.DB
+    .prepare(`UPDATE twins SET name = ?, rawInput = ?, updatedAt = datetime('now') WHERE id = ?`)
+    .bind(input.name, input.rawInput ?? null, existing.id)
+    .run();
+
+  return getMyTwin(ctx.env.DB, ctx.userId);
+}
+
 const appRouter = router({
   auth: router({
     me: publicProcedure.query(async () => null),
@@ -112,35 +137,7 @@ const appRouter = router({
           rawInput: z.string().optional().nullable(),
         })
       )
-      .mutation(async ({ ctx, input }) => {
-        await ensureSchema(ctx.env.DB);
-
-        const existing = await getMyTwin(ctx.env.DB, ctx.userId);
-
-        if (!existing) {
-          const res = await ctx.env.DB
-            .prepare(
-              `INSERT INTO twins (userId, name, rawInput, updatedAt) VALUES (?, ?, ?, datetime('now'))`
-            )
-            .bind(ctx.userId, input.name, input.rawInput ?? null)
-            .run();
-
-          const id = Number(res.meta.last_row_id);
-          return await ctx.env.DB
-            .prepare(`SELECT * FROM twins WHERE id = ?`)
-            .bind(id)
-            .first();
-        }
-
-        await ctx.env.DB
-          .prepare(
-            `UPDATE twins SET name = ?, rawInput = ?, updatedAt = datetime('now') WHERE id = ?`
-          )
-          .bind(input.name, input.rawInput ?? null, existing.id)
-          .run();
-
-        return getMyTwin(ctx.env.DB, ctx.userId);
-      }),
+      .mutation(async ({ ctx, input }) => upsertMyTwin(ctx, input)),
 
     update: publicProcedure
       .input(
@@ -149,7 +146,7 @@ const appRouter = router({
           rawInput: z.string().optional().nullable(),
         })
       )
-      .mutation(async (opts) => appRouter.createCaller(opts.ctx).myTwin.upsert(opts.input)),
+      .mutation(async ({ ctx, input }) => upsertMyTwin(ctx, input)),
 
     updatePublicSettings: publicProcedure
       .input(
@@ -177,6 +174,14 @@ const appRouter = router({
           .run();
 
         return getMyTwin(ctx.env.DB, ctx.userId);
+      }),
+
+    // Phase 1 helper: reset (delete) the current user's twin to allow recreating from scratch.
+    reset: publicProcedure
+      .mutation(async ({ ctx }) => {
+        await ensureSchema(ctx.env.DB);
+        await ctx.env.DB.prepare(`DELETE FROM twins WHERE userId = ?`).bind(ctx.userId).run();
+        return { ok: true };
       }),
 
     // Phase 1 stubs (keep UI from hard-crashing if clicked)
