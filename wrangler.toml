@@ -1,0 +1,11 @@
+name = "bunshin-ai-api"
+main = "worker/src/index.ts"
+compatibility_date = "2026-02-15"
+
+[vars]
+NODE_ENV = "production"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bunshin-ai"
+database_id = "2d1ebbfb-5c34-48be-a48e-bb0fac6c676d"
