@@ -9,8 +9,26 @@ type UseAuthOptions = {
 };
 
 export function useAuth(options?: UseAuthOptions) {
-  const { redirectOnUnauthenticated = false, redirectPath = getLoginUrl() } =
-    options ?? {};
+  // Phase 1 (Cloudflare MVP): allow running the UI without auth.
+  // Set VITE_PHASE1_NOAUTH=1 to enable.
+  const PHASE1_NOAUTH = (import.meta as any).env?.VITE_PHASE1_NOAUTH === "1";
+  if (PHASE1_NOAUTH) {
+    return {
+      user: {
+        openId: "demo",
+        name: "Demo",
+        email: null,
+        role: "admin",
+      } as any,
+      loading: false,
+      error: null,
+      isAuthenticated: true,
+      refresh: async () => undefined,
+      logout: async () => undefined,
+    };
+  }
+
+  const { redirectOnUnauthenticated = false, redirectPath = getLoginUrl() } = options ?? {};
   const utils = trpc.useUtils();
 
   const meQuery = trpc.auth.me.useQuery(undefined, {
