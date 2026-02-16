@@ -158,7 +158,7 @@ export async function generateImageWithGemini(
       };
     }
 
-    const result = await response.json();
+    const result: any = await response.json();
     console.log(`[GeminiImage] Response received`);
 
     // 応答から画像を抽出

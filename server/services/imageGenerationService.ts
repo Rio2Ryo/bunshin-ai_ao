@@ -203,7 +203,7 @@ async function generateWithFlux(
       };
     }
 
-    const data = await response.json();
+    const data: any = await response.json();
     
     // Fluxは非同期なので、結果をポーリング
     if (data.id) {
@@ -215,7 +215,7 @@ async function generateWithFlux(
       });
 
       if (resultResponse.ok) {
-        const resultData = await resultResponse.json();
+        const resultData: any = await resultResponse.json();
         if (resultData.status === "Ready" && resultData.result?.sample) {
           return {
             success: true,

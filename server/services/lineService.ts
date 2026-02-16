@@ -329,7 +329,7 @@ export async function getLineUserProfile(userId: string) {
     
     if (!response.ok) return null;
     
-    const data = await response.json();
+    const data: any = await response.json();
     return {
       userId: data.userId,
       displayName: data.displayName,

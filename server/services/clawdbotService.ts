@@ -147,7 +147,7 @@ export async function testClawdbotConnection(userId: number): Promise<{
     const responseTimeMs = Date.now() - startTime;
     
     if (response.ok) {
-      const data = await response.json();
+      const data: any = await response.json();
       
       // 接続成功
       await db
@@ -277,7 +277,7 @@ export async function sendMessageViaClawdbot(
     const responseTimeMs = Date.now() - startTime;
     
     if (response.ok) {
-      const data = await response.json();
+      const data: any = await response.json();
       const assistantMessage = data.choices?.[0]?.message?.content || "";
       const newSessionKey = data.session_key || sessionKey;
       
@@ -424,7 +424,7 @@ export async function getClawdbotModels(userId: number): Promise<{
     });
     
     if (response.ok) {
-      const data = await response.json();
+      const data: any = await response.json();
       const models = data.data?.map((m: { id: string }) => m.id) || [];
       return { success: true, models };
     } else {
