@@ -286,6 +286,30 @@ pnpm test --coverage
 - `server/line/linkByCode.test.ts` - LINE連携テスト
 - `server/clawdbot.test.ts` - Clawdbot接続テスト
 
+## Phase2 ゲート運用メモ（Cloudflare）
+
+`pnpm check` / `pnpm build` / `pnpm exec wrangler deploy --dry-run` の3ゲートを Phase2 の標準確認手順とする。
+
+### build warning（chunk size）の扱い
+
+- `(!) Some chunks are larger than 500 kB` は **警告** であり、単体ではリリースブロッカーではない。
+- ただし以下を満たす場合は改善タスクを切る：
+  - メインバンドル（`index-*.js`）が前回安定値から **+15%以上** 増加
+  - 体感初期表示劣化（LCP悪化・初回遅延）が確認される
+  - 同一警告が3回以上連続し、増加トレンドが続く
+
+### 監視ポイント
+
+- `pnpm build` 出力の `index-*.js` サイズ（gzip含む）
+- `wrangler deploy --dry-run` の binding 認識（特に `DB`）
+- `pnpm check` の再発有無（TS2339 / TS7006）
+
+### 対応トリガー時の優先順位
+
+1. ルート単位の遅延読込（dynamic import）
+2. 重い表示機能（図表・エディタ・可視化）の分割
+3. `rollupOptions.output.manualChunks` の導入
+
 ## トラブルシューティング
 
 ### データベース接続エラー
