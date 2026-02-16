@@ -10,10 +10,11 @@ export default function TwinDetail() {
   const [, params] = useRoute("/twins/:id");
   const twinId = Number(params?.id);
 
-  const { data: twin, isLoading } = trpc.myTwin.getPublicTwin.useQuery(
+  const { data: twinData, isLoading } = trpc.myTwin.getPublicTwin.useQuery(
     { twinId },
     { enabled: Number.isFinite(twinId) }
   );
+  const twin = twinData?.twin;
 
   if (isLoading) {
     return (

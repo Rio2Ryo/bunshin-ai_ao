@@ -38,8 +38,8 @@ async function buildDownloadUrl(
     method: "GET",
     headers: buildAuthHeaders(apiKey),
   });
-  const data: any = await response.json();
-  return data.url;
+  const parsed: any = await response.json();
+  return parsed.url;
 }
 
 function ensureTrailingSlash(value: string): string {
@@ -89,8 +89,8 @@ export async function storagePut(
       `Storage upload failed (${response.status} ${response.statusText}): ${message}`
     );
   }
-  const data: any = await response.json();
-  const url = data.url;
+  const parsed: any = await response.json();
+  const url = parsed.url;
   return { key, url };
 }
 

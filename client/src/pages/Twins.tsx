@@ -25,7 +25,6 @@ export default function MyTwin() {
   const upsertMutation = trpc.myTwin.upsert.useMutation();
   const updateMutation = trpc.myTwin.update.useMutation();
   const updatePublicMutation = trpc.myTwin.updatePublicSettings.useMutation();
-  const resetMutation = trpc.myTwin.reset.useMutation();
   const runFullAnalysisMutation = trpc.myTwin.runFullAnalysis.useMutation();
   const generateSelfWaveformMutation = trpc.myTwin.generateSelfWaveform.useMutation();
   const evaluateByAllTwinsMutation = trpc.myTwin.evaluateByAllTwins.useMutation();
@@ -173,17 +172,12 @@ export default function MyTwin() {
 
   const isSaving = upsertMutation.isPending || updateMutation.isPending;
 
-  const handleResetAndCreate = async () => {
-    try {
-      await resetMutation.mutateAsync();
-      toast.success("分身AIを初期化しました。新しく作成できます");
-      setIsEditing(true);
-      setName("");
-      setRawInput("");
-      refetch();
-    } catch (error: any) {
-      toast.error(error?.message || "初期化に失敗しました");
-    }
+  const handleResetAndCreate = () => {
+    // reset APIは現行routerにないため、編集画面へ誘導して再作成フローに寄せる
+    setIsEditing(true);
+    setName("");
+    setRawInput("");
+    toast.info("新規作成モードに切り替えました。保存すると上書き更新されます。");
   };
 
   return (
@@ -284,19 +278,9 @@ export default function MyTwin() {
               <Button
                 variant="outline"
                 onClick={handleResetAndCreate}
-                disabled={resetMutation.isPending}
               >
-                {resetMutation.isPending ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    初期化中...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="mr-2 h-4 w-4" />
-                    新規作成（初期化）
-                  </>
-                )}
+                <Sparkles className="mr-2 h-4 w-4" />
+                新規作成モード
               </Button>
             </div>
 
