@@ -466,10 +466,23 @@ CREATE TABLE IF NOT EXISTS ai_provider_settings (
 
 let schemaReady = false;
 
+/**
+ * Split multi-statement SQL into individual statements and run them via batch().
+ * D1's exec() can crash with metadata aggregation errors on large schemas,
+ * so we use prepare().run() for each statement via batch().
+ */
+function splitStatements(sql: string): string[] {
+  return sql
+    .split(";")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
 export async function ensureSchema(db: D1Database) {
   if (schemaReady) return;
-  // D1 exec supports multi-statement SQL
-  await db.exec(SCHEMA_SQL);
+  const stmts = splitStatements(SCHEMA_SQL);
+  // D1 batch() executes all prepared statements in a single round-trip
+  await db.batch(stmts.map((s) => db.prepare(s)));
   schemaReady = true;
 }
 
