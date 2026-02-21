@@ -791,13 +791,13 @@ function CardDetailDialog({
                 <div>
                   <h4 className="font-medium mb-2">抽出された情報</h4>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    {Object.entries(card.extractedData).map(([key, value]) => (
-                      value && (
+                    {Object.entries(card.extractedData as Record<string, string | null>).map(([key, value]) => (
+                      value ? (
                         <div key={key} className="flex flex-col p-2 bg-muted rounded">
                           <span className="text-xs text-muted-foreground">{key}</span>
                           <span className="font-medium">{String(value)}</span>
                         </div>
-                      )
+                      ) : null
                     ))}
                   </div>
                 </div>

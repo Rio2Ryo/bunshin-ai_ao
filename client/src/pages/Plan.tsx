@@ -87,7 +87,7 @@ export default function Plan() {
     );
   }
 
-  const currentPlan = stats.plan;
+  const currentPlan = stats.plan as keyof typeof planDetails;
   const PlanIcon = planDetails[currentPlan].icon;
 
   const getUsagePercent = (current: number, max: number) => {

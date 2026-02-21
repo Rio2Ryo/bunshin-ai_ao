@@ -309,7 +309,7 @@ export default function MatchingSession() {
                   <CardContent>
                     {result.strengths && result.strengths.length > 0 ? (
                       <ul className="space-y-2">
-                        {result.strengths.map((strength, i) => (
+                        {result.strengths.map((strength: string, i: number) => (
                           <li key={i} className="flex items-start gap-2">
                             <CheckCircle className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
                             <span className="text-sm">{strength}</span>
@@ -333,7 +333,7 @@ export default function MatchingSession() {
                   <CardContent>
                     {result.challenges && result.challenges.length > 0 ? (
                       <ul className="space-y-2">
-                        {result.challenges.map((challenge, i) => (
+                        {result.challenges.map((challenge: string, i: number) => (
                           <li key={i} className="flex items-start gap-2">
                             <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
                             <span className="text-sm">{challenge}</span>
@@ -357,7 +357,7 @@ export default function MatchingSession() {
                   <CardContent>
                     {result.recommendations && result.recommendations.length > 0 ? (
                       <ul className="space-y-2">
-                        {result.recommendations.map((rec, i) => (
+                        {result.recommendations.map((rec: string, i: number) => (
                           <li key={i} className="flex items-start gap-2">
                             <span className="h-5 w-5 rounded-full bg-primary/20 text-primary text-xs flex items-center justify-center flex-shrink-0">
                               {i + 1}

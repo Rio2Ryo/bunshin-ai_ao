@@ -4,8 +4,15 @@ compatibility_date = "2026-02-15"
 
 [vars]
 NODE_ENV = "production"
+# Secrets (set via `wrangler secret put`):
+# GEMINI_API_KEY, LINE_CHANNEL_SECRET, LINE_CHANNEL_ACCESS_TOKEN,
+# CLAWDBOT_AUTH_TOKEN, JWT_SECRET, STRIPE_SECRET_KEY
 
 [[d1_databases]]
 binding = "DB"
 database_name = "bunshin-ai"
 database_id = "2d1ebbfb-5c34-48be-a48e-bb0fac6c676d"
+
+[[r2_buckets]]
+binding = "ASSETS"
+bucket_name = "bunshin-ai-assets"

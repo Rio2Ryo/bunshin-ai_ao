@@ -209,7 +209,7 @@ export default function AdminAIProvider() {
               <CardContent className="space-y-4">
                 {(Object.entries(FEATURES) as [Feature, typeof FEATURES[Feature]][]).map(([key, feature]) => {
                   const Icon = feature.icon;
-                  const currentProvider = settings?.[key]?.provider || "manus";
+                  const currentProvider = settings?.find((s: any) => s.feature === key)?.provider || "manus";
 
                   return (
                     <div key={key} className="flex items-center justify-between p-4 bg-gray-900/50 rounded-lg">
