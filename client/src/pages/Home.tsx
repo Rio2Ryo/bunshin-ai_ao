@@ -1,6 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { getLoginUrl } from "@/const";
 import { Link } from "wouter";
 import { Bot, Users, Zap, MessageSquare, BarChart3, Settings2 } from "lucide-react";
 
@@ -24,9 +23,9 @@ export default function Home() {
                 <Button>ダッシュボード</Button>
               </Link>
             ) : (
-              <a href="/login">
+              <Link href="/login">
                 <Button>ログイン</Button>
-              </a>
+              </Link>
             )}
           </nav>
         </div>
@@ -154,11 +153,11 @@ export default function Home() {
                 </Button>
               </Link>
             ) : (
-              <a href="/login">
+              <Link href="/register">
                 <Button size="lg" className="glow-primary">
                   無料で始める
                 </Button>
-              </a>
+              </Link>
             )}
           </div>
         </div>
@@ -173,7 +172,7 @@ export default function Home() {
               <span className="font-semibold">分身AI</span>
             </div>
             <p className="text-sm text-muted-foreground">
-              © 2025 分身AI. All rights reserved.
+              © 2025-2026 分身AI. All rights reserved.
             </p>
           </div>
         </div>

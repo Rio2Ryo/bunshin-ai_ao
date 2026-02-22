@@ -36,9 +36,14 @@ export default function Onboarding() {
   const completeMutation = trpc.onboarding.complete.useMutation();
   const utils = trpc.useUtils();
 
-  // Redirect if already completed
+  // Redirect if not logged in or already completed
   useEffect(() => {
-    if (!meLoading && me && (me as any).onboardingCompleted === 1) {
+    if (meLoading) return;
+    if (!me) {
+      navigate("/login");
+      return;
+    }
+    if ((me as any).onboardingCompleted === 1) {
       navigate("/dashboard");
     }
   }, [me, meLoading, navigate]);

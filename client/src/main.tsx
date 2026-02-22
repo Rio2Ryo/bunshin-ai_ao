@@ -4,13 +4,10 @@ import { httpBatchLink } from "@trpc/client";
 import { createRoot } from "react-dom/client";
 import superjson from "superjson";
 import App from "./App";
-// (auth disabled in Phase 1)
 import "./index.css";
 
 const queryClient = new QueryClient();
 
-// Phase 1 (Cloudflare MVP): auth is disabled.
-// Keep logging API errors, but DO NOT redirect to login on 401.
 queryClient.getQueryCache().subscribe(event => {
   if (event.type === "updated" && event.action.type === "error") {
     const error = event.query.state.error;

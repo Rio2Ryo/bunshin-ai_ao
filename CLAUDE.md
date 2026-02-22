@@ -50,13 +50,11 @@ point_redemptions, point_settings, twin_skill_levels, twin_milestones,
 ai_provider_settings
 
 ## Deployment Commands
-- Worker: `CLOUDFLARE_API_TOKEN=wgB-VVtf_DgceGCy61enSNIlzXXdbX7yiYoysX68 npx wrangler deploy --config wrangler.toml`
-- Client: `npx vite build && CLOUDFLARE_API_TOKEN=wgB-VVtf_DgceGCy61enSNIlzXXdbX7yiYoysX68 npx wrangler pages deploy dist/public --project-name bunshin-ai`
+- Worker: `CLOUDFLARE_API_TOKEN=$CF_TOKEN npx wrangler deploy --config wrangler.toml`
+- Client: `npx vite build && CLOUDFLARE_API_TOKEN=$CF_TOKEN npx wrangler pages deploy dist/public --project-name bunshin-ai`
 - Tests: `npx vitest run --config worker/vitest.config.ts` (requires `wrangler dev` running on :8787)
-- Secrets: `echo "value" | CLOUDFLARE_API_TOKEN=... npx wrangler secret put KEY --config wrangler.toml`
-
-## Cloudflare API Token
-wgB-VVtf_DgceGCy61enSNIlzXXdbX7yiYoysX68
+- Secrets: `echo "value" | CLOUDFLARE_API_TOKEN=$CF_TOKEN npx wrangler secret put KEY --config wrangler.toml`
+- CF_TOKEN is stored in `.dev.vars` (gitignored) or set as environment variable
 
 ## Test Status (as of 2026-02-22)
 - Worker integration: 94/94 passed (includes auth tests)
