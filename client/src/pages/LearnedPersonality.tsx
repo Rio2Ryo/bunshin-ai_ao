@@ -221,27 +221,32 @@ export default function LearnedPersonalityPage() {
     setEditedTraits({
       ...editedTraits,
       emotionalTriggers: {
+        positive: [],
+        negative: [],
         ...editedTraits.emotionalTriggers,
         [type]: items,
       },
     });
   };
   
+  const updateLearnedTraitsMutation = trpc.clawdbot.updateLearnedTraits.useMutation({
+    onSuccess: () => {
+      toast.success("変更を保存しました");
+      setHasChanges(false);
+    },
+    onError: () => {
+      toast.error("保存に失敗しました");
+    },
+    onSettled: () => {
+      setIsSaving(false);
+    },
+  });
+
   // 変更を保存
   const handleSave = async () => {
     if (!editedTraits) return;
-    
     setIsSaving(true);
-    try {
-      // TODO: バックエンドに保存APIを追加
-      // 現時点では分身AIのpersonalityフィールドに反映される
-      toast.success("変更を保存しました（次回の分析時に反映されます）");
-      setHasChanges(false);
-    } catch (error) {
-      toast.error("保存に失敗しました");
-    } finally {
-      setIsSaving(false);
-    }
+    updateLearnedTraitsMutation.mutate({ learnedTraits: editedTraits });
   };
   
   // 変更を破棄
@@ -511,15 +516,15 @@ export default function LearnedPersonalityPage() {
                 <EditableTagList
                   title="喜ぶこと"
                   icon={<Heart className="w-4 h-4 text-green-500" />}
-                  items={editedTraits.emotionalTriggers.positive}
+                  items={editedTraits.emotionalTriggers?.positive ?? []}
                   colorClass="bg-green-100 dark:bg-green-900/30"
                   onUpdate={(items) => updateEmotionalTrigger("positive", items)}
                 />
-                
+
                 <EditableTagList
                   title="怒ること・悲しむこと"
                   icon={<ThumbsDown className="w-4 h-4 text-red-500" />}
-                  items={editedTraits.emotionalTriggers.negative}
+                  items={editedTraits.emotionalTriggers?.negative ?? []}
                   colorClass="bg-red-100 dark:bg-red-900/30"
                   onUpdate={(items) => updateEmotionalTrigger("negative", items)}
                 />

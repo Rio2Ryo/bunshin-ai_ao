@@ -24,7 +24,7 @@ export default function Home() {
                 <Button>ダッシュボード</Button>
               </Link>
             ) : (
-              <a href={getLoginUrl()}>
+              <a href="/login">
                 <Button>ログイン</Button>
               </a>
             )}
@@ -55,7 +55,7 @@ export default function Home() {
                   </Button>
                 </Link>
               ) : (
-                <a href={getLoginUrl()}>
+                <a href="/login">
                   <Button size="lg" className="glow-primary">
                     無料で始める
                   </Button>
@@ -154,7 +154,7 @@ export default function Home() {
                 </Button>
               </Link>
             ) : (
-              <a href={getLoginUrl()}>
+              <a href="/login">
                 <Button size="lg" className="glow-primary">
                   無料で始める
                 </Button>

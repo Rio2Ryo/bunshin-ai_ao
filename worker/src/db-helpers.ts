@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   openId TEXT NOT NULL UNIQUE,
   name TEXT,
-  email TEXT,
+  email TEXT UNIQUE,
+  passwordHash TEXT,
   loginMethod TEXT,
   role TEXT NOT NULL DEFAULT 'user',
   plan TEXT NOT NULL DEFAULT 'free',
@@ -464,6 +465,13 @@ CREATE TABLE IF NOT EXISTS ai_provider_settings (
 );
 `;
 
+// Migrations to run after schema creation (ALTER TABLE etc.)
+const MIGRATIONS_SQL = `
+ALTER TABLE users ADD COLUMN passwordHash TEXT;
+ALTER TABLE users ADD COLUMN onboardingCompleted INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE chat_sessions ADD COLUMN mode TEXT;
+`;
+
 let schemaReady = false;
 
 /**
@@ -483,6 +491,17 @@ export async function ensureSchema(db: D1Database) {
   const stmts = splitStatements(SCHEMA_SQL);
   // D1 batch() executes all prepared statements in a single round-trip
   await db.batch(stmts.map((s) => db.prepare(s)));
+
+  // Run migrations (ignore errors for already-applied migrations)
+  const migrations = splitStatements(MIGRATIONS_SQL);
+  for (const m of migrations) {
+    try {
+      await db.prepare(m).run();
+    } catch {
+      // Column already exists or migration already applied
+    }
+  }
+
   schemaReady = true;
 }
 

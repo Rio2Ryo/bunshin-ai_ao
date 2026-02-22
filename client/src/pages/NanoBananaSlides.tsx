@@ -47,9 +47,12 @@ export default function NanoBananaSlides() {
 
   const exportPptxMutation = trpc.matching.exportPptx.useMutation({
     onSuccess: (data) => {
-      // Download the PPTX file
-      window.open(data.url, "_blank");
-      toast.success("PPTXファイルをダウンロードしました");
+      if (data.url) {
+        window.open(data.url, "_blank");
+        toast.success("PPTXファイルをダウンロードしました");
+      } else {
+        toast.info("PPTXエクスポートは現在準備中です（Phase 2で実装予定）");
+      }
     },
     onError: () => {
       toast.error("PPTXの生成に失敗しました");

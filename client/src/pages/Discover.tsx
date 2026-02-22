@@ -58,13 +58,13 @@ export default function Discover() {
     sendRequestMutation.mutate({ friendCode });
   };
 
-  const handleStartMatching = async (twinId: number, theme: string) => {
+  const handleStartMatching = async (userId: number, theme: string) => {
     if (!myTwin) {
       toast.error("まず自分の分身AIを作成してください");
       return;
     }
     createMatchingMutation.mutate({
-      friendId: twinId,
+      friendId: userId,
       theme,
     });
   };
@@ -211,8 +211,8 @@ export default function Discover() {
                       className="flex-1 bg-cyan-600 hover:bg-cyan-700"
                       onClick={() => {
                         const theme = prompt("対話テーマを入力してください", "ビジネス協業の可能性");
-                        if (theme) {
-                          handleStartMatching(selectedTwin.twin.id, theme);
+                        if (theme && selectedTwin.user?.id) {
+                          handleStartMatching(selectedTwin.user.id, theme);
                         }
                       }}
                       disabled={createMatchingMutation.isPending}

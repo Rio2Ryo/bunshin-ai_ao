@@ -79,7 +79,7 @@ export default function ClawdbotPage() {
   // 人格分析
   const analyzePersonality = trpc.clawdbot.analyzePersonality.useMutation({
     onSuccess: (result) => {
-      toast.success(`${result.analyzed}件の会話を分析しました`);
+      toast.success(typeof result.analyzed === "number" ? `${result.analyzed}件の会話を分析しました` : "人格分析を実行しました");
       refetchLearningStatus();
       refetchLearnedTraits();
     },

@@ -19,37 +19,55 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Coins, Target, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Button } from "./ui/button";
 
-const menuItems = [
-  { icon: LayoutDashboard, label: "ダッシュボード", path: "/dashboard" },
-  { icon: User, label: "プロフィール", path: "/profile" },
-  { icon: Bot, label: "分身AI", path: "/twins" },
-  { icon: Globe, label: "発見", path: "/discover" },
-  { icon: UserPlus, label: "友達", path: "/friends" },
-  { icon: MessageSquare, label: "チャット", path: "/chat" },
-  { icon: Users, label: "マッチング", path: "/matching" },
-  { icon: Coins, label: "ポイント", path: "/points" },
-  { icon: Target, label: "クエスト", path: "/quests" },
-  { icon: Link2, label: "Clawdbot連携", path: "/clawdbot" },
-  { icon: MessageCircle, label: "LINE連携", path: "/line-link" },
-  { icon: Brain, label: "学習した人格", path: "/learned-personality" },
-  { icon: Sparkles, label: "育成", path: "/growth" },
-  { icon: CreditCard, label: "カード管理", path: "/cards" },
-  { icon: Settings2, label: "AI API設定", path: "/ai-config" },
-  { icon: Zap, label: "オーケストレーション", path: "/orchestration" },
-  { icon: Crown, label: "プラン", path: "/plan" },
+type MenuItem = { icon: React.ElementType; label: string; path: string };
+type MenuGroup = { label: string; items: MenuItem[] };
+
+const menuGroups: MenuGroup[] = [
+  {
+    label: "メイン",
+    items: [
+      { icon: LayoutDashboard, label: "ダッシュボード", path: "/dashboard" },
+      { icon: Bot, label: "分身AI", path: "/twins" },
+      { icon: MessageSquare, label: "チャット", path: "/chat" },
+    ],
+  },
+  {
+    label: "つながる",
+    items: [
+      { icon: Globe, label: "発見", path: "/discover" },
+      { icon: UserPlus, label: "友達", path: "/friends" },
+      { icon: Users, label: "マッチング", path: "/matching" },
+    ],
+  },
+  {
+    label: "もっと",
+    items: [
+      { icon: Sparkles, label: "育成", path: "/growth" },
+      { icon: MessageCircle, label: "LINE連携", path: "/line-link" },
+      { icon: CreditCard, label: "カード管理", path: "/cards" },
+      { icon: Crown, label: "プラン", path: "/plan" },
+    ],
+  },
 ];
 
-// 管理者専用メニュー
-const adminMenuItems = [
+// Flat list for activeMenuItem lookup
+const menuItems = menuGroups.flatMap(g => g.items);
+
+// 管理者専用メニュー (includes items hidden from regular users)
+const adminMenuItems: MenuItem[] = [
   { icon: Cpu, label: "AIプロバイダー", path: "/admin/ai-provider" },
+  { icon: Settings2, label: "AI API設定", path: "/ai-config" },
+  { icon: Zap, label: "オーケストレーション", path: "/orchestration" },
+  { icon: Link2, label: "Clawdbot連携", path: "/clawdbot" },
+  { icon: User, label: "プロフィール", path: "/profile" },
+  { icon: Brain, label: "学習した人格", path: "/learned-personality" },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
@@ -66,7 +84,8 @@ export default function DashboardLayout({
     const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
     return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
   });
-  const { loading, user } = useAuth();
+  const { loading, user } = useAuth({ redirectOnUnauthenticated: true });
+  const [, navigate] = useLocation();
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_WIDTH_KEY, sidebarWidth.toString());
@@ -77,29 +96,7 @@ export default function DashboardLayout({
   }
 
   if (!user) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="flex flex-col items-center gap-8 p-8 max-w-md w-full">
-          <div className="flex flex-col items-center gap-6">
-            <h1 className="text-2xl font-semibold tracking-tight text-center">
-              Sign in to continue
-            </h1>
-            <p className="text-sm text-muted-foreground text-center max-w-sm">
-              Access to this dashboard requires authentication. Continue to launch the login flow.
-            </p>
-          </div>
-          <Button
-            onClick={() => {
-              window.location.href = getLoginUrl();
-            }}
-            size="lg"
-            className="w-full shadow-lg hover:shadow-xl transition-all"
-          >
-            Sign in
-          </Button>
-        </div>
-      </div>
-    );
+    return <DashboardLayoutSkeleton />
   }
 
   return (
@@ -200,34 +197,50 @@ function DashboardLayoutContent({
 
           <SidebarContent className="gap-0">
             <SidebarMenu className="px-2 py-1">
-              {menuItems.map(item => {
-                const isActive = location === item.path;
-                return (
-                  <SidebarMenuItem key={item.path}>
-                    <SidebarMenuButton
-                      isActive={isActive}
-                      onClick={() => setLocation(item.path)}
-                      tooltip={item.label}
-                      className={`h-10 transition-all font-normal`}
-                    >
-                      <item.icon
-                        className={`h-4 w-4 ${isActive ? "text-primary" : ""}`}
-                      />
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-              
+              {menuGroups.map((group, gi) => (
+                <div key={group.label}>
+                  {gi > 0 && (
+                    <div className="my-2 px-2">
+                      <div className="h-px bg-border" />
+                    </div>
+                  )}
+                  {!isCollapsed && (
+                    <div className="px-3 py-1.5">
+                      <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{group.label}</span>
+                    </div>
+                  )}
+                  {group.items.map(item => {
+                    const isActive = location === item.path || (item.path === "/chat" && location.startsWith("/chat/"));
+                    return (
+                      <SidebarMenuItem key={item.path}>
+                        <SidebarMenuButton
+                          isActive={isActive}
+                          onClick={() => setLocation(item.path)}
+                          tooltip={item.label}
+                          className={`h-10 transition-all font-normal`}
+                        >
+                          <item.icon
+                            className={`h-4 w-4 ${isActive ? "text-primary" : ""}`}
+                          />
+                          <span>{item.label}</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </div>
+              ))}
+
               {/* 管理者専用メニュー */}
               {user?.role === 'admin' && (
                 <>
                   <div className="my-2 px-2">
                     <div className="h-px bg-border" />
-                    {!isCollapsed && (
-                      <span className="text-xs text-muted-foreground px-2 py-1">管理者</span>
-                    )}
                   </div>
+                  {!isCollapsed && (
+                    <div className="px-3 py-1.5">
+                      <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">管理者</span>
+                    </div>
+                  )}
                   {adminMenuItems.map(item => {
                     const isActive = location === item.path;
                     return (

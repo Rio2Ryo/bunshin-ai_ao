@@ -33,8 +33,7 @@ const trpcClient = trpc.createClient({
       fetch(input, init) {
         return globalThis.fetch(input, {
           ...(init ?? {}),
-          // Phase 1: no auth cookies
-          credentials: "omit",
+          credentials: "include",
         });
       },
     }),

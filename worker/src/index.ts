@@ -4,6 +4,7 @@ import { z } from "zod";
 import superjson from "superjson";
 import { initTRPC, TRPCError } from "@trpc/server";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
+import { SignJWT, jwtVerify } from "jose";
 import {
   ensureSchema,
   parseJson,
@@ -14,18 +15,80 @@ import {
   getCumulativeWaveform,
   getOtherPerspectiveWaveform,
 } from "./db-helpers";
+import { invokeLLM, getUserLLMConfig } from "./llm";
 
 // ============ Types ============
 
 type Env = {
   DB: D1Database;
   ASSETS?: R2Bucket;
+  JWT_SECRET?: string;
+  AZURE_FOUNDRY_API_KEY?: string;
+  AZURE_FOUNDRY_RESOURCE?: string;
 };
 
 type Context = {
   env: Env;
   userId: number;
+  user: { id: number; openId: string; name: string | null; email: string | null; role: string } | null;
 };
+
+// ============ Auth Helpers ============
+
+const COOKIE_NAME = "app_session_id";
+const ONE_YEAR_MS = 1000 * 60 * 60 * 24 * 365;
+
+function getJwtSecret(env: Env): Uint8Array {
+  const secret = env.JWT_SECRET || "bunshin-ai-dev-secret-change-in-production";
+  return new TextEncoder().encode(secret);
+}
+
+async function hashPassword(password: string): Promise<string> {
+  // Use PBKDF2 via Web Crypto (available in CF Workers)
+  const encoder = new TextEncoder();
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const keyMaterial = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const hash = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" }, keyMaterial, 256);
+  // Store as salt:hash in hex
+  const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, "0")).join("");
+  const hashHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+  return `${saltHex}:${hashHex}`;
+}
+
+async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  const [saltHex, hashHex] = stored.split(":");
+  if (!saltHex || !hashHex) return false;
+  const salt = new Uint8Array(saltHex.match(/.{2}/g)!.map(h => parseInt(h, 16)));
+  const encoder = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const hash = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" }, keyMaterial, 256);
+  const computedHex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+  return computedHex === hashHex;
+}
+
+async function createSessionToken(userId: number, env: Env): Promise<string> {
+  return new SignJWT({ userId })
+    .setProtectedHeader({ alg: "HS256" })
+    .setExpirationTime(Math.floor((Date.now() + ONE_YEAR_MS) / 1000))
+    .setIssuedAt()
+    .sign(getJwtSecret(env));
+}
+
+async function verifySessionToken(token: string, env: Env): Promise<{ userId: number } | null> {
+  try {
+    const { payload } = await jwtVerify(token, getJwtSecret(env));
+    if (typeof payload.userId === "number") return { userId: payload.userId };
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function parseCookie(cookieHeader: string | null, name: string): string | null {
+  if (!cookieHeader) return null;
+  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
 
 // ============ tRPC Setup ============
 
@@ -35,6 +98,12 @@ const t = initTRPC.context<Context>().create({
 
 const router = t.router;
 const publicProcedure = t.procedure;
+const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
+  if (!ctx.user) {
+    throw new TRPCError({ code: "UNAUTHORIZED", message: "ログインが必要です" });
+  }
+  return next({ ctx: { ...ctx, user: ctx.user, userId: ctx.user.id } });
+});
 
 // ============ Helper: generate random code ============
 function generateCode(length = 6): string {
@@ -55,28 +124,97 @@ const appRouter = router({
 
   // ============ Auth ============
   auth: router({
+    register: publicProcedure
+      .input(z.object({ email: z.string().email(), password: z.string().min(6), name: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        // Check if email already exists
+        const existing = await ctx.env.DB.prepare(`SELECT id FROM users WHERE email=?`).bind(input.email).first<any>();
+        if (existing) throw new TRPCError({ code: "CONFLICT", message: "このメールアドレスは既に登録されています" });
+        const passwordHash = await hashPassword(input.password);
+        const openId = `email_${input.email}`;
+        await ctx.env.DB.prepare(
+          `INSERT INTO users (openId, name, email, passwordHash, loginMethod, role, plan) VALUES (?,?,?,?,?,?,?)`
+        ).bind(openId, input.name, input.email, passwordHash, "email", "user", "free").run();
+        const user = await ctx.env.DB.prepare(`SELECT * FROM users WHERE email=?`).bind(input.email).first<any>();
+        if (!user) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "ユーザー作成に失敗しました" });
+
+        // Auto-create default Twin
+        const twinName = `${input.name}の分身AI`;
+        const onboardingSystemPrompt = `あなたはオンボーディングガイドです。ユーザーの情報を会話で収集し、分身AIプロフィールを構築します。
+
+ステップ: 1.仕事・スキル → 2.経験・実績 → 3.趣味・興味 → 4.性格・価値観 → 5.まとめ確認
+
+ルール:
+- 各ステップ1-2問だけ聞いて次へ進む
+- 応答は200文字以内で短くフレンドリーに
+- ユーザーの回答が短くてもポジティブに受けて次へ
+- 考えすぎず直接応答する
+
+Step 5完了時に以下を出力:
+---PROFILE_DATA---
+{"description": "概要", "personality": "性格", "rawInput": "全情報まとめ"}
+---END_PROFILE_DATA---`;
+
+        const twinRes = await ctx.env.DB.prepare(
+          `INSERT INTO digital_twins (userId, name, systemPrompt, status, updatedAt) VALUES (?, ?, ?, 'active', datetime('now'))`
+        ).bind(user.id, twinName, onboardingSystemPrompt).run();
+        const twinId = Number(twinRes.meta.last_row_id);
+
+        // Create onboarding chat session
+        const sessionRes = await ctx.env.DB.prepare(
+          `INSERT INTO chat_sessions (userId, twinId, title, mode) VALUES (?, ?, ?, ?)`
+        ).bind(user.id, twinId, "はじめてのチャット", "onboarding").run();
+        const onboardingSessionId = Number(sessionRes.meta.last_row_id);
+
+        // Insert welcome message
+        const welcomeMessage = `はじめまして！私はあなた専用の分身AI「${twinName}」です。
+
+これから私があなたのことを学んで、あなたの「デジタル分身」になっていきます。
+
+まずは自己紹介から始めましょう！
+
+あなたのお仕事や得意なことを教えてください。
+例えば「マーケティング10年やってます」「デザインが得意です」など、なんでもOKです！`;
+
+        await ctx.env.DB.prepare(
+          `INSERT INTO chat_messages (sessionId, role, content) VALUES (?, ?, ?)`
+        ).bind(onboardingSessionId, "assistant", welcomeMessage).run();
+
+        const token = await createSessionToken(user.id, ctx.env);
+        return {
+          user: { id: user.id, name: user.name, email: user.email, role: user.role, plan: user.plan },
+          token,
+          onboardingSessionId,
+        };
+      }),
+    login: publicProcedure
+      .input(z.object({ email: z.string().email(), password: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const user = await ctx.env.DB.prepare(`SELECT * FROM users WHERE email=?`).bind(input.email).first<any>();
+        if (!user || !user.passwordHash) throw new TRPCError({ code: "UNAUTHORIZED", message: "メールアドレスまたはパスワードが正しくありません" });
+        const valid = await verifyPassword(input.password, user.passwordHash);
+        if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "メールアドレスまたはパスワードが正しくありません" });
+        await ctx.env.DB.prepare(`UPDATE users SET lastSignedIn=datetime('now') WHERE id=?`).bind(user.id).run();
+        const token = await createSessionToken(user.id, ctx.env);
+        return { user: { id: user.id, name: user.name, email: user.email, role: user.role, plan: user.plan, onboardingCompleted: user.onboardingCompleted ?? 0 }, token };
+      }),
     me: publicProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
-      // Phase 1: return anon user
-      let user = await ctx.env.DB
-        .prepare(`SELECT * FROM users WHERE id = ?`)
-        .bind(ctx.userId)
-        .first<any>();
-      if (!user) {
-        await ctx.env.DB
-          .prepare(`INSERT INTO users (openId, name, role, plan) VALUES (?, ?, 'user', 'free')`)
-          .bind(`anon_${ctx.userId}`, "ゲストユーザー")
-          .run();
-        user = await ctx.env.DB.prepare(`SELECT * FROM users WHERE id = ?`).bind(ctx.userId).first<any>();
+      if (ctx.user) {
+        const row = await ctx.env.DB.prepare(`SELECT onboardingCompleted FROM users WHERE id=?`).bind(ctx.user.id).first<any>();
+        return { ...ctx.user, onboardingCompleted: row?.onboardingCompleted ?? 0 };
       }
-      return user;
+      // Not logged in
+      return null;
     }),
     logout: publicProcedure.mutation(() => ({ success: true })),
   }),
 
   // ============ Profile ============
   profile: router({
-    get: publicProcedure.query(async ({ ctx }) => {
+    get: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const row = await ctx.env.DB
         .prepare(`SELECT * FROM user_profiles WHERE userId = ?`)
@@ -89,7 +227,7 @@ const appRouter = router({
         expertise: parseJson<string[]>(row.expertise) ?? [],
       };
     }),
-    update: publicProcedure
+    update: protectedProcedure
       .input(z.object({
         displayName: z.string().optional(),
         bio: z.string().optional(),
@@ -134,7 +272,7 @@ const appRouter = router({
 
   // ============ My Twin ============
   myTwin: router({
-    get: publicProcedure.query(async ({ ctx }) => {
+    get: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const twin = await getMyTwin(ctx.env.DB, ctx.userId);
       if (!twin) return null;
@@ -153,7 +291,7 @@ const appRouter = router({
       };
     }),
 
-    upsert: publicProcedure
+    upsert: protectedProcedure
       .input(z.object({
         name: z.string().min(1),
         rawInput: z.string().optional().nullable(),
@@ -175,7 +313,7 @@ const appRouter = router({
         return { id: existing.id };
       }),
 
-    update: publicProcedure
+    update: protectedProcedure
       .input(z.object({
         name: z.string().optional(),
         rawInput: z.string().optional().nullable(),
@@ -198,7 +336,7 @@ const appRouter = router({
         return { success: true };
       }),
 
-    updatePublicSettings: publicProcedure
+    updatePublicSettings: protectedProcedure
       .input(z.object({
         isPublic: z.boolean(),
         publicBio: z.string().optional(),
@@ -215,47 +353,47 @@ const appRouter = router({
         return getMyTwin(ctx.env.DB, ctx.userId);
       }),
 
-    reset: publicProcedure.mutation(async ({ ctx }) => {
+    reset: protectedProcedure.mutation(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       await ctx.env.DB.prepare(`DELETE FROM digital_twins WHERE userId = ?`).bind(ctx.userId).run();
       return { ok: true };
     }),
 
     // Personality & Waveform stubs (Phase 1 - return ok)
-    analyzeBigFive: publicProcedure.mutation(async () => ({ bigFiveTraits: null })),
-    analyzeJudgmentThresholds: publicProcedure.mutation(async () => ({ judgmentThresholds: null })),
-    generateSelfWaveform: publicProcedure.mutation(async () => ({ ok: true })),
-    evaluateWaveform: publicProcedure.mutation(async () => ({ ok: true })),
-    reevaluateAndUpdateWaveform: publicProcedure.mutation(async () => ({ success: true, evaluatedCount: 0, totalResponses: 0 })),
-    refreshCumulativeWaveform: publicProcedure.mutation(async () => ({ success: true })),
-    evaluateByAllTwins: publicProcedure.mutation(async () => ({ success: true, evaluatedCount: 0, totalResponses: 0, totalEvaluators: 0, totalEvaluations: 0 })),
-    calculateAccuracy: publicProcedure.mutation(async () => ({ personalitySimilarity: 0, accuracyScore: 0 })),
-    runFullAnalysis: publicProcedure.mutation(async () => ({ ok: true })),
-    runIntegratedAnalysis: publicProcedure.mutation(async () => ({ ok: true })),
-    personalityInterview: publicProcedure
+    analyzeBigFive: protectedProcedure.mutation(async () => ({ bigFiveTraits: null })),
+    analyzeJudgmentThresholds: protectedProcedure.mutation(async () => ({ judgmentThresholds: null })),
+    generateSelfWaveform: protectedProcedure.mutation(async () => ({ ok: true })),
+    evaluateWaveform: protectedProcedure.mutation(async () => ({ ok: true })),
+    reevaluateAndUpdateWaveform: protectedProcedure.mutation(async () => ({ success: true, evaluatedCount: 0, totalResponses: 0 })),
+    refreshCumulativeWaveform: protectedProcedure.mutation(async () => ({ success: true })),
+    evaluateByAllTwins: protectedProcedure.mutation(async () => ({ success: true, evaluatedCount: 0, totalResponses: 0, totalEvaluators: 0, totalEvaluations: 0 })),
+    calculateAccuracy: protectedProcedure.mutation(async () => ({ personalitySimilarity: 0, accuracyScore: 0 })),
+    runFullAnalysis: protectedProcedure.mutation(async () => ({ ok: true })),
+    runIntegratedAnalysis: protectedProcedure.mutation(async () => ({ ok: true })),
+    personalityInterview: protectedProcedure
       .input(z.object({ previousMessages: z.array(z.any()), userResponse: z.string().optional() }))
       .mutation(async () => ({ message: "Phase 1ではこの機能は使えません", question: "Phase 1ではこの機能は使えません", isComplete: false, traits: null as { openness: number; conscientiousness: number; extraversion: number; agreeableness: number; neuroticism: number } | null })),
-    mbtiInterview: publicProcedure
+    mbtiInterview: protectedProcedure
       .input(z.object({ previousMessages: z.array(z.any()), userResponse: z.string().optional() }))
       .mutation(async () => ({ message: "Phase 1ではこの機能は使えません", question: "Phase 1ではこの機能は使えません", isComplete: false, mbtiType: null as any })),
-    valueScenarioInterview: publicProcedure
+    valueScenarioInterview: protectedProcedure
       .input(z.object({ previousMessages: z.array(z.any()), userResponse: z.string().optional() }))
       .mutation(async () => ({ message: "Phase 1ではこの機能は使えません", response: "Phase 1ではこの機能は使えません", isComplete: false, currentScenarioIndex: 0, totalScenarios: 18 })),
-    getScenarioProgress: publicProcedure.query(async ({ ctx }) => {
+    getScenarioProgress: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const twin = await getMyTwin(ctx.env.DB, ctx.userId);
       if (!twin) return { completed: 0, total: 18 };
       const r = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM value_scenario_responses WHERE userId=? AND twinId=?`).bind(ctx.userId, twin.id).first<any>();
       return { completed: r?.c ?? 0, total: 18 };
     }),
-    getCumulativeWaveform: publicProcedure.query(async ({ ctx }) => {
+    getCumulativeWaveform: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const twin = await getMyTwin(ctx.env.DB, ctx.userId);
       if (!twin) return null;
       return getCumulativeWaveform(ctx.env.DB, ctx.userId, twin.id);
     }),
-    getAvailableScenarios: publicProcedure.query(async () => ({ scenarios: [], categories: [] })),
-    searchPublic: publicProcedure
+    getAvailableScenarios: protectedProcedure.query(async () => ({ scenarios: [], categories: [] })),
+    searchPublic: protectedProcedure
       .input(z.object({ query: z.string().optional(), limit: z.number().optional() }).optional())
       .query(async ({ ctx }) => {
         await ensureSchema(ctx.env.DB);
@@ -263,9 +401,14 @@ const appRouter = router({
           .prepare(`SELECT * FROM digital_twins WHERE isPublic=1 AND userId != ? LIMIT 20`)
           .bind(ctx.userId)
           .all<any>();
-        return (rows.results ?? []).map(normalizeTwin);
+        const results = [];
+        for (const row of rows.results ?? []) {
+          const user = await ctx.env.DB.prepare(`SELECT * FROM users WHERE id=?`).bind(row.userId).first<any>();
+          results.push({ twin: normalizeTwin(row), user });
+        }
+        return results;
       }),
-    getPublicTwin: publicProcedure
+    getPublicTwin: protectedProcedure
       .input(z.object({ twinId: z.number() }))
       .query(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -281,7 +424,7 @@ const appRouter = router({
 
   // ============ Friends ============
   friends: router({
-    list: publicProcedure.query(async ({ ctx }) => {
+    list: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB
         .prepare(`SELECT f.*, u.id as fId, u.name as fName, u.email as fEmail, u.friendCode as fFriendCode FROM friendships f JOIN users u ON u.id = CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END WHERE (f.userId=? OR f.friendId=?) AND f.status='accepted'`)
@@ -298,7 +441,7 @@ const appRouter = router({
       }
       return results;
     }),
-    pendingRequests: publicProcedure.query(async ({ ctx }) => {
+    pendingRequests: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB
         .prepare(`SELECT f.*, u.name as senderName, u.email as senderEmail FROM friendships f JOIN users u ON u.id=f.userId WHERE f.friendId=? AND f.status='pending'`)
@@ -310,7 +453,7 @@ const appRouter = router({
         sender: { id: r.userId, name: r.senderName, email: r.senderEmail },
       }));
     }),
-    sentRequests: publicProcedure.query(async ({ ctx }) => {
+    sentRequests: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB
         .prepare(`SELECT f.*, u.name as recipientName FROM friendships f JOIN users u ON u.id=f.friendId WHERE f.userId=? AND f.status='pending'`)
@@ -318,7 +461,7 @@ const appRouter = router({
         .all<any>();
       return (rows.results ?? []).map(r => ({ id: r.id, friendId: r.friendId, recipientName: r.recipientName, createdAt: r.createdAt }));
     }),
-    searchUsers: publicProcedure
+    searchUsers: protectedProcedure
       .input(z.object({ query: z.string().min(1) }))
       .query(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -328,7 +471,7 @@ const appRouter = router({
           .all<any>();
         return rows.results ?? [];
       }),
-    sendRequest: publicProcedure
+    sendRequest: protectedProcedure
       .input(z.object({ friendCode: z.string().min(1) }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -338,55 +481,55 @@ const appRouter = router({
         const res = await ctx.env.DB.prepare(`INSERT INTO friendships (userId, friendId, status) VALUES (?,?,'pending')`).bind(ctx.userId, friend.id).run();
         return { id: Number(res.meta.last_row_id) };
       }),
-    acceptRequest: publicProcedure
+    acceptRequest: protectedProcedure
       .input(z.object({ requestId: z.number() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         await ctx.env.DB.prepare(`UPDATE friendships SET status='accepted', updatedAt=datetime('now') WHERE id=? AND friendId=?`).bind(input.requestId, ctx.userId).run();
         return { success: true };
       }),
-    rejectRequest: publicProcedure
+    rejectRequest: protectedProcedure
       .input(z.object({ requestId: z.number() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         await ctx.env.DB.prepare(`UPDATE friendships SET status='rejected', updatedAt=datetime('now') WHERE id=? AND friendId=?`).bind(input.requestId, ctx.userId).run();
         return { success: true };
       }),
-    remove: publicProcedure
+    remove: protectedProcedure
       .input(z.object({ friendId: z.number() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         await ctx.env.DB.prepare(`DELETE FROM friendships WHERE (userId=? AND friendId=?) OR (userId=? AND friendId=?)`).bind(ctx.userId, input.friendId, input.friendId, ctx.userId).run();
         return { success: true };
       }),
-    getWaveformCompatibility: publicProcedure
+    getWaveformCompatibility: protectedProcedure
       .input(z.object({ friendId: z.number() }))
       .query(async () => ({ hasData: false, message: "Phase 1: 波形比較は未対応", compatibility: null })),
-    getIntimacy: publicProcedure
+    getIntimacy: protectedProcedure
       .input(z.object({ friendId: z.number() }))
       .query(async () => ({ intimacyScore: 0, intimacyLevel: "stranger" as const, intimacyLevelLabel: "見知らぬ人", predictionAccuracy: null })),
-    updateIntimacy: publicProcedure
+    updateIntimacy: protectedProcedure
       .input(z.object({ friendId: z.number() }))
       .mutation(async () => ({ intimacyScore: 0, intimacyLevel: "stranger" as const, intimacyLevelLabel: "見知らぬ人" })),
-    getAllIntimacyScores: publicProcedure.query(async () => []),
-    requestPredictions: publicProcedure
+    getAllIntimacyScores: protectedProcedure.query(async () => []),
+    requestPredictions: protectedProcedure
       .input(z.object({ scenarioId: z.string(), scenarioText: z.string(), friendUserIds: z.array(z.number()) }))
       .mutation(async () => ({ predictionIds: [], count: 0 })),
-    updateOtherPerspectiveWaveform: publicProcedure.mutation(async () => ({ success: true, selfReportGap: null })),
-    generateFriendPredictions: publicProcedure.mutation(async () => ({ success: true, friendsProcessed: 0, successfulPredictions: 0, totalPredictions: 0 })),
-    getAllWaveformCompatibilities: publicProcedure.query(async () => ({ hasMyWaveform: false, message: "波形が未生成です", compatibilities: [] as { friendId: number; overallCompatibility: number; waveformSimilarity: number; virtueCompatibility: number; mineCompatibility: number }[] })),
+    updateOtherPerspectiveWaveform: protectedProcedure.mutation(async () => ({ success: true, selfReportGap: null })),
+    generateFriendPredictions: protectedProcedure.mutation(async () => ({ success: true, friendsProcessed: 0, successfulPredictions: 0, totalPredictions: 0 })),
+    getAllWaveformCompatibilities: protectedProcedure.query(async () => ({ hasMyWaveform: false, message: "波形が未生成です", compatibilities: [] as { friendId: number; overallCompatibility: number; waveformSimilarity: number; virtueCompatibility: number; mineCompatibility: number }[] })),
   }),
 
   // ============ Knowledge Base ============
   knowledge: router({
-    list: publicProcedure.query(async ({ ctx }) => {
+    list: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const twin = await getMyTwin(ctx.env.DB, ctx.userId);
       if (!twin) return [];
       const rows = await ctx.env.DB.prepare(`SELECT * FROM knowledge_base WHERE twinId=? ORDER BY createdAt DESC`).bind(twin.id).all<any>();
       return (rows.results ?? []).map(r => ({ ...r, metadata: parseJson<any>(r.metadata) }));
     }),
-    add: publicProcedure
+    add: protectedProcedure
       .input(z.object({ sourceType: z.enum(["upload", "api", "manual"]), sourceId: z.string().optional(), title: z.string().optional(), content: z.string().optional(), summary: z.string().optional(), metadata: z.record(z.string(), z.unknown()).optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -395,7 +538,7 @@ const appRouter = router({
         const res = await ctx.env.DB.prepare(`INSERT INTO knowledge_base (twinId, sourceType, sourceId, title, content, summary, metadata) VALUES (?,?,?,?,?,?,?)`).bind(twin.id, input.sourceType, input.sourceId ?? null, input.title ?? null, input.content ?? null, input.summary ?? null, toJson(input.metadata)).run();
         return { id: Number(res.meta.last_row_id) };
       }),
-    delete: publicProcedure
+    delete: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -406,23 +549,33 @@ const appRouter = router({
 
   // ============ Files ============
   files: router({
-    list: publicProcedure.query(async ({ ctx }) => {
+    list: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB.prepare(`SELECT * FROM uploaded_files WHERE userId=? ORDER BY createdAt DESC`).bind(ctx.userId).all<any>();
       return rows.results ?? [];
     }),
-    upload: publicProcedure
+    upload: protectedProcedure
       .input(z.object({ filename: z.string(), content: z.string(), mimeType: z.string() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         const twin = await getMyTwin(ctx.env.DB, ctx.userId);
         const fileKey = `twins/${ctx.userId}/${Date.now()}-${input.filename}`;
-        // Store in R2 if available
         const url = `/assets/${fileKey}`;
-        const res = await ctx.env.DB.prepare(`INSERT INTO uploaded_files (userId, twinId, filename, fileKey, url, mimeType, size, status) VALUES (?,?,?,?,?,?,?,?)`).bind(ctx.userId, twin?.id ?? null, input.filename, fileKey, url, input.mimeType, input.content.length, "pending").run();
+
+        // Write to R2 if available
+        const r2 = ctx.env.ASSETS;
+        let status = "pending";
+        if (r2) {
+          const base64Data = input.content.replace(/^data:[^;]+;base64,/, "");
+          const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+          await r2.put(fileKey, binaryData, { httpMetadata: { contentType: input.mimeType } });
+          status = "uploaded";
+        }
+
+        const res = await ctx.env.DB.prepare(`INSERT INTO uploaded_files (userId, twinId, filename, fileKey, url, mimeType, size, status) VALUES (?,?,?,?,?,?,?,?)`).bind(ctx.userId, twin?.id ?? null, input.filename, fileKey, url, input.mimeType, input.content.length, status).run();
         return { id: Number(res.meta.last_row_id), url };
       }),
-    process: publicProcedure
+    process: protectedProcedure
       .input(z.object({ fileId: z.number() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -433,12 +586,12 @@ const appRouter = router({
 
   // ============ AI Config ============
   aiConfig: router({
-    list: publicProcedure.query(async ({ ctx }) => {
+    list: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB.prepare(`SELECT * FROM ai_api_configs WHERE userId=?`).bind(ctx.userId).all<any>();
       return rows.results ?? [];
     }),
-    upsert: publicProcedure
+    upsert: protectedProcedure
       .input(z.object({ provider: z.enum(["openai", "gemini", "anthropic", "grok"]), apiKey: z.string().min(1), isActive: z.number().optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -450,33 +603,80 @@ const appRouter = router({
         }
         return { success: true };
       }),
-    delete: publicProcedure
+    delete: protectedProcedure
       .input(z.object({ provider: z.enum(["openai", "gemini", "anthropic", "grok"]) }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         await ctx.env.DB.prepare(`DELETE FROM ai_api_configs WHERE userId=? AND provider=?`).bind(ctx.userId, input.provider).run();
         return { success: true };
       }),
-    validate: publicProcedure
+    validate: protectedProcedure
       .input(z.object({ provider: z.enum(["openai", "gemini", "anthropic", "grok"]), apiKey: z.string() }))
-      .mutation(async () => ({ valid: true })),
+      .mutation(async ({ input }) => {
+        const { provider, apiKey } = input;
+        try {
+          switch (provider) {
+            case "openai": {
+              const res = await fetch("https://api.openai.com/v1/models", {
+                headers: { Authorization: `Bearer ${apiKey}` },
+              });
+              if (!res.ok) return { valid: false, error: `OpenAI API error: ${res.status}` };
+              return { valid: true };
+            }
+            case "gemini": {
+              const res = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`
+              );
+              if (!res.ok) return { valid: false, error: `Gemini API error: ${res.status}` };
+              return { valid: true };
+            }
+            case "anthropic": {
+              const res = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-api-key": apiKey,
+                  "anthropic-version": "2023-06-01",
+                },
+                body: JSON.stringify({
+                  model: "claude-sonnet-4-20250514",
+                  messages: [{ role: "user", content: "Hi" }],
+                  max_tokens: 1,
+                }),
+              });
+              // 200 or 400 (bad request but key is valid) both mean the key works
+              if (res.status === 401 || res.status === 403) return { valid: false, error: `Anthropic API error: ${res.status}` };
+              return { valid: true };
+            }
+            case "grok": {
+              const res = await fetch("https://api.x.ai/v1/models", {
+                headers: { Authorization: `Bearer ${apiKey}` },
+              });
+              if (!res.ok) return { valid: false, error: `Grok API error: ${res.status}` };
+              return { valid: true };
+            }
+          }
+        } catch (e: any) {
+          return { valid: false, error: e.message };
+        }
+      }),
   }),
 
   // ============ Orchestration ============
   orchestration: router({
-    roles: publicProcedure.query(async ({ ctx }) => {
+    roles: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB.prepare(`SELECT * FROM orchestration_roles WHERE userId=?`).bind(ctx.userId).all<any>();
       return rows.results ?? [];
     }),
-    createRole: publicProcedure
+    createRole: protectedProcedure
       .input(z.object({ roleName: z.string().min(1), roleDescription: z.string().optional(), assignedProvider: z.enum(["openai", "gemini", "anthropic", "grok", "builtin"]), assignedModel: z.string().optional(), priority: z.number().optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         const res = await ctx.env.DB.prepare(`INSERT INTO orchestration_roles (userId, roleName, roleDescription, assignedProvider, assignedModel, priority) VALUES (?,?,?,?,?,?)`).bind(ctx.userId, input.roleName, input.roleDescription ?? null, input.assignedProvider, input.assignedModel ?? null, input.priority ?? 1).run();
         return { id: Number(res.meta.last_row_id) };
       }),
-    updateRole: publicProcedure
+    updateRole: protectedProcedure
       .input(z.object({ id: z.number(), roleName: z.string().optional(), roleDescription: z.string().optional(), assignedProvider: z.enum(["openai", "gemini", "anthropic", "grok", "builtin"]).optional(), assignedModel: z.string().optional(), priority: z.number().optional(), isActive: z.number().optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -495,30 +695,30 @@ const appRouter = router({
         }
         return { success: true };
       }),
-    deleteRole: publicProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
+    deleteRole: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       await ctx.env.DB.prepare(`DELETE FROM orchestration_roles WHERE id=?`).bind(input.id).run();
       return { success: true };
     }),
-    getSettings: publicProcedure.query(async ({ ctx }) => {
+    getSettings: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const roles = await ctx.env.DB.prepare(`SELECT * FROM orchestration_roles WHERE userId=?`).bind(ctx.userId).all<any>();
       const configs = await ctx.env.DB.prepare(`SELECT * FROM ai_api_configs WHERE userId=?`).bind(ctx.userId).all<any>();
       return { roles: roles.results ?? [], configs: configs.results ?? [] };
     }),
-    updateSettings: publicProcedure
+    updateSettings: protectedProcedure
       .input(z.object({ defaultProvider: z.enum(["openai", "gemini", "anthropic", "grok", "builtin"]).optional() }))
       .mutation(async () => ({ success: true })),
   }),
 
   // ============ Chat ============
   chat: router({
-    sessions: publicProcedure.query(async ({ ctx }) => {
+    sessions: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB.prepare(`SELECT * FROM chat_sessions WHERE userId=? ORDER BY updatedAt DESC`).bind(ctx.userId).all<any>();
       return rows.results ?? [];
     }),
-    getSession: publicProcedure
+    getSession: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -527,7 +727,7 @@ const appRouter = router({
         const msgs = await ctx.env.DB.prepare(`SELECT * FROM chat_messages WHERE sessionId=? ORDER BY createdAt ASC`).bind(input.id).all<any>();
         return { session, messages: (msgs.results ?? []).map(m => ({ ...m, metadata: parseJson<any>(m.metadata) })) };
       }),
-    createSession: publicProcedure
+    createSession: protectedProcedure
       .input(z.object({ title: z.string().optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -536,14 +736,85 @@ const appRouter = router({
         const res = await ctx.env.DB.prepare(`INSERT INTO chat_sessions (userId, twinId, title) VALUES (?,?,?)`).bind(ctx.userId, twin.id, input.title || "New Chat").run();
         return { id: Number(res.meta.last_row_id) };
       }),
-    sendMessage: publicProcedure
+    sendMessage: protectedProcedure
       .input(z.object({ sessionId: z.number(), content: z.string().min(1) }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         // Save user message
         await ctx.env.DB.prepare(`INSERT INTO chat_messages (sessionId, role, content) VALUES (?,?,?)`).bind(input.sessionId, "user", input.content).run();
-        // Phase 1: simple echo response (no LLM)
-        const response = `[Phase 1] あなたのメッセージ「${input.content.slice(0, 50)}...」を受け取りました。LLM統合は次のフェーズで対応します。`;
+
+        // Build context: get twin info, conversation history, and LLM config
+        const session = await ctx.env.DB.prepare(`SELECT * FROM chat_sessions WHERE id=? AND userId=?`).bind(input.sessionId, ctx.userId).first<any>();
+        if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "チャットセッションが見つかりません" });
+
+        const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+        const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "chat", ctx.env);
+
+        let response: string;
+
+        if (!llmConfig && session.mode === "onboarding") {
+          // Onboarding without LLM: provide scripted fallback responses
+          const userMsgCount = (await ctx.env.DB.prepare(
+            `SELECT COUNT(*) as c FROM chat_messages WHERE sessionId=? AND role='user'`
+          ).bind(input.sessionId).first<any>())?.c ?? 0;
+          const fallbackResponses = [
+            `ありがとうございます！いい感じですね。\n\n次に、これまでの経験や実績について教えてください。\n例えば「3年間チームリーダーをしていました」「売上を2倍に伸ばしました」など。`,
+            `素晴らしいですね！\n\nでは、趣味や興味のあることを教えてください。\n仕事以外でも構いません！`,
+            `なるほど！とても多彩ですね。\n\nでは最後に、あなたの性格や大切にしている価値観を教えてください。\n例えば「チームワークを大切にしている」「新しいことに挑戦するのが好き」など。`,
+            `ありがとうございます！あなたのことがよく分かりました。\n\n以下の内容であなたの分身AIプロフィールを作成しますね。\n\n---PROFILE_DATA---\n{"description": "多才なプロフェッショナル", "personality": "前向きで協調性がある", "rawInput": "${input.content}"}\n---END_PROFILE_DATA---`,
+          ];
+          response = fallbackResponses[Math.min(userMsgCount - 1, fallbackResponses.length - 1)] || fallbackResponses[fallbackResponses.length - 1];
+        } else if (!llmConfig) {
+          response = `AI APIキーが設定されていません。「AI API設定」ページでAPIキー（OpenAI、Gemini、Anthropic等）を登録してください。\n\nあなたのメッセージ: ${input.content}`;
+        } else {
+          // Check if session is onboarding mode - use twin's systemPrompt directly
+          const isOnboarding = session.mode === "onboarding";
+
+          // Build system prompt from twin data
+          const twinName = twin?.name || "分身AI";
+          let systemPrompt: string;
+
+          if (isOnboarding && twin?.systemPrompt) {
+            systemPrompt = twin.systemPrompt;
+          } else {
+            const twinDesc = twin?.description || "";
+            const twinPersonality = twin?.personality || "";
+            const profile = await ctx.env.DB.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+
+            systemPrompt = `あなたは「${twinName}」というデジタル分身AIです。ユーザーの代わりに会話します。`;
+            if (twinDesc) systemPrompt += `\n\n分身AIの説明: ${twinDesc}`;
+            if (twinPersonality) systemPrompt += `\n\n性格特性: ${twinPersonality}`;
+            if (profile?.bio) systemPrompt += `\n\nユーザーの自己紹介: ${profile.bio}`;
+            if (profile?.skills) {
+              const skills = parseJson<string[]>(profile.skills);
+              if (skills?.length) systemPrompt += `\n\nスキル: ${skills.join(", ")}`;
+            }
+            if (profile?.industry) systemPrompt += `\n\n業界: ${profile.industry}`;
+            systemPrompt += `\n\n丁寧かつ親しみやすい日本語で回答してください。ユーザーの専門知識を反映した回答を心がけてください。`;
+          }
+
+          // Get conversation history (last 20 messages)
+          const history = await ctx.env.DB.prepare(
+            `SELECT role, content FROM chat_messages WHERE sessionId=? ORDER BY createdAt DESC LIMIT 20`
+          ).bind(input.sessionId).all<any>();
+
+          const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
+            { role: "system", content: systemPrompt },
+            ...(history.results ?? []).reverse().map((m: any) => ({
+              role: m.role as "user" | "assistant",
+              content: m.content as string,
+            })),
+          ];
+
+          try {
+            const llmMaxTokens = isOnboarding ? 512 : 2048;
+            const result = await invokeLLM(llmConfig, messages, { maxTokens: llmMaxTokens });
+            response = result.content;
+          } catch (error: any) {
+            response = `AIの応答生成中にエラーが発生しました: ${error.message}\n\nAPIキーが正しいか、利用制限に達していないか確認してください。`;
+          }
+        }
+
         const res = await ctx.env.DB.prepare(`INSERT INTO chat_messages (sessionId, role, content) VALUES (?,?,?)`).bind(input.sessionId, "assistant", response).run();
         await ctx.env.DB.prepare(`UPDATE chat_sessions SET updatedAt=datetime('now') WHERE id=?`).bind(input.sessionId).run();
         return { messageId: Number(res.meta.last_row_id), response };
@@ -552,12 +823,18 @@ const appRouter = router({
 
   // ============ Matching ============
   matching: router({
-    sessions: publicProcedure.query(async ({ ctx }) => {
+    sessions: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE initiatorUserId=? ORDER BY createdAt DESC`).bind(ctx.userId).all<any>();
-      return rows.results ?? [];
+      const results = [];
+      for (const session of rows.results ?? []) {
+        const twin1 = await ctx.env.DB.prepare(`SELECT id, name FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+        const twin2 = await ctx.env.DB.prepare(`SELECT id, name FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+        results.push({ ...session, twin1: twin1 ?? { id: session.twin1Id, name: `Twin #${session.twin1Id}` }, twin2: twin2 ?? { id: session.twin2Id, name: `Twin #${session.twin2Id}` } });
+      }
+      return results;
     }),
-    getSession: publicProcedure
+    getSession: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -575,7 +852,7 @@ const appRouter = router({
           result: result ? { ...result, scoreBreakdown: parseJson<any>(result.scoreBreakdown), strengths: parseJson<string[]>(result.strengths), challenges: parseJson<string[]>(result.challenges), recommendations: parseJson<string[]>(result.recommendations) } : null,
         };
       }),
-    availableFriends: publicProcedure.query(async ({ ctx }) => {
+    availableFriends: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       // Use friends.list logic but filter for those with twins
       const rows = await ctx.env.DB
@@ -595,7 +872,7 @@ const appRouter = router({
       }
       return results;
     }),
-    create: publicProcedure
+    create: protectedProcedure
       .input(z.object({ friendId: z.number(), theme: z.string().min(1), turns: z.number().min(1).max(30).default(5) }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -603,87 +880,214 @@ const appRouter = router({
         if (!myTwin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIを作成してください" });
         const friendTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.friendId).first<any>();
         if (!friendTwin) throw new TRPCError({ code: "NOT_FOUND", message: "友達の分身AIがありません" });
-        const res = await ctx.env.DB.prepare(`INSERT INTO matching_sessions (initiatorUserId, twin1Id, twin2Id, theme, status) VALUES (?,?,?,?,'completed')`).bind(ctx.userId, myTwin.id, friendTwin.id, input.theme).run();
-        const sessionId = Number(res.meta.last_row_id);
-        // Phase 1: create placeholder dialogue
-        await ctx.env.DB.prepare(`INSERT INTO matching_dialogues (sessionId, speakerTwinId, content, turnNumber) VALUES (?,?,?,?)`).bind(sessionId, myTwin.id, `[Phase 1] ${input.theme}についてお話しましょう`, 0).run();
-        return { id: sessionId, dialogues: [] };
+
+        // Create session in 'running' status
+        const sessionRes = await ctx.env.DB.prepare(
+          `INSERT INTO matching_sessions (initiatorUserId, twin1Id, twin2Id, theme, status) VALUES (?,?,?,?,'running')`
+        ).bind(ctx.userId, myTwin.id, friendTwin.id, input.theme).run();
+        const sessionId = Number(sessionRes.meta.last_row_id);
+
+        const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+        if (!llmConfig) {
+          // No LLM config - insert placeholder and mark completed
+          await ctx.env.DB.prepare(`INSERT INTO matching_dialogues (sessionId, speakerTwinId, content, turnNumber) VALUES (?,?,?,?)`)
+            .bind(sessionId, myTwin.id, `AI APIキーが未設定のため、対話を生成できません。「AI API設定」でキーを登録してください。`, 0).run();
+          await ctx.env.DB.prepare(`UPDATE matching_sessions SET status='completed', completedAt=datetime('now') WHERE id=?`).bind(sessionId).run();
+          return { id: sessionId, dialogues: [] };
+        }
+
+        // Generate real dialogue between twins
+        const twins = [
+          { id: myTwin.id, name: myTwin.name, desc: myTwin.description || "", personality: myTwin.personality || "" },
+          { id: friendTwin.id, name: normalizeTwin(friendTwin)?.name || "Twin", desc: friendTwin.description || "", personality: friendTwin.personality || "" },
+        ];
+        const dialogueHistory: { speaker: string; content: string }[] = [];
+        const turnsToRun = Math.min(input.turns, 10);
+
+        for (let turn = 0; turn < turnsToRun; turn++) {
+          const speakerIdx = turn % 2;
+          const speaker = twins[speakerIdx];
+          const other = twins[1 - speakerIdx];
+
+          const systemPrompt = `あなたは「${speaker.name}」というデジタル分身AIです。${speaker.desc ? `説明: ${speaker.desc}。` : ""}${speaker.personality ? `性格: ${speaker.personality}。` : ""}
+テーマ「${input.theme}」について「${other.name}」と建設的なビジネス対話をしています。
+相手の意見を尊重しつつ、自分の専門性や経験に基づいた具体的な提案や考えを述べてください。
+簡潔で具体的な発言（150〜300文字程度）をしてください。`;
+
+          const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
+            { role: "system", content: systemPrompt },
+          ];
+          // Add dialogue history as context
+          for (const d of dialogueHistory) {
+            messages.push({
+              role: d.speaker === speaker.name ? "assistant" : "user",
+              content: `${d.speaker}: ${d.content}`,
+            });
+          }
+          if (turn === 0) {
+            messages.push({ role: "user", content: `テーマ「${input.theme}」について話し始めてください。` });
+          }
+
+          try {
+            const result = await invokeLLM(llmConfig, messages, { maxTokens: 512, temperature: 0.8 });
+            const content = result.content.replace(new RegExp(`^${speaker.name}:\\s*`, "i"), "");
+            dialogueHistory.push({ speaker: speaker.name, content });
+            await ctx.env.DB.prepare(
+              `INSERT INTO matching_dialogues (sessionId, speakerTwinId, content, turnNumber, aiProvider, aiModel) VALUES (?,?,?,?,?,?)`
+            ).bind(sessionId, speaker.id, content, turn, result.provider, result.model).run();
+          } catch (error: any) {
+            await ctx.env.DB.prepare(
+              `INSERT INTO matching_dialogues (sessionId, speakerTwinId, content, turnNumber) VALUES (?,?,?,?)`
+            ).bind(sessionId, speaker.id, `[対話生成エラー: ${error.message}]`, turn).run();
+            break;
+          }
+        }
+
+        // Run analysis after dialogue
+        try {
+          const analysisPrompt = `以下は「${twins[0].name}」と「${twins[1].name}」のビジネスマッチング対話です。テーマ: ${input.theme}
+
+${dialogueHistory.map(d => `${d.speaker}: ${d.content}`).join("\n\n")}
+
+以下のJSON形式で分析結果を返してください（日本語で）:
+{
+  "compatibilityScore": (0-100の数値),
+  "summary": "(総合評価の要約)",
+  "collaborationPotential": "(協業可能性の詳細な説明)",
+  "strengths": ["強み1", "強み2", "強み3"],
+  "challenges": ["課題1", "課題2"],
+  "recommendations": ["提案1", "提案2", "提案3"],
+  "scoreBreakdown": {
+    "skillMatch": {"score": (0-20), "reason": "理由"},
+    "valueAlignment": {"score": (0-20), "reason": "理由"},
+    "communicationStyle": {"score": (0-20), "reason": "理由"},
+    "businessGoalFit": {"score": (0-20), "reason": "理由"},
+    "complementaryStrengths": {"score": (0-20), "reason": "理由"}
+  },
+  "detailedAnalysis": "(詳細分析のマークダウン)",
+  "roleDistribution": "(役割分担の提案マークダウン)",
+  "timeline": "(タイムライン提案のマークダウン)",
+  "resources": "(必要リソースのマークダウン)",
+  "kpis": "(期待成果・KPIのマークダウン)",
+  "nextSteps": "(明日からできるアクションのマークダウン)"
+}
+
+JSONのみ出力し、他の説明は不要です。`;
+
+          const analysisResult = await invokeLLM(llmConfig, [
+            { role: "system", content: "あなたはビジネスマッチングの専門アナリストです。" },
+            { role: "user", content: analysisPrompt },
+          ], { maxTokens: 4096, temperature: 0.5 });
+
+          // Parse JSON from response
+          let analysis: any;
+          try {
+            const jsonMatch = analysisResult.content.match(/\{[\s\S]*\}/);
+            analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+          } catch { analysis = null; }
+
+          if (analysis) {
+            await ctx.env.DB.prepare(
+              `INSERT INTO matching_results (sessionId, compatibilityScore, scoreBreakdown, collaborationPotential, strengths, challenges, recommendations, summary, detailedAnalysis, roleDistribution, timeline, resources, kpis, nextSteps) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+            ).bind(
+              sessionId,
+              analysis.compatibilityScore ?? 50,
+              toJson(analysis.scoreBreakdown),
+              analysis.collaborationPotential ?? "",
+              toJson(analysis.strengths),
+              toJson(analysis.challenges),
+              toJson(analysis.recommendations),
+              analysis.summary ?? "",
+              analysis.detailedAnalysis ?? "",
+              analysis.roleDistribution ?? "",
+              analysis.timeline ?? "",
+              analysis.resources ?? "",
+              analysis.kpis ?? "",
+              analysis.nextSteps ?? "",
+            ).run();
+          }
+        } catch {
+          // Analysis failed, session still has dialogues
+        }
+
+        await ctx.env.DB.prepare(`UPDATE matching_sessions SET status='completed', completedAt=datetime('now') WHERE id=?`).bind(sessionId).run();
+        return { id: sessionId, dialogues: dialogueHistory };
       }),
-    runDialogue: publicProcedure
+    runDialogue: protectedProcedure
       .input(z.object({ sessionId: z.number(), turns: z.number().optional() }))
       .mutation(async () => ({ dialogues: [] })),
-    analyze: publicProcedure
+    analyze: protectedProcedure
       .input(z.object({ sessionId: z.number() }))
-      .mutation(async () => ({ compatibilityScore: 0, summary: "Phase 1: 分析機能は次のフェーズで実装", strengths: [], challenges: [], recommendations: [] })),
-    exportReport: publicProcedure
+      .mutation(async () => ({ compatibilityScore: 0, summary: "分析にはマッチング対話の生成が必要です", strengths: [], challenges: [], recommendations: [] })),
+    exportReport: protectedProcedure
       .input(z.object({ sessionId: z.number() }))
       .query(async () => ({ html: "<p>Phase 1</p>" })),
-    generatePresentation: publicProcedure
+    generatePresentation: protectedProcedure
       .input(z.object({ sessionId: z.number() }))
       .mutation(async () => ({ slideContent: { markdown: "", slideCount: 0 }, slideCount: 0 })),
-    generateNanoBananaSlides: publicProcedure
+    generateNanoBananaSlides: protectedProcedure
       .input(z.object({ sessionId: z.number() }))
       .mutation(async () => ({ slideContentFile: "", slideCount: 0, slides: [], theme: "", twin1Name: "", twin2Name: "", compatibilityScore: 0 })),
-    exportPptx: publicProcedure
+    exportPptx: protectedProcedure
       .input(z.object({ sessionId: z.number() }))
       .mutation(async () => ({ base64: "", filename: "", url: undefined as string | undefined })),
   }),
 
   // ============ Points ============
   points: router({
-    getBalance: publicProcedure.query(async ({ ctx }) => {
+    getBalance: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const row = await ctx.env.DB.prepare(`SELECT * FROM user_points WHERE userId=?`).bind(ctx.userId).first<any>();
       return row ?? { balance: 0, totalEarned: 0, totalSpent: 0, totalExpired: 0 };
     }),
-    getTransactions: publicProcedure
+    getTransactions: protectedProcedure
       .input(z.object({ limit: z.number().optional() }).optional())
       .query(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         const rows = await ctx.env.DB.prepare(`SELECT * FROM point_transactions WHERE userId=? ORDER BY createdAt DESC LIMIT ?`).bind(ctx.userId, input?.limit ?? 50).all<any>();
         return rows.results ?? [];
       }),
-    getProducts: publicProcedure.query(async ({ ctx }) => {
+    getProducts: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB.prepare(`SELECT * FROM redeemable_products WHERE isActive=1 ORDER BY sortOrder`).all<any>();
       return rows.results ?? [];
     }),
-    redeem: publicProcedure
+    redeem: protectedProcedure
       .input(z.object({ productId: z.number() }))
       .mutation(async () => ({ success: false, message: "Phase 1: ポイント交換は未対応" })),
-    getRedemptions: publicProcedure.query(async ({ ctx }) => {
+    getRedemptions: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB.prepare(`SELECT * FROM point_redemptions WHERE userId=? ORDER BY createdAt DESC`).bind(ctx.userId).all<any>();
       return rows.results ?? [];
     }),
-    getSettings: publicProcedure.query(async ({ ctx }) => {
+    getSettings: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB.prepare(`SELECT * FROM point_settings ORDER BY category, actionType`).all<any>();
       return rows.results ?? [];
     }),
-    updateSetting: publicProcedure
+    updateSetting: protectedProcedure
       .input(z.object({ actionType: z.string(), points: z.number().optional(), isActive: z.number().optional() }))
       .mutation(async () => ({ success: true })),
-    redeemProduct: publicProcedure
+    redeemProduct: protectedProcedure
       .input(z.object({ productId: z.number(), shippingInfo: z.record(z.string(), z.unknown()).optional() }))
       .mutation(async () => ({ success: false, message: "Phase 1: ポイント交換は未対応" })),
-    getQuests: publicProcedure.query(async () => ({
+    getQuests: protectedProcedure.query(async () => ({
       stats: { completedToday: 0, totalCompleted: 0, currentStreak: 0, totalPoints: 0 },
       categories: [] as { name: string; quests: any[] }[],
     })),
-    checkDailyLogin: publicProcedure.mutation(async () => ({ points: 0, isFirstLogin: false, awarded: false, streak: 0, streakBonus: null as { name: string; points: number } | null })),
-    checkMilestones: publicProcedure.mutation(async () => ({ milestones: [] as any[], newMilestones: [] as any[], awarded: [] as { name: string; points: number }[] })),
+    checkDailyLogin: protectedProcedure.mutation(async () => ({ points: 0, isFirstLogin: false, awarded: false, streak: 0, streakBonus: null as { name: string; points: number } | null })),
+    checkMilestones: protectedProcedure.mutation(async () => ({ milestones: [] as any[], newMilestones: [] as any[], awarded: [] as { name: string; points: number }[] })),
   }),
 
   // ============ Quests ============
   quests: router({
-    list: publicProcedure.query(async () => []),
-    checkDailyLogin: publicProcedure.mutation(async () => ({ points: 0, isFirstLogin: false })),
+    list: protectedProcedure.query(async () => []),
+    checkDailyLogin: protectedProcedure.mutation(async () => ({ points: 0, isFirstLogin: false })),
   }),
 
   // ============ Growth ============
   growth: router({
-    getStatus: publicProcedure.query(async ({ ctx }) => {
+    getStatus: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const twin = await getMyTwin(ctx.env.DB, ctx.userId);
       if (!twin) return null;
@@ -694,14 +1098,14 @@ const appRouter = router({
       }
       return status;
     }),
-    getSkillLevels: publicProcedure.query(async ({ ctx }) => {
+    getSkillLevels: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const twin = await getMyTwin(ctx.env.DB, ctx.userId);
       if (!twin) return [];
       const rows = await ctx.env.DB.prepare(`SELECT * FROM twin_skill_levels WHERE twinId=?`).bind(twin.id).all<any>();
       return rows.results ?? [];
     }),
-    setSkillLevel: publicProcedure
+    setSkillLevel: protectedProcedure
       .input(z.object({ skillType: z.string(), level: z.number().min(1).max(5) }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -715,7 +1119,7 @@ const appRouter = router({
         }
         return { success: true };
       }),
-    setSkillLevels: publicProcedure
+    setSkillLevels: protectedProcedure
       .input(z.object({ skills: z.record(z.string(), z.number()).optional(), skillLevels: z.record(z.string(), z.number()).optional(), isCampaign: z.boolean().optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -732,21 +1136,21 @@ const appRouter = router({
         }
         return { success: true };
       }),
-    getSkills: publicProcedure.query(async ({ ctx }) => {
+    getSkills: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const twin = await getMyTwin(ctx.env.DB, ctx.userId);
       if (!twin) return [];
       const rows = await ctx.env.DB.prepare(`SELECT * FROM twin_skill_levels WHERE twinId=?`).bind(twin.id).all<any>();
       return rows.results ?? [];
     }),
-    areSkillsConfigured: publicProcedure.query(async ({ ctx }) => {
+    areSkillsConfigured: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const twin = await getMyTwin(ctx.env.DB, ctx.userId);
       if (!twin) return false;
       const row = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM twin_skill_levels WHERE twinId=?`).bind(twin.id).first<any>();
       return (row?.c ?? 0) > 0;
     }),
-    getAvailableSkillPoints: publicProcedure
+    getAvailableSkillPoints: protectedProcedure
       .input(z.object({ isCampaign: z.boolean().optional() }).optional())
       .query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
@@ -755,7 +1159,7 @@ const appRouter = router({
       const status = await ctx.env.DB.prepare(`SELECT level FROM twin_growth_status WHERE twinId=?`).bind(twin.id).first<any>();
       return (status?.level ?? 1) * 3;
     }),
-    getMilestones: publicProcedure.query(async ({ ctx }) => {
+    getMilestones: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const twin = await getMyTwin(ctx.env.DB, ctx.userId);
       if (!twin) return [];
@@ -766,7 +1170,7 @@ const appRouter = router({
 
   // ============ Cards ============
   cards: router({
-    list: publicProcedure
+    list: protectedProcedure
       .input(z.object({ search: z.string().optional(), type: z.string().optional(), cardType: z.string().optional(), archived: z.boolean().optional(), isArchived: z.boolean().optional(), isFavorite: z.boolean().optional() }).optional())
       .query(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -781,22 +1185,29 @@ const appRouter = router({
         if (input?.search) { sql += ` AND (name LIKE ? OR company LIKE ? OR email LIKE ?)`; binds.push(`%${input.search}%`, `%${input.search}%`, `%${input.search}%`); }
         sql += ` ORDER BY createdAt DESC`;
         const rows = await ctx.env.DB.prepare(sql).bind(...binds).all<any>();
-        return (rows.results ?? []).map(r => ({ ...r, tags: parseJson<string[]>(r.tags) ?? [], ocrData: parseJson<any>(r.ocrData) }));
+        return (rows.results ?? []).map(r => {
+          const parsed = { ...r, tags: parseJson<string[]>(r.tags) ?? [], ocrData: parseJson<any>(r.ocrData) };
+          return { ...parsed, title: parsed.name, frontImageUrl: parsed.imageUrl, extractedData: parsed.ocrData };
+        });
       }),
-    create: publicProcedure
+    create: protectedProcedure
       .input(z.object({ cardType: z.string().optional(), name: z.string().optional(), title: z.string().optional(), company: z.string().optional(), position: z.string().optional(), email: z.string().optional(), phone: z.string().optional(), address: z.string().optional(), website: z.string().optional(), imageUrl: z.string().optional(), frontImageUrl: z.string().optional(), frontImageKey: z.string().optional(), ocrData: z.any().optional(), extractedData: z.any().optional(), notes: z.string().optional(), tags: z.array(z.string()).optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
-        const res = await ctx.env.DB.prepare(`INSERT INTO cards (userId, cardType, name, company, position, email, phone, address, website, imageUrl, ocrData, notes, tags) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(ctx.userId, input.cardType ?? "business_card", input.name ?? null, input.company ?? null, input.position ?? null, input.email ?? null, input.phone ?? null, input.address ?? null, input.website ?? null, input.imageUrl ?? null, toJson(input.ocrData), input.notes ?? null, toJson(input.tags)).run();
+        const cardName = input.name ?? input.title ?? null;
+        const cardImageUrl = input.imageUrl ?? input.frontImageUrl ?? null;
+        const cardOcrData = input.ocrData ?? input.extractedData ?? null;
+        const res = await ctx.env.DB.prepare(`INSERT INTO cards (userId, cardType, name, company, position, email, phone, address, website, imageUrl, ocrData, notes, tags) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(ctx.userId, input.cardType ?? "business_card", cardName, input.company ?? null, input.position ?? null, input.email ?? null, input.phone ?? null, input.address ?? null, input.website ?? null, cardImageUrl, toJson(cardOcrData), input.notes ?? null, toJson(input.tags)).run();
         return { id: Number(res.meta.last_row_id) };
       }),
-    update: publicProcedure
+    update: protectedProcedure
       .input(z.object({ id: z.number(), name: z.string().optional(), title: z.string().optional(), company: z.string().optional(), position: z.string().optional(), email: z.string().optional(), phone: z.string().optional(), notes: z.string().optional(), isFavorite: z.boolean().optional(), isArchived: z.boolean().optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         const sets: string[] = [];
         const binds: any[] = [];
-        if (input.name !== undefined) { sets.push("name=?"); binds.push(input.name); }
+        const nameVal = input.name ?? input.title;
+        if (nameVal !== undefined) { sets.push("name=?"); binds.push(nameVal); }
         if (input.company !== undefined) { sets.push("company=?"); binds.push(input.company); }
         if (input.position !== undefined) { sets.push("position=?"); binds.push(input.position); }
         if (input.email !== undefined) { sets.push("email=?"); binds.push(input.email); }
@@ -811,20 +1222,21 @@ const appRouter = router({
         }
         return { success: true };
       }),
-    get: publicProcedure
+    get: protectedProcedure
       .input(z.object({ id: z.number() }))
       .query(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         const row = await ctx.env.DB.prepare(`SELECT * FROM cards WHERE id=? AND userId=?`).bind(input.id, ctx.userId).first<any>();
         if (!row) return null;
-        return { ...row, tags: parseJson<string[]>(row.tags) ?? [], ocrData: parseJson<any>(row.ocrData) };
+        const parsed = { ...row, tags: parseJson<string[]>(row.tags) ?? [], ocrData: parseJson<any>(row.ocrData) };
+        return { ...parsed, title: parsed.name, frontImageUrl: parsed.imageUrl, extractedData: parsed.ocrData };
       }),
-    delete: publicProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       await ctx.env.DB.prepare(`DELETE FROM cards WHERE id=? AND userId=?`).bind(input.id, ctx.userId).run();
       return { success: true };
     }),
-    toggleFavorite: publicProcedure
+    toggleFavorite: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -833,7 +1245,7 @@ const appRouter = router({
         await ctx.env.DB.prepare(`UPDATE cards SET isFavorite=?, updatedAt=datetime('now') WHERE id=?`).bind(card.isFavorite ? 0 : 1, input.id).run();
         return { success: true };
       }),
-    toggleArchive: publicProcedure
+    toggleArchive: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -842,20 +1254,164 @@ const appRouter = router({
         await ctx.env.DB.prepare(`UPDATE cards SET isArchived=?, updatedAt=datetime('now') WHERE id=?`).bind(card.isArchived ? 0 : 1, input.id).run();
         return { success: true };
       }),
-    search: publicProcedure
+    search: protectedProcedure
       .input(z.object({ query: z.string(), cardType: z.string().optional() }))
       .query(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         const rows = await ctx.env.DB.prepare(`SELECT * FROM cards WHERE userId=? AND (name LIKE ? OR company LIKE ? OR email LIKE ?) ORDER BY createdAt DESC`).bind(ctx.userId, `%${input.query}%`, `%${input.query}%`, `%${input.query}%`).all<any>();
-        return (rows.results ?? []).map((r: any) => ({ ...r, tags: parseJson<string[]>(r.tags) ?? [], ocrData: parseJson<any>(r.ocrData) }));
+        return (rows.results ?? []).map((r: any) => {
+          const parsed = { ...r, tags: parseJson<string[]>(r.tags) ?? [], ocrData: parseJson<any>(r.ocrData) };
+          return { ...parsed, title: parsed.name, frontImageUrl: parsed.imageUrl, extractedData: parsed.ocrData };
+        });
       }),
-    uploadImage: publicProcedure
+    uploadImage: protectedProcedure
       .input(z.object({ id: z.number().optional(), imageData: z.string(), fileName: z.string().optional(), contentType: z.string().optional() }))
-      .mutation(async () => ({ url: "", key: "", imageUrl: "", success: true })),
-    analyzeImage: publicProcedure
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const r2 = ctx.env.ASSETS;
+        if (!r2) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "R2 storage is not configured" });
+
+        // Decode base64 data (strip data URL prefix if present)
+        const base64Data = input.imageData.replace(/^data:[^;]+;base64,/, "");
+        const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+
+        const ext = (input.fileName || "image.jpg").split(".").pop() || "jpg";
+        const key = `cards/${ctx.userId}/${Date.now()}.${ext}`;
+        const contentType = input.contentType || `image/${ext === "jpg" ? "jpeg" : ext}`;
+
+        await r2.put(key, binaryData, { httpMetadata: { contentType } });
+
+        const url = `/assets/${key}`;
+
+        // Update card record if id provided
+        if (input.id) {
+          await ctx.env.DB.prepare(`UPDATE cards SET imageUrl=?, updatedAt=datetime('now') WHERE id=? AND userId=?`)
+            .bind(url, input.id, ctx.userId).run();
+        }
+
+        return { url, key, imageUrl: url, success: true };
+      }),
+    analyzeImage: protectedProcedure
       .input(z.object({ imageUrl: z.string(), cardType: z.string().optional() }))
-      .mutation(async () => ({ extractedData: { name: null as string | null, company: null as string | null, position: null as string | null, email: null as string | null, phone: null as string | null, address: null as string | null, website: null as string | null, storeName: null as string | null, organizationName: null as string | null, hospitalName: null as string | null }, ocrData: null as any })),
-    getStats: publicProcedure.query(async ({ ctx }) => {
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const nullResult = { name: null as string | null, company: null as string | null, position: null as string | null, email: null as string | null, phone: null as string | null, address: null as string | null, website: null as string | null, storeName: null as string | null, organizationName: null as string | null, hospitalName: null as string | null };
+
+        // Get image data - from R2 if local path, or fetch from URL
+        let imageBase64: string | null = null;
+        let imageMimeType = "image/jpeg";
+
+        if (input.imageUrl.startsWith("/assets/")) {
+          const r2 = ctx.env.ASSETS;
+          if (r2) {
+            const key = input.imageUrl.replace(/^\/assets\//, "");
+            const obj = await r2.get(key);
+            if (obj) {
+              const buf = await obj.arrayBuffer();
+              imageBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+              imageMimeType = obj.httpMetadata?.contentType || "image/jpeg";
+            }
+          }
+        } else if (input.imageUrl.startsWith("data:")) {
+          const match = input.imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+          if (match) {
+            imageMimeType = match[1];
+            imageBase64 = match[2];
+          }
+        }
+
+        if (!imageBase64) {
+          return { extractedData: nullResult, ocrData: null };
+        }
+
+        // Get user's LLM config - prefer vision-capable models
+        const configs = await ctx.env.DB.prepare(`SELECT provider, apiKey FROM ai_api_configs WHERE userId=? AND isActive=1`).bind(ctx.userId).all<any>();
+        const keys = new Map<string, string>();
+        for (const c of configs.results ?? []) keys.set(c.provider, c.apiKey);
+
+        const ocrPrompt = `この名刺画像からテキストを読み取り、以下のJSON形式で情報を抽出してください。
+読み取れない項目はnullにしてください。JSONのみ出力してください。
+{
+  "name": "氏名",
+  "company": "会社名",
+  "position": "役職",
+  "email": "メールアドレス",
+  "phone": "電話番号",
+  "address": "住所",
+  "website": "ウェブサイト"
+}`;
+
+        let ocrResult: any = null;
+
+        // Try OpenAI (gpt-4o has vision)
+        if (keys.has("openai")) {
+          try {
+            const res = await fetch("https://api.openai.com/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${keys.get("openai")}` },
+              body: JSON.stringify({
+                model: "gpt-4o",
+                messages: [{ role: "user", content: [
+                  { type: "text", text: ocrPrompt },
+                  { type: "image_url", image_url: { url: `data:${imageMimeType};base64,${imageBase64}` } },
+                ] }],
+                max_tokens: 1024,
+              }),
+            });
+            if (res.ok) {
+              const data = await res.json() as any;
+              const text = data.choices?.[0]?.message?.content ?? "";
+              const jsonMatch = text.match(/\{[\s\S]*\}/);
+              if (jsonMatch) ocrResult = JSON.parse(jsonMatch[0]);
+            }
+          } catch { /* fall through */ }
+        }
+
+        // Try Gemini (vision capable)
+        if (!ocrResult && keys.has("gemini")) {
+          try {
+            const res = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${keys.get("gemini")}`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  contents: [{ parts: [
+                    { text: ocrPrompt },
+                    { inlineData: { mimeType: imageMimeType, data: imageBase64 } },
+                  ] }],
+                }),
+              }
+            );
+            if (res.ok) {
+              const data = await res.json() as any;
+              const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+              const jsonMatch = text.match(/\{[\s\S]*\}/);
+              if (jsonMatch) ocrResult = JSON.parse(jsonMatch[0]);
+            }
+          } catch { /* fall through */ }
+        }
+
+        if (!ocrResult) {
+          return { extractedData: nullResult, ocrData: null };
+        }
+
+        const extractedData = {
+          name: ocrResult.name ?? null,
+          company: ocrResult.company ?? null,
+          position: ocrResult.position ?? null,
+          email: ocrResult.email ?? null,
+          phone: ocrResult.phone ?? null,
+          address: ocrResult.address ?? null,
+          website: ocrResult.website ?? null,
+          storeName: null as string | null,
+          organizationName: ocrResult.company ?? null,
+          hospitalName: null as string | null,
+        };
+
+        return { extractedData, ocrData: ocrResult };
+      }),
+    getStats: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const total = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM cards WHERE userId=? AND isArchived=0`).bind(ctx.userId).first<any>();
       const favorites = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM cards WHERE userId=? AND isFavorite=1`).bind(ctx.userId).first<any>();
@@ -870,11 +1426,11 @@ const appRouter = router({
 
   // ============ Clawdbot ============
   clawdbot: router({
-    getConnection: publicProcedure.query(async ({ ctx }) => {
+    getConnection: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       return ctx.env.DB.prepare(`SELECT * FROM clawdbot_connections WHERE userId=?`).bind(ctx.userId).first<any>();
     }),
-    saveConnection: publicProcedure
+    saveConnection: protectedProcedure
       .input(z.object({ gatewayUrl: z.string(), authToken: z.string().optional(), agentId: z.string().optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -888,33 +1444,33 @@ const appRouter = router({
         }
         return { success: true };
       }),
-    testConnection: publicProcedure.mutation(async () => ({ success: true, message: "Phase 1: 接続テスト未対応" })),
-    sendMessage: publicProcedure
+    testConnection: protectedProcedure.mutation(async () => ({ success: true, message: "Phase 1: 接続テスト未対応" })),
+    sendMessage: protectedProcedure
       .input(z.object({ content: z.string().optional(), message: z.string().optional(), sessionKey: z.string().optional() }))
       .mutation(async () => ({ response: "Phase 1: Clawdbotメッセージ未対応", success: true, sessionKey: undefined as string | undefined, error: undefined as string | undefined })),
-    getLearningStatus: publicProcedure.query(async ({ ctx }) => {
+    getLearningStatus: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const row = await ctx.env.DB.prepare(`SELECT * FROM conversation_learning WHERE userId=?`).bind(ctx.userId).first<any>();
       if (!row) return null;
       return { ...row, learnedTraits: parseJson<any>(row.learnedTraits) };
     }),
-    getMessageHistory: publicProcedure
+    getMessageHistory: protectedProcedure
       .input(z.object({ limit: z.number().optional() }).optional())
       .query(async () => {
         return [] as any[];
       }),
-    getModels: publicProcedure.query(async () => {
+    getModels: protectedProcedure.query(async () => {
       return { success: true, models: [] as string[] };
     }),
-    getLearnedTraits: publicProcedure.query(async ({ ctx }) => {
+    getLearnedTraits: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const row = await ctx.env.DB.prepare(`SELECT * FROM conversation_learning WHERE userId=?`).bind(ctx.userId).first<any>();
       if (!row) return null;
       return { ...row, learnedTraits: parseJson<any>(row.learnedTraits) };
     }),
-    syncConversations: publicProcedure.mutation(async () => ({ success: true, synced: 0, message: "Phase 1: 会話同期は未対応" })),
-    analyzePersonality: publicProcedure.mutation(async () => ({ success: true, analyzed: false, message: "Phase 1: 性格分析は未対応" })),
-    updateLearningSettings: publicProcedure
+    syncConversations: protectedProcedure.mutation(async () => ({ success: true, synced: 0, message: "Phase 1: 会話同期は未対応" })),
+    analyzePersonality: protectedProcedure.mutation(async () => ({ success: true, analyzed: false, message: "Phase 1: 性格分析は未対応" })),
+    updateLearningSettings: protectedProcedure
       .input(z.object({ autoLearnEnabled: z.boolean().optional(), learningThreshold: z.number().optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -932,7 +1488,21 @@ const appRouter = router({
         }
         return { success: true };
       }),
-    createConnection: publicProcedure
+    updateLearnedTraits: protectedProcedure
+      .input(z.object({ learnedTraits: z.any() }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+        if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIを作成してください" });
+        const existing = await ctx.env.DB.prepare(`SELECT id FROM conversation_learning WHERE userId=?`).bind(ctx.userId).first<any>();
+        if (existing) {
+          await ctx.env.DB.prepare(`UPDATE conversation_learning SET learnedTraits=?, updatedAt=datetime('now') WHERE id=?`).bind(toJson(input.learnedTraits), existing.id).run();
+        } else {
+          await ctx.env.DB.prepare(`INSERT INTO conversation_learning (userId, twinId, learnedTraits) VALUES (?,?,?)`).bind(ctx.userId, twin.id, toJson(input.learnedTraits)).run();
+        }
+        return { success: true };
+      }),
+    createConnection: protectedProcedure
       .input(z.object({ gatewayUrl: z.string(), authToken: z.string().optional(), agentId: z.string().optional(), settings: z.record(z.string(), z.unknown()).optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -941,7 +1511,7 @@ const appRouter = router({
         await ctx.env.DB.prepare(`INSERT INTO clawdbot_connections (userId, twinId, gatewayUrl, authToken, agentId) VALUES (?,?,?,?,?)`).bind(ctx.userId, twin.id, input.gatewayUrl, input.authToken ?? null, input.agentId ?? "main").run();
         return { success: true };
       }),
-    updateConnection: publicProcedure
+    updateConnection: protectedProcedure
       .input(z.object({ gatewayUrl: z.string().optional(), authToken: z.string().optional(), agentId: z.string().optional(), settings: z.record(z.string(), z.unknown()).optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -957,7 +1527,7 @@ const appRouter = router({
         }
         return { success: true };
       }),
-    deleteConnection: publicProcedure.mutation(async ({ ctx }) => {
+    deleteConnection: protectedProcedure.mutation(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       await ctx.env.DB.prepare(`DELETE FROM clawdbot_connections WHERE userId=?`).bind(ctx.userId).run();
       return { success: true };
@@ -966,13 +1536,13 @@ const appRouter = router({
 
   // ============ LINE ============
   line: router({
-    getConnection: publicProcedure.query(async ({ ctx }) => {
+    getConnection: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const row = await ctx.env.DB.prepare(`SELECT * FROM line_connections WHERE userId=?`).bind(ctx.userId).first<any>();
       if (!row) return null;
       return { ...row, settings: parseJson<any>(row.settings) };
     }),
-    linkByCode: publicProcedure
+    linkByCode: protectedProcedure
       .input(z.object({ code: z.string().min(1) }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -989,12 +1559,12 @@ const appRouter = router({
           .run();
         return { success: true };
       }),
-    disconnect: publicProcedure.mutation(async ({ ctx }) => {
+    disconnect: protectedProcedure.mutation(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       await ctx.env.DB.prepare(`UPDATE line_connections SET status='disconnected', disconnectedAt=datetime('now'), updatedAt=datetime('now') WHERE userId=?`).bind(ctx.userId).run();
       return { success: true };
     }),
-    updateSettings: publicProcedure
+    updateSettings: protectedProcedure
       .input(z.record(z.string(), z.unknown()))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -1005,7 +1575,7 @@ const appRouter = router({
         await ctx.env.DB.prepare(`UPDATE line_connections SET settings=?, updatedAt=datetime('now') WHERE userId=?`).bind(toJson(merged), ctx.userId).run();
         return { success: true };
       }),
-    toggleStatus: publicProcedure
+    toggleStatus: protectedProcedure
       .input(z.object({ status: z.string().optional() }).optional())
       .mutation(async ({ ctx }) => {
         await ensureSchema(ctx.env.DB);
@@ -1015,7 +1585,7 @@ const appRouter = router({
         await ctx.env.DB.prepare(`UPDATE line_connections SET status=?, updatedAt=datetime('now') WHERE userId=?`).bind(newStatus, ctx.userId).run();
         return { success: true, status: newStatus };
       }),
-    getMessageHistory: publicProcedure
+    getMessageHistory: protectedProcedure
       .input(z.object({ limit: z.number().optional() }).optional())
       .query(async () => {
         return [] as any[];
@@ -1024,17 +1594,17 @@ const appRouter = router({
 
   // ============ Plan ============
   plan: router({
-    getCurrent: publicProcedure.query(async ({ ctx }) => {
+    getCurrent: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const user = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
       return { plan: user?.plan ?? "free" };
     }),
-    getInfo: publicProcedure.query(async ({ ctx }) => {
+    getInfo: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const user = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
       return { plan: user?.plan ?? "free", limits: { maxFriends: 5, maxMatchingsPerMonth: 3 } };
     }),
-    getStats: publicProcedure.query(async ({ ctx }) => {
+    getStats: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const friends = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM friendships WHERE (userId=? OR friendId=?) AND status='accepted'`).bind(ctx.userId, ctx.userId).first<any>();
       const matchings = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM matching_sessions WHERE initiatorUserId=?`).bind(ctx.userId).first<any>();
@@ -1047,12 +1617,12 @@ const appRouter = router({
         limits: { maxFriends: 5, maxMatchingsPerMonth: 3, maxKnowledge: 50, maxKnowledgeEntries: 50, maxFileUploads: 10 },
       };
     }),
-    getSubscription: publicProcedure.query(async () => null as { cancelAtPeriodEnd: boolean; currentPeriodEnd: string } | null),
-    createCheckoutSession: publicProcedure
+    getSubscription: protectedProcedure.query(async () => null as { cancelAtPeriodEnd: boolean; currentPeriodEnd: string } | null),
+    createCheckoutSession: protectedProcedure
       .input(z.object({ planId: z.string().optional(), plan: z.string().optional(), billingCycle: z.string().optional(), interval: z.string().optional() }))
       .mutation(async () => ({ url: undefined as string | undefined, message: "Phase 1: Stripe未対応" })),
-    createPortalSession: publicProcedure.mutation(async () => ({ url: undefined as string | undefined })),
-    getFriendCode: publicProcedure.query(async ({ ctx }) => {
+    createPortalSession: protectedProcedure.mutation(async () => ({ url: undefined as string | undefined })),
+    getFriendCode: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       let user = await ctx.env.DB.prepare(`SELECT friendCode FROM users WHERE id=?`).bind(ctx.userId).first<any>();
       if (!user?.friendCode) {
@@ -1062,7 +1632,7 @@ const appRouter = router({
       }
       return { friendCode: user.friendCode };
     }),
-    getUsage: publicProcedure.query(async ({ ctx }) => {
+    getUsage: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const usage = await ctx.env.DB.prepare(`SELECT * FROM usage_tracking WHERE userId=?`).bind(ctx.userId).first<any>();
       return usage ?? { matchingsThisMonth: 0 };
@@ -1071,15 +1641,15 @@ const appRouter = router({
 
   // ============ Stripe (stubs) ============
   stripe: router({
-    createCheckoutSession: publicProcedure
+    createCheckoutSession: protectedProcedure
       .input(z.object({ planId: z.string() }))
       .mutation(async () => ({ url: undefined as string | undefined, message: "Phase 1: Stripe未対応" })),
-    getSubscription: publicProcedure.query(async () => null as { cancelAtPeriodEnd: boolean; currentPeriodEnd: string } | null),
+    getSubscription: protectedProcedure.query(async () => null as { cancelAtPeriodEnd: boolean; currentPeriodEnd: string } | null),
   }),
 
   // ============ Discover ============
   discover: router({
-    search: publicProcedure
+    search: protectedProcedure
       .input(z.object({ query: z.string().optional(), limit: z.number().optional() }).optional())
       .query(async ({ ctx }) => {
         await ensureSchema(ctx.env.DB);
@@ -1090,7 +1660,7 @@ const appRouter = router({
 
   // ============ User (friend code etc) ============
   user: router({
-    getFriendCode: publicProcedure.query(async ({ ctx }) => {
+    getFriendCode: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       let user = await ctx.env.DB.prepare(`SELECT friendCode FROM users WHERE id=?`).bind(ctx.userId).first<any>();
       if (!user?.friendCode) {
@@ -1100,7 +1670,7 @@ const appRouter = router({
       }
       return { friendCode: user.friendCode };
     }),
-    getStats: publicProcedure.query(async ({ ctx }) => {
+    getStats: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const friends = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM friendships WHERE (userId=? OR friendId=?) AND status='accepted'`).bind(ctx.userId, ctx.userId).first<any>();
       const matchings = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM matching_sessions WHERE initiatorUserId=?`).bind(ctx.userId).first<any>();
@@ -1118,12 +1688,12 @@ const appRouter = router({
 
   // ============ AI Provider (alias used by frontend) ============
   aiProvider: router({
-    getSettings: publicProcedure.query(async ({ ctx }) => {
+    getSettings: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB.prepare(`SELECT * FROM ai_provider_settings WHERE userId=?`).bind(ctx.userId).all<any>();
       return rows.results ?? [];
     }),
-    getAvailableProviders: publicProcedure.query(async () => {
+    getAvailableProviders: protectedProcedure.query(async () => {
       return [
         { id: "openai", provider: "openai", name: "OpenAI", available: true, models: ["gpt-4o", "gpt-4o-mini"] },
         { id: "gemini", provider: "gemini", name: "Gemini", available: true, models: ["gemini-2.0-flash", "gemini-1.5-pro"] },
@@ -1131,10 +1701,68 @@ const appRouter = router({
         { id: "grok", provider: "grok", name: "Grok", available: true, models: ["grok-2"] },
       ];
     }),
-    testProvider: publicProcedure
+    testProvider: protectedProcedure
       .input(z.object({ provider: z.string(), model: z.string().optional() }))
-      .mutation(async () => ({ success: true, error: null as string | null, message: "Phase 1: プロバイダーテスト未対応", latency: 0 })),
-    updateSetting: publicProcedure
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const config = await ctx.env.DB.prepare(
+          `SELECT apiKey FROM ai_api_configs WHERE userId=? AND provider=? AND isActive=1`
+        ).bind(ctx.userId, input.provider).first<any>();
+        if (!config) return { success: false, error: "APIキーが設定されていません", message: "APIキーが設定されていません", latency: 0 };
+
+        const startTime = Date.now();
+        try {
+          switch (input.provider) {
+            case "openai": {
+              const res = await fetch("https://api.openai.com/v1/models", {
+                headers: { Authorization: `Bearer ${config.apiKey}` },
+              });
+              if (!res.ok) return { success: false, error: `API error: ${res.status}`, message: `OpenAI API error: ${res.status}`, latency: Date.now() - startTime };
+              break;
+            }
+            case "gemini": {
+              const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${config.apiKey}`);
+              if (!res.ok) return { success: false, error: `API error: ${res.status}`, message: `Gemini API error: ${res.status}`, latency: Date.now() - startTime };
+              break;
+            }
+            case "anthropic": {
+              const res = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-api-key": config.apiKey,
+                  "anthropic-version": "2023-06-01",
+                },
+                body: JSON.stringify({
+                  model: input.model || "claude-sonnet-4-20250514",
+                  messages: [{ role: "user", content: "Hi" }],
+                  max_tokens: 1,
+                }),
+              });
+              if (res.status === 401 || res.status === 403) return { success: false, error: `API error: ${res.status}`, message: `Anthropic API error: ${res.status}`, latency: Date.now() - startTime };
+              break;
+            }
+            case "grok": {
+              const res = await fetch("https://api.x.ai/v1/models", {
+                headers: { Authorization: `Bearer ${config.apiKey}` },
+              });
+              if (!res.ok) return { success: false, error: `API error: ${res.status}`, message: `Grok API error: ${res.status}`, latency: Date.now() - startTime };
+              break;
+            }
+            default:
+              return { success: false, error: "未対応のプロバイダー", message: "未対応のプロバイダー", latency: 0 };
+          }
+          const latency = Date.now() - startTime;
+          // Update last validated timestamp
+          await ctx.env.DB.prepare(
+            `UPDATE ai_api_configs SET lastValidated=datetime('now') WHERE userId=? AND provider=?`
+          ).bind(ctx.userId, input.provider).run();
+          return { success: true, error: null, message: `接続成功 (${latency}ms)`, latency };
+        } catch (e: any) {
+          return { success: false, error: e.message, message: e.message, latency: Date.now() - startTime };
+        }
+      }),
+    updateSetting: protectedProcedure
       .input(z.object({ feature: z.string(), provider: z.string(), model: z.string().optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -1148,14 +1776,62 @@ const appRouter = router({
       }),
   }),
 
+  // ============ Onboarding ============
+  onboarding: router({
+    getStatus: publicProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      if (!ctx.userId) return { onboardingCompleted: 0 };
+      const row = await ctx.env.DB.prepare(`SELECT onboardingCompleted FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      return { onboardingCompleted: row?.onboardingCompleted ?? 0 };
+    }),
+    getSession: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      if (!ctx.userId) return null;
+      const session = await ctx.env.DB.prepare(
+        `SELECT * FROM chat_sessions WHERE userId=? AND mode='onboarding' ORDER BY createdAt DESC LIMIT 1`
+      ).bind(ctx.userId).first<any>();
+      return session ?? null;
+    }),
+    complete: protectedProcedure
+      .input(z.object({
+        description: z.string().optional(),
+        personality: z.string().optional(),
+        rawInput: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        if (!ctx.userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+        // Update onboardingCompleted flag
+        await ctx.env.DB.prepare(`UPDATE users SET onboardingCompleted=1 WHERE id=?`).bind(ctx.userId).run();
+        // Update twin profile if data provided
+        const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+        if (twin) {
+          const sets: string[] = [];
+          const binds: any[] = [];
+          if (input.description) { sets.push("description=?"); binds.push(input.description); }
+          if (input.personality) { sets.push("personality=?"); binds.push(input.personality); }
+          if (input.rawInput) { sets.push("rawInput=?"); binds.push(input.rawInput); }
+          // Clear onboarding system prompt and set a normal one
+          sets.push("systemPrompt=?");
+          binds.push(null);
+          if (sets.length > 0) {
+            sets.push("updatedAt=datetime('now')");
+            binds.push(twin.id);
+            await ctx.env.DB.prepare(`UPDATE digital_twins SET ${sets.join(",")} WHERE id=?`).bind(...binds).run();
+          }
+        }
+        return { success: true };
+      }),
+  }),
+
   // ============ Admin AI Provider ============
   adminAiProvider: router({
-    getSettings: publicProcedure.query(async ({ ctx }) => {
+    getSettings: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB.prepare(`SELECT * FROM ai_provider_settings WHERE userId=?`).bind(ctx.userId).all<any>();
       return rows.results ?? [];
     }),
-    updateSetting: publicProcedure
+    updateSetting: protectedProcedure
       .input(z.object({ feature: z.string(), provider: z.string(), model: z.string().optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -1179,26 +1855,99 @@ const api = new Hono<{ Bindings: Env }>();
 api.use(
   "/api/*",
   cors({
-    origin: "*",
+    origin: (origin) => origin || "*",
     allowHeaders: ["content-type"],
     allowMethods: ["GET", "POST", "OPTIONS"],
-    credentials: false,
+    credentials: true,
   })
 );
 
 api.get("/", (c) => c.json({ message: "Bunshin AI API v2. Use /api/* endpoints." }));
 api.get("/api/health", (c) => c.json({ ok: true }));
 
-api.all("/api/trpc/*", (c) => {
-  // Phase 1: no auth; single user.
-  const userId = 1;
+api.all("/api/trpc/*", async (c) => {
+  const env = c.env as Env;
+  const db = env.DB;
+  await ensureSchema(db);
+
+  // Try to resolve user from JWT cookie
+  let userId = 0;
+  let user: Context["user"] = null;
+  const cookieHeader = c.req.header("cookie") || null;
+  const token = parseCookie(cookieHeader, COOKIE_NAME);
+
+  if (token) {
+    const session = await verifySessionToken(token, env);
+    if (session) {
+      const row = await db.prepare(`SELECT id, openId, name, email, role, plan FROM users WHERE id=?`).bind(session.userId).first<any>();
+      if (row) {
+        userId = row.id;
+        user = { id: row.id, openId: row.openId, name: row.name, email: row.email, role: row.role };
+      }
+    }
+  }
 
   return fetchRequestHandler({
     endpoint: "/api/trpc",
     req: c.req.raw,
     router: appRouter,
-    createContext: () => ({ env: c.env as Env, userId }),
+    createContext: () => ({ env, userId, user }),
   });
+});
+
+// Set-cookie endpoint for login/register (called by client after tRPC mutation)
+api.post("/api/auth/set-session", async (c) => {
+  const body = await c.req.json<{ token: string }>();
+  if (!body.token) return c.json({ error: "token required" }, 400);
+
+  const env = c.env as Env;
+  const session = await verifySessionToken(body.token, env);
+  if (!session) return c.json({ error: "invalid token" }, 401);
+
+  const isProduction = c.req.url.includes("workers.dev") || c.req.url.includes("pages.dev");
+  const cookie = [
+    `${COOKIE_NAME}=${body.token}`,
+    `Path=/`,
+    `HttpOnly`,
+    isProduction ? `SameSite=None` : `SameSite=Lax`,
+    `Max-Age=${Math.floor(ONE_YEAR_MS / 1000)}`,
+    isProduction ? `Secure` : "",
+  ].filter(Boolean).join("; ");
+
+  return c.json({ success: true }, 200, { "Set-Cookie": cookie });
+});
+
+// Serve R2 assets
+api.get("/assets/*", async (c) => {
+  const env = c.env as Env;
+  const r2 = env.ASSETS;
+  if (!r2) return c.json({ error: "R2 not configured" }, 500);
+
+  const key = c.req.path.replace(/^\/assets\//, "");
+  if (!key) return c.json({ error: "Key required" }, 400);
+
+  const object = await r2.get(key);
+  if (!object) return c.json({ error: "Not found" }, 404);
+
+  const headers = new Headers();
+  headers.set("Content-Type", object.httpMetadata?.contentType || "application/octet-stream");
+  headers.set("Cache-Control", "public, max-age=31536000, immutable");
+
+  return new Response(object.body, { headers });
+});
+
+// Clear session cookie on logout
+api.post("/api/auth/logout", (c) => {
+  const isProduction = c.req.url.includes("workers.dev") || c.req.url.includes("pages.dev");
+  const cookie = [
+    `${COOKIE_NAME}=`,
+    `Path=/`,
+    `HttpOnly`,
+    isProduction ? `SameSite=None` : `SameSite=Lax`,
+    `Max-Age=0`,
+    isProduction ? `Secure` : "",
+  ].filter(Boolean).join("; ");
+  return c.json({ success: true }, 200, { "Set-Cookie": cookie });
 });
 
 export default api;

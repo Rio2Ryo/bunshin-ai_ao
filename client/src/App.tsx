@@ -25,6 +25,9 @@ import AdminAIProvider from "./pages/AdminAIProvider";
 import LineLink from "./pages/LineLink";
 import Growth from "./pages/Growth";
 import Cards from "./pages/Cards";
+import Login from "./pages/Login";
+import Register from "./pages/Register";
+import Onboarding from "./pages/Onboarding";
 import { PWAInstallPrompt } from "./components/PWAInstallPrompt";
 
 
@@ -32,6 +35,9 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
+      <Route path="/login" component={Login} />
+      <Route path="/register" component={Register} />
+      <Route path="/onboarding" component={Onboarding} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/profile" component={Profile} />
       <Route path="/twins" component={Twins} />

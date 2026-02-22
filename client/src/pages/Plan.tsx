@@ -47,9 +47,14 @@ export default function Plan() {
   
   const checkoutMutation = trpc.plan.createCheckoutSession.useMutation({
     onSuccess: (data) => {
-      toast.info("決済ページに移動します...");
-      window.open(data.url, "_blank");
-      setShowUpgradeDialog(false);
+      if (data.url) {
+        toast.info("決済ページに移動します...");
+        window.open(data.url, "_blank");
+        setShowUpgradeDialog(false);
+      } else {
+        toast.info("決済機能は現在準備中です（Phase 2で実装予定）");
+        setShowUpgradeDialog(false);
+      }
     },
     onError: (error) => {
       toast.error(error.message);
@@ -58,8 +63,12 @@ export default function Plan() {
 
   const portalMutation = trpc.plan.createPortalSession.useMutation({
     onSuccess: (data) => {
-      toast.info("サブスクリプション管理ページに移動します...");
-      window.open(data.url, "_blank");
+      if (data.url) {
+        toast.info("サブスクリプション管理ページに移動します...");
+        window.open(data.url, "_blank");
+      } else {
+        toast.info("サブスクリプション管理は現在準備中です（Phase 2で実装予定）");
+      }
     },
     onError: (error) => {
       toast.error(error.message);
