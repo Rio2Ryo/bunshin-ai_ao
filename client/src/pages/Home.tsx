@@ -1,10 +1,17 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { Link } from "wouter";
 import { Bot, Users, Zap, MessageSquare, BarChart3, Settings2 } from "lucide-react";
 
 export default function Home() {
   const { user, loading, isAuthenticated } = useAuth();
+  usePageMeta({
+    title: "デジタルツインでビジネスマッチング",
+    description: "あなたのデジタルツインを作成し、AIがビジネスパートナーを見つけます。知識・経験・スキルを学習した分身AIで新たな可能性を開拓。",
+    ogImage: "https://bunshin-ai.pages.dev/og/home.svg",
+    path: "/",
+  });
 
   return (
     <div className="min-h-screen bg-background">

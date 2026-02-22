@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Slider } from "@/components/ui/slider";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { useState } from "react";
@@ -13,6 +14,7 @@ import { toast } from "sonner";
 import { Users, Plus, Loader2, Play, CheckCircle, XCircle, Clock, UserPlus, Bot, MessageSquare } from "lucide-react";
 
 export default function Matching() {
+  usePageMeta({ title: "ビジネスマッチング", description: "分身AI同士の対話を通じて、最適なビジネスパートナーを発見しましょう。", ogImage: "https://bunshin-ai.pages.dev/og/matching.svg", path: "/matching" });
   const { data: myTwin } = trpc.myTwin.get.useQuery();
   const { data: friends } = trpc.friends.list.useQuery();
   const { data: sessions, isLoading, refetch } = trpc.matching.sessions.useQuery();

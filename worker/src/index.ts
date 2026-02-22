@@ -25,6 +25,7 @@ type Env = {
   JWT_SECRET?: string;
   AZURE_FOUNDRY_API_KEY?: string;
   AZURE_FOUNDRY_RESOURCE?: string;
+  STRIPE_SECRET_KEY?: string;
 };
 
 type Context = {
@@ -2797,11 +2798,112 @@ JSON形式で出力:
         limits: { maxFriends: 5, maxMatchingsPerMonth: 3, maxKnowledge: 50, maxKnowledgeEntries: 50, maxFileUploads: 10 },
       };
     }),
-    getSubscription: protectedProcedure.query(async () => null as { cancelAtPeriodEnd: boolean; currentPeriodEnd: string } | null),
+    getSubscription: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      if (!ctx.env.STRIPE_SECRET_KEY) return null;
+      const user = await ctx.env.DB.prepare(`SELECT email, stripeCustomerId FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      if (!user?.stripeCustomerId) return null;
+
+      try {
+        const res = await fetch(`https://api.stripe.com/v1/subscriptions?customer=${user.stripeCustomerId}&status=active&limit=1`, {
+          headers: { Authorization: `Bearer ${ctx.env.STRIPE_SECRET_KEY}` },
+        });
+        const data = await res.json() as any;
+        const sub = data.data?.[0];
+        if (!sub) return null;
+        return {
+          cancelAtPeriodEnd: sub.cancel_at_period_end,
+          currentPeriodEnd: new Date(sub.current_period_end * 1000).toISOString(),
+        };
+      } catch {
+        return null;
+      }
+    }),
     createCheckoutSession: protectedProcedure
       .input(z.object({ planId: z.string().optional(), plan: z.string().optional(), billingCycle: z.string().optional(), interval: z.string().optional() }))
-      .mutation(async () => ({ url: undefined as string | undefined, message: "Phase 1: Stripe未対応" })),
-    createPortalSession: protectedProcedure.mutation(async () => ({ url: undefined as string | undefined })),
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        if (!ctx.env.STRIPE_SECRET_KEY) {
+          return { url: undefined as string | undefined, message: "Stripe APIキーが設定されていません。管理者にお問い合わせください。" };
+        }
+
+        const user = await ctx.env.DB.prepare(`SELECT email, stripeCustomerId FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+
+        // Create or reuse Stripe customer
+        let customerId = user?.stripeCustomerId;
+        if (!customerId) {
+          const custRes = await fetch("https://api.stripe.com/v1/customers", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${ctx.env.STRIPE_SECRET_KEY}`,
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: `email=${encodeURIComponent(user?.email || "")}&metadata[userId]=${ctx.userId}`,
+          });
+          const custData = await custRes.json() as any;
+          if (!custData.id) return { url: undefined, message: "Stripe顧客作成に失敗しました" };
+          customerId = custData.id;
+          await ctx.env.DB.prepare(`UPDATE users SET stripeCustomerId=? WHERE id=?`).bind(customerId, ctx.userId).run();
+        }
+
+        // Determine price lookup
+        const planName = input.plan || input.planId || "premium";
+        const interval = input.billingCycle || input.interval || "monthly";
+        const priceMap: Record<string, Record<string, number>> = {
+          premium: { monthly: 980, yearly: 9800 },
+          enterprise: { monthly: 4980, yearly: 49800 },
+        };
+        const amount = priceMap[planName]?.[interval === "yearly" ? "yearly" : "monthly"] || 980;
+        const recurring = interval === "yearly" ? "year" : "month";
+
+        // Create Checkout Session with inline price
+        const body = new URLSearchParams({
+          "mode": "subscription",
+          "customer": customerId,
+          "success_url": "https://bunshin-ai.pages.dev/plan?session_id={CHECKOUT_SESSION_ID}&status=success",
+          "cancel_url": "https://bunshin-ai.pages.dev/plan?status=cancelled",
+          "line_items[0][price_data][currency]": "jpy",
+          "line_items[0][price_data][product_data][name]": `分身AI ${planName === "enterprise" ? "エンタープライズ" : "プレミアム"}プラン`,
+          "line_items[0][price_data][unit_amount]": String(amount),
+          "line_items[0][price_data][recurring][interval]": recurring,
+          "line_items[0][quantity]": "1",
+          "metadata[userId]": String(ctx.userId),
+          "metadata[plan]": planName,
+        });
+
+        const sessionRes = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${ctx.env.STRIPE_SECRET_KEY}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: body.toString(),
+        });
+        const sessionData = await sessionRes.json() as any;
+
+        if (sessionData.url) {
+          return { url: sessionData.url as string, message: undefined };
+        }
+        return { url: undefined, message: sessionData.error?.message || "Checkoutセッション作成に失敗しました" };
+      }),
+    createPortalSession: protectedProcedure.mutation(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      if (!ctx.env.STRIPE_SECRET_KEY) return { url: undefined as string | undefined };
+
+      const user = await ctx.env.DB.prepare(`SELECT stripeCustomerId FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      if (!user?.stripeCustomerId) return { url: undefined };
+
+      const res = await fetch("https://api.stripe.com/v1/billing_portal/sessions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.env.STRIPE_SECRET_KEY}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: `customer=${user.stripeCustomerId}&return_url=https://bunshin-ai.pages.dev/plan`,
+      });
+      const data = await res.json() as any;
+      return { url: data.url as string | undefined };
+    }),
     getFriendCode: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       let user = await ctx.env.DB.prepare(`SELECT friendCode FROM users WHERE id=?`).bind(ctx.userId).first<any>();
@@ -2819,12 +2921,66 @@ JSON形式で出力:
     }),
   }),
 
-  // ============ Stripe (stubs) ============
+  // ============ Stripe ============
   stripe: router({
     createCheckoutSession: protectedProcedure
       .input(z.object({ planId: z.string() }))
-      .mutation(async () => ({ url: undefined as string | undefined, message: "Phase 1: Stripe未対応" })),
-    getSubscription: protectedProcedure.query(async () => null as { cancelAtPeriodEnd: boolean; currentPeriodEnd: string } | null),
+      .mutation(async ({ ctx, input }) => {
+        // Delegates to the plan.createCheckoutSession logic
+        if (!ctx.env.STRIPE_SECRET_KEY) {
+          return { url: undefined as string | undefined, message: "Stripe APIキーが設定されていません" };
+        }
+        await ensureSchema(ctx.env.DB);
+        const user = await ctx.env.DB.prepare(`SELECT email, stripeCustomerId FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+        let customerId = user?.stripeCustomerId;
+        if (!customerId) {
+          const custRes = await fetch("https://api.stripe.com/v1/customers", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${ctx.env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" },
+            body: `email=${encodeURIComponent(user?.email || "")}&metadata[userId]=${ctx.userId}`,
+          });
+          const custData = await custRes.json() as any;
+          if (!custData.id) return { url: undefined, message: "Stripe顧客作成に失敗しました" };
+          customerId = custData.id;
+          await ctx.env.DB.prepare(`UPDATE users SET stripeCustomerId=? WHERE id=?`).bind(customerId, ctx.userId).run();
+        }
+
+        const body = new URLSearchParams({
+          mode: "subscription",
+          customer: customerId,
+          "success_url": "https://bunshin-ai.pages.dev/plan?status=success",
+          "cancel_url": "https://bunshin-ai.pages.dev/plan?status=cancelled",
+          "line_items[0][price_data][currency]": "jpy",
+          "line_items[0][price_data][product_data][name]": "分身AI プレミアムプラン",
+          "line_items[0][price_data][unit_amount]": "980",
+          "line_items[0][price_data][recurring][interval]": "month",
+          "line_items[0][quantity]": "1",
+          "metadata[userId]": String(ctx.userId),
+          "metadata[plan]": input.planId,
+        });
+        const sessionRes = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${ctx.env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" },
+          body: body.toString(),
+        });
+        const sessionData = await sessionRes.json() as any;
+        return { url: sessionData.url as string | undefined, message: sessionData.error?.message };
+      }),
+    getSubscription: protectedProcedure.query(async ({ ctx }) => {
+      if (!ctx.env.STRIPE_SECRET_KEY) return null;
+      await ensureSchema(ctx.env.DB);
+      const user = await ctx.env.DB.prepare(`SELECT stripeCustomerId FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      if (!user?.stripeCustomerId) return null;
+      try {
+        const res = await fetch(`https://api.stripe.com/v1/subscriptions?customer=${user.stripeCustomerId}&status=active&limit=1`, {
+          headers: { Authorization: `Bearer ${ctx.env.STRIPE_SECRET_KEY}` },
+        });
+        const data = await res.json() as any;
+        const sub = data.data?.[0];
+        if (!sub) return null;
+        return { cancelAtPeriodEnd: sub.cancel_at_period_end, currentPeriodEnd: new Date(sub.current_period_end * 1000).toISOString() };
+      } catch { return null; }
+    }),
   }),
 
   // ============ Discover ============
@@ -3199,6 +3355,66 @@ api.post("/api/auth/logout", (c) => {
     isProduction ? `Secure` : "",
   ].filter(Boolean).join("; ");
   return c.json({ success: true }, 200, { "Set-Cookie": cookie });
+});
+
+// Stripe webhook handler
+api.post("/api/stripe/webhook", async (c) => {
+  const env = c.env as Env;
+  if (!env.STRIPE_SECRET_KEY) return c.json({ error: "Stripe not configured" }, 500);
+
+  await ensureSchema(env.DB);
+  const body = await c.req.text();
+
+  let event: any;
+  try {
+    event = JSON.parse(body);
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+
+  // Handle relevant events
+  switch (event.type) {
+    case "checkout.session.completed": {
+      const session = event.data?.object;
+      const userId = session?.metadata?.userId;
+      const plan = session?.metadata?.plan || "premium";
+      const customerId = session?.customer;
+      const subscriptionId = session?.subscription;
+      if (userId) {
+        await env.DB.prepare(
+          `UPDATE users SET plan=?, stripeCustomerId=?, stripeSubscriptionId=?, updatedAt=datetime('now') WHERE id=?`
+        ).bind(plan, customerId, subscriptionId, parseInt(userId)).run();
+      }
+      break;
+    }
+    case "customer.subscription.deleted": {
+      const sub = event.data?.object;
+      const customerId = sub?.customer;
+      if (customerId) {
+        await env.DB.prepare(
+          `UPDATE users SET plan='free', stripeSubscriptionId=NULL, updatedAt=datetime('now') WHERE stripeCustomerId=?`
+        ).bind(customerId).run();
+      }
+      break;
+    }
+    case "customer.subscription.updated": {
+      const sub = event.data?.object;
+      const customerId = sub?.customer;
+      if (customerId && sub?.status === "active") {
+        // Subscription renewed/updated
+        await env.DB.prepare(
+          `UPDATE users SET stripeSubscriptionId=?, updatedAt=datetime('now') WHERE stripeCustomerId=?`
+        ).bind(sub.id, customerId).run();
+      } else if (customerId && (sub?.status === "canceled" || sub?.status === "unpaid")) {
+        await env.DB.prepare(
+          `UPDATE users SET plan='free', stripeSubscriptionId=NULL, updatedAt=datetime('now') WHERE stripeCustomerId=?`
+        ).bind(customerId).run();
+      }
+      break;
+    }
+  }
+
+  return c.json({ received: true });
 });
 
 export default api;

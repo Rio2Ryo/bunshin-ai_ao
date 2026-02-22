@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
@@ -12,6 +13,7 @@ import { Loader2, Save, Plus, X } from "lucide-react";
 
 export default function Profile() {
   const { user } = useAuth();
+  usePageMeta({ title: "プロフィール", description: "あなたのプロフィール情報を管理しましょう。スキル、経歴、自己紹介を設定できます。", path: "/profile" });
   const { data: profile, isLoading, isError } = trpc.profile.get.useQuery();
   const updateProfile = trpc.profile.update.useMutation();
 

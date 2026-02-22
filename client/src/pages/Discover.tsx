@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
 import { Search, User, Globe, UserPlus, MessageSquare, Sparkles } from "lucide-react";
 import { toast } from "sonner";
@@ -12,6 +13,7 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 
 export default function Discover() {
+  usePageMeta({ title: "分身AI発見", description: "公開されている分身AIを探索して、新しいつながりを見つけましょう。", ogImage: "https://bunshin-ai.pages.dev/og/discover.svg", path: "/discover" });
   const { user } = useAuth();
   const [, navigate] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");

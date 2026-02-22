@@ -3,6 +3,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import {
@@ -12,6 +13,7 @@ import {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  usePageMeta({ title: "ダッシュボード", description: "分身AIの管理、チャット、マッチングの概要を確認しましょう。", path: "/dashboard" });
   const { data: myTwin } = trpc.myTwin.get.useQuery();
   const { data: friends } = trpc.friends.list.useQuery();
   const { data: chatSessions } = trpc.chat.sessions.useQuery();
