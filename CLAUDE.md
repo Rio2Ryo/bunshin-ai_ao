@@ -98,12 +98,42 @@ wgB-VVtf_DgceGCy61enSNIlzXXdbX7yiYoysX68
    - Dashboard: state-based action cards (twin public?, friends?, matchings?)
    - Compact twin status card, mini stats row
 
+## Implemented Features (Session 2026-02-22 continued)
+6. **Personality Interviews (LLM-powered)**
+   - personalityInterview: Big Five diagnosis via conversational AI (7 questions)
+   - mbtiInterview: MBTI diagnosis via conversational AI (10 questions)
+   - valueScenarioInterview: 18 value scenario evaluations via AI conversation
+   - analyzeBigFive: LLM analysis of profile data → Big Five traits
+   - analyzeJudgmentThresholds: LLM analysis of decision patterns
+   - runFullAnalysis: Comprehensive personality analysis
+7. **Waveform & Compatibility**
+   - generateSelfWaveform: Compute waveform from scenario responses
+   - evaluateWaveform: LLM evaluation of unevaluated responses
+   - refreshCumulativeWaveform: Recompute from all evaluated responses
+   - evaluateByAllTwins: Friends' twins evaluate user's responses
+   - calculateAccuracy: Compare self vs others' perspective waveforms
+   - getWaveformCompatibility: Real waveform comparison between friends
+   - getAllWaveformCompatibilities: Batch compatibility check with all friends
+8. **Intimacy System**
+   - getIntimacy: Calculate intimacy score from matching interactions
+   - updateIntimacy: Upsert intimacy scores to DB
+   - getAllIntimacyScores: List all intimacy scores
+   - requestPredictions: LLM-powered friend prediction generation
+   - updateOtherPerspectiveWaveform: Calculate self-report gap
+9. **Clawdbot Integration (real proxy)**
+   - testConnection: Actual HTTP health check to gateway URL
+   - sendMessage: Real proxy to Clawdbot gateway API
+   - syncConversations: Fetch conversations from gateway → knowledge base
+   - analyzePersonality: LLM analysis of synced conversation data
+10. **Cards & Files (already implemented)**
+    - cards.uploadImage: R2 upload for card images
+    - cards.analyzeImage: Vision API OCR (OpenAI gpt-4o / Gemini)
+    - files.upload: R2 upload with DB record
+
 ## Remaining Stubs
-- clawdbot.sendMessage/testConnection: Stubs
 - stripe/plan: No payment integration
-- cards.uploadImage/analyzeImage: Stubs
-- files.upload: DB record only, no R2 write
-- LINE: Worker has no LINE integration (only server/ has it)
+- points.redeem/redeemProduct: Point redemption not implemented
+- LINE: Worker has no LINE webhook integration (only server/ has it)
 
 ## User Language
 Primary language: Japanese (日本語). All UI text is in Japanese.

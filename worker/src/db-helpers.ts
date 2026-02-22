@@ -470,6 +470,17 @@ const MIGRATIONS_SQL = `
 ALTER TABLE users ADD COLUMN passwordHash TEXT;
 ALTER TABLE users ADD COLUMN onboardingCompleted INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE chat_sessions ADD COLUMN mode TEXT;
+ALTER TABLE other_perspective_waveforms ADD COLUMN evaluatorTwinId INTEGER;
+ALTER TABLE other_perspective_waveforms ADD COLUMN scenarioId TEXT;
+ALTER TABLE other_perspective_waveforms ADD COLUMN virtueScore REAL;
+ALTER TABLE other_perspective_waveforms ADD COLUMN mineScore REAL;
+ALTER TABLE other_perspective_waveforms ADD COLUMN comment TEXT;
+ALTER TABLE value_scenario_responses ADD COLUMN evaluation TEXT;
+ALTER TABLE value_scenario_responses ADD COLUMN evaluatedAt TEXT;
+ALTER TABLE value_scenario_responses ADD COLUMN virtueScore REAL;
+ALTER TABLE value_scenario_responses ADD COLUMN mineScore REAL;
+ALTER TABLE cumulative_waveforms ADD COLUMN waveformType TEXT DEFAULT 'self';
+ALTER TABLE cumulative_waveforms ADD COLUMN waveformData TEXT;
 `;
 
 let schemaReady = false;
