@@ -9,13 +9,13 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="border-b border-border/50 backdrop-blur-sm fixed top-0 w-full z-50 bg-background/80">
+      <header className="border-b border-border/50 backdrop-blur-sm fixed top-0 w-full z-50 bg-background/80" role="banner">
         <div className="container flex h-16 items-center justify-between">
           <div className="flex items-center gap-2">
-            <Bot className="h-8 w-8 text-primary" />
+            <Bot className="h-8 w-8 text-primary" aria-hidden="true" />
             <span className="text-xl font-bold text-gradient">分身AI</span>
           </div>
-          <nav className="flex items-center gap-4">
+          <nav className="flex items-center gap-4" aria-label="メインナビゲーション">
             {loading ? (
               <div className="h-9 w-20 bg-muted animate-pulse rounded-md" />
             ) : isAuthenticated ? (
@@ -60,16 +60,18 @@ export default function Home() {
                   </Button>
                 </a>
               )}
-              <Button size="lg" variant="outline">
-                詳しく見る
-              </Button>
+              <a href="#features">
+                <Button size="lg" variant="outline">
+                  詳しく見る
+                </Button>
+              </a>
             </div>
           </div>
         </div>
       </section>
 
       {/* Features Section */}
-      <section className="py-20 bg-card/50">
+      <section id="features" className="py-20 bg-card/50">
         <div className="container">
           <h2 className="text-3xl font-bold text-center mb-12">主な機能</h2>
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">

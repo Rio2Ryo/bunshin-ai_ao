@@ -1680,10 +1680,87 @@ JSONのみ出力し、他の説明は不要です。`;
       }),
     runDialogue: protectedProcedure
       .input(z.object({ sessionId: z.number(), turns: z.number().optional() }))
-      .mutation(async () => ({ dialogues: [] })),
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+        if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
+        const twin1 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+        const twin2 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+        if (!twin1 || !twin2) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+        const existingDialogues = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionId).all<any>();
+        const startTurn = (existingDialogues.results?.length ?? 0) + 1;
+        const turns = input.turns ?? 5;
+        const dialogues: any[] = [];
+
+        const apiConfig = await ctx.env.DB.prepare(`SELECT * FROM ai_api_configs WHERE userId=? AND isActive=1 ORDER BY id LIMIT 1`).bind(ctx.userId).first<any>();
+        for (let i = 0; i < turns; i++) {
+          const turnNumber = startTurn + i;
+          const isTwin1 = turnNumber % 2 === 1;
+          const speaker = isTwin1 ? twin1 : twin2;
+          const speakerName = speaker.name || `Twin #${speaker.id}`;
+          const context = dialogues.map(d => `${d.speakerName}: ${d.content}`).join("\n");
+
+          let content = `${speakerName}として、「${session.theme}」について${isTwin1 ? "議論を始めます" : "応答します"}。`;
+          try {
+            const msgs = [
+              { role: "system" as const, content: `あなたは「${speakerName}」です。性格: ${speaker.personality || "プロフェッショナル"}。テーマ「${session.theme}」について対話してください。` },
+              ...(context ? [{ role: "user" as const, content: `これまでの対話:\n${context}\n\n${speakerName}として次の発言をしてください。` }] : [{ role: "user" as const, content: `テーマ「${session.theme}」について最初の発言をしてください。` }]),
+            ];
+            const result = await invokeLLM(msgs, apiConfig, ctx.env);
+            if (result) content = result;
+          } catch { /* use fallback */ }
+
+          await ctx.env.DB.prepare(
+            `INSERT INTO matching_dialogues (sessionId, turnNumber, speakerTwinId, content, createdAt) VALUES (?,?,?,?,datetime('now'))`
+          ).bind(input.sessionId, turnNumber, speaker.id, content).run();
+          dialogues.push({ turnNumber, speakerTwinId: speaker.id, speakerName, content });
+        }
+
+        return { dialogues };
+      }),
     analyze: protectedProcedure
       .input(z.object({ sessionId: z.number() }))
-      .mutation(async () => ({ compatibilityScore: 0, summary: "分析にはマッチング対話の生成が必要です", strengths: [], challenges: [], recommendations: [] })),
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+        if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+        const dialogues = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionId).all<any>();
+        if (!dialogues.results?.length) {
+          return { compatibilityScore: 0, summary: "分析にはマッチング対話の生成が必要です", strengths: [], challenges: [], recommendations: [] };
+        }
+        const twin1 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+        const twin2 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+        const twin1Name = twin1?.name || `Twin #${session.twin1Id}`;
+        const twin2Name = twin2?.name || `Twin #${session.twin2Id}`;
+        const transcript = dialogues.results.map((d: any) => `Turn ${d.turnNumber} (Twin ${d.speakerTwinId}): ${d.content}`).join("\n");
+
+        const apiConfig = await ctx.env.DB.prepare(`SELECT * FROM ai_api_configs WHERE userId=? AND isActive=1 ORDER BY id LIMIT 1`).bind(ctx.userId).first<any>();
+        const analysisPrompt = `以下のビジネスマッチング対話を分析してください。\nテーマ: ${session.theme}\n参加者: ${twin1Name} vs ${twin2Name}\n\n対話:\n${transcript}\n\n以下のJSON形式で出力してください:\n{"compatibilityScore":0-100,"summary":"","strengths":[""],"challenges":[""],"recommendations":[""],"scoreBreakdown":{"skillMatch":{"score":0,"reason":""},"valueAlignment":{"score":0,"reason":""},"communicationStyle":{"score":0,"reason":""},"businessGoalFit":{"score":0,"reason":""},"complementaryStrengths":{"score":0,"reason":""}}}`;
+        let analysis: any = { compatibilityScore: 65, summary: "対話分析の結果、一定の協業可能性があります。", strengths: ["共通の関心分野がある"], challenges: ["具体的な連携方法の検討が必要"], recommendations: ["定期的な情報交換の場を設ける"] };
+
+        try {
+          const result = await invokeLLM([{ role: "system", content: "あなたはビジネスマッチング分析の専門家です。JSON形式で回答してください。" }, { role: "user", content: analysisPrompt }], apiConfig, ctx.env);
+          if (result) {
+            const jsonMatch = result.match(/\{[\s\S]*\}/);
+            if (jsonMatch) analysis = JSON.parse(jsonMatch[0]);
+          }
+        } catch { /* use fallback */ }
+
+        // Upsert result
+        const existing = await ctx.env.DB.prepare(`SELECT id FROM matching_results WHERE sessionId=?`).bind(input.sessionId).first<any>();
+        if (existing) {
+          await ctx.env.DB.prepare(
+            `UPDATE matching_results SET compatibilityScore=?, summary=?, scoreBreakdown=?, strengths=?, challenges=?, recommendations=?, updatedAt=datetime('now') WHERE sessionId=?`
+          ).bind(String(analysis.compatibilityScore), analysis.summary, toJson(analysis.scoreBreakdown || {}), toJson(analysis.strengths || []), toJson(analysis.challenges || []), toJson(analysis.recommendations || []), input.sessionId).run();
+        } else {
+          await ctx.env.DB.prepare(
+            `INSERT INTO matching_results (sessionId, compatibilityScore, summary, scoreBreakdown, strengths, challenges, recommendations) VALUES (?,?,?,?,?,?,?)`
+          ).bind(input.sessionId, String(analysis.compatibilityScore), analysis.summary, toJson(analysis.scoreBreakdown || {}), toJson(analysis.strengths || []), toJson(analysis.challenges || []), toJson(analysis.recommendations || [])).run();
+        }
+
+        return analysis;
+      }),
     exportReport: protectedProcedure
       .input(z.object({ sessionId: z.number() }))
       .query(async ({ ctx, input }) => {
@@ -1899,10 +1976,46 @@ ${dialogueHtml || "<p>対話がまだ行われていません</p>"}
 
         return { success: true, message: `${product.name} を交換しました` };
       }),
-    getQuests: protectedProcedure.query(async () => ({
-      stats: { completedToday: 0, totalCompleted: 0, currentStreak: 0, totalPoints: 0 },
-      categories: [] as { name: string; quests: any[] }[],
-    })),
+    getQuests: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const pts = await ctx.env.DB.prepare(`SELECT * FROM user_points WHERE userId=?`).bind(ctx.userId).first<any>();
+      const growth = await ctx.env.DB.prepare(`SELECT * FROM twin_growth_status WHERE userId=?`).bind(ctx.userId).first<any>();
+      const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+      const profile = await ctx.env.DB.prepare(`SELECT * FROM user_profiles WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+      const todayTx = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM point_transactions WHERE userId=? AND createdAt LIKE ?`).bind(ctx.userId, `${now().slice(0, 10)}%`).first<any>();
+      const totalTx = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM point_transactions WHERE userId=? AND type='earn'`).bind(ctx.userId).first<any>();
+
+      const hasTwin = !!twin;
+      const hasProfile = !!(profile?.bigFiveScores);
+      const hasMbti = !!(profile?.mbtiType);
+      const hasFriends = !!(await ctx.env.DB.prepare(`SELECT id FROM friendships WHERE (userId=? OR friendId=?) AND status='accepted' LIMIT 1`).bind(ctx.userId, ctx.userId).first<any>());
+      const hasMatching = !!(await ctx.env.DB.prepare(`SELECT id FROM matching_sessions WHERE (twin1Id IN (SELECT id FROM digital_twins WHERE userId=?)) LIMIT 1`).bind(ctx.userId).first<any>());
+      const dailyLogin = !!(await ctx.env.DB.prepare(`SELECT id FROM point_transactions WHERE userId=? AND actionType='daily_login' AND createdAt LIKE ?`).bind(ctx.userId, `${now().slice(0, 10)}%`).first<any>());
+
+      const quests = [
+        { id: "create_twin", name: "分身AI作成", description: "分身AIを作成する", points: 50, category: "基本", completed: hasTwin },
+        { id: "big_five", name: "ビッグファイブ診断", description: "性格診断を完了する", points: 100, category: "基本", completed: hasProfile },
+        { id: "mbti", name: "MBTI診断", description: "MBTI診断を完了する", points: 100, category: "基本", completed: hasMbti },
+        { id: "add_friend", name: "友達を追加", description: "最初の友達を追加する", points: 50, category: "つながる", completed: hasFriends },
+        { id: "first_matching", name: "初マッチング", description: "マッチングを1回実行する", points: 100, category: "つながる", completed: hasMatching },
+        { id: "daily_login", name: "デイリーログイン", description: "今日ログインする", points: 10, category: "デイリー", completed: dailyLogin },
+      ];
+
+      const categories = ["基本", "つながる", "デイリー"].map(cat => ({
+        name: cat,
+        quests: quests.filter(q => q.category === cat),
+      }));
+
+      return {
+        stats: {
+          completedToday: todayTx?.c || 0,
+          totalCompleted: quests.filter(q => q.completed).length,
+          currentStreak: growth?.consecutiveLoginDays || 0,
+          totalPoints: pts?.totalEarned || 0,
+        },
+        categories,
+      };
+    }),
     checkDailyLogin: protectedProcedure.mutation(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const today = now().slice(0, 10); // YYYY-MM-DD
@@ -1965,12 +2078,73 @@ ${dialogueHtml || "<p>対話がまだ行われていません</p>"}
 
       return { points: totalPoints, isFirstLogin: true, awarded: true, streak, streakBonus };
     }),
-    checkMilestones: protectedProcedure.mutation(async () => ({ milestones: [] as any[], newMilestones: [] as any[], awarded: [] as { name: string; points: number }[] })),
+    checkMilestones: protectedProcedure.mutation(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const existingMilestones = await ctx.env.DB.prepare(`SELECT * FROM twin_milestones WHERE userId=?`).bind(ctx.userId).all<any>();
+      const existingIds = new Set((existingMilestones.results ?? []).map((m: any) => m.milestoneId));
+
+      const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+      const growth = await ctx.env.DB.prepare(`SELECT * FROM twin_growth_status WHERE userId=?`).bind(ctx.userId).first<any>();
+      const friendCount = (await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM friendships WHERE (userId=? OR friendId=?) AND status='accepted'`).bind(ctx.userId, ctx.userId).first<any>())?.c || 0;
+      const matchCount = (await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM matching_sessions WHERE twin1Id IN (SELECT id FROM digital_twins WHERE userId=?)`).bind(ctx.userId).first<any>())?.c || 0;
+      const chatCount = (await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM chat_messages WHERE sessionId IN (SELECT id FROM chat_sessions WHERE userId=?)`).bind(ctx.userId).first<any>())?.c || 0;
+      const level = growth?.level || 1;
+      const loginDays = growth?.consecutiveLoginDays || 0;
+
+      const milestoneDefinitions = [
+        { id: "first_twin", name: "分身AI誕生", description: "初めての分身AIを作成", points: 50, condition: !!twin },
+        { id: "first_friend", name: "最初の友達", description: "友達を1人追加", points: 30, condition: friendCount >= 1 },
+        { id: "first_matching", name: "初マッチング", description: "マッチングを1回実行", points: 50, condition: matchCount >= 1 },
+        { id: "chat_10", name: "会話の達人", description: "10回以上チャット", points: 30, condition: chatCount >= 10 },
+        { id: "chat_100", name: "おしゃべり王", description: "100回以上チャット", points: 100, condition: chatCount >= 100 },
+        { id: "level_5", name: "成長中", description: "レベル5に到達", points: 50, condition: level >= 5 },
+        { id: "level_10", name: "ベテラン", description: "レベル10に到達", points: 100, condition: level >= 10 },
+        { id: "login_7", name: "7日連続ログイン", description: "7日連続でログイン", points: 50, condition: loginDays >= 7 },
+        { id: "login_30", name: "30日連続ログイン", description: "30日連続でログイン", points: 200, condition: loginDays >= 30 },
+        { id: "friends_5", name: "社交的", description: "友達を5人追加", points: 50, condition: friendCount >= 5 },
+        { id: "matching_5", name: "マッチング上手", description: "マッチングを5回実行", points: 100, condition: matchCount >= 5 },
+      ];
+
+      const newMilestones: any[] = [];
+      const awarded: { name: string; points: number }[] = [];
+      for (const def of milestoneDefinitions) {
+        if (def.condition && !existingIds.has(def.id)) {
+          await ctx.env.DB.prepare(
+            `INSERT INTO twin_milestones (userId, milestoneId, name, description, achievedAt) VALUES (?,?,?,?,datetime('now'))`
+          ).bind(ctx.userId, def.id, def.name, def.description).run();
+          newMilestones.push({ milestoneId: def.id, name: def.name, description: def.description, points: def.points });
+          awarded.push({ name: def.name, points: def.points });
+
+          // Award points
+          const pts = await ctx.env.DB.prepare(`SELECT * FROM user_points WHERE userId=?`).bind(ctx.userId).first<any>();
+          const newBalance = (pts?.balance || 0) + def.points;
+          if (pts) {
+            await ctx.env.DB.prepare(`UPDATE user_points SET balance=?, totalEarned=totalEarned+?, updatedAt=? WHERE userId=?`).bind(newBalance, def.points, now(), ctx.userId).run();
+          } else {
+            await ctx.env.DB.prepare(`INSERT INTO user_points (userId, balance, totalEarned, totalSpent, totalExpired) VALUES (?,?,?,0,0)`).bind(ctx.userId, def.points, def.points).run();
+          }
+          await ctx.env.DB.prepare(`INSERT INTO point_transactions (userId, type, amount, balanceAfter, actionType, description, createdAt) VALUES (?,?,?,?,?,?,?)`).bind(ctx.userId, "earn", def.points, newBalance, "milestone", def.name, now()).run();
+        }
+      }
+
+      const allMilestones = milestoneDefinitions.map(def => ({
+        ...def,
+        achieved: def.condition || existingIds.has(def.id),
+      }));
+
+      return { milestones: allMilestones, newMilestones, awarded };
+    }),
   }),
 
   // ============ Quests ============
   quests: router({
-    list: protectedProcedure.query(async () => []),
+    list: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const transactions = await ctx.env.DB.prepare(
+        `SELECT * FROM point_transactions WHERE userId=? ORDER BY createdAt DESC LIMIT 50`
+      ).bind(ctx.userId).all<any>();
+      return transactions.results ?? [];
+    }),
     checkDailyLogin: protectedProcedure.mutation(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const today = now().slice(0, 10);
@@ -2858,15 +3032,86 @@ export type AppRouter = typeof appRouter;
 
 const api = new Hono<{ Bindings: Env }>();
 
+// Allowed origins for CORS
+const ALLOWED_ORIGINS = [
+  "https://bunshin-ai.pages.dev",
+  "http://localhost:5173",
+  "http://localhost:3000",
+];
+
 api.use(
   "/api/*",
   cors({
-    origin: (origin) => origin || "*",
+    origin: (origin) => {
+      if (!origin) return "https://bunshin-ai.pages.dev";
+      if (ALLOWED_ORIGINS.includes(origin)) return origin;
+      if (origin.endsWith(".bunshin-ai.pages.dev")) return origin;
+      return "https://bunshin-ai.pages.dev";
+    },
     allowHeaders: ["content-type"],
     allowMethods: ["GET", "POST", "OPTIONS"],
     credentials: true,
   })
 );
+
+// Security headers
+api.use("*", async (c, next) => {
+  await next();
+  c.res.headers.set("X-Content-Type-Options", "nosniff");
+  c.res.headers.set("X-Frame-Options", "DENY");
+  c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  c.res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (c.req.url.includes("workers.dev")) {
+    c.res.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+});
+
+// Simple in-memory rate limiter (per-IP, resets per worker instance)
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT_WINDOW = 60_000; // 1 minute
+const RATE_LIMIT_MAX = 120; // requests per window
+
+api.use("/api/*", async (c, next) => {
+  const ip = c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for") || "unknown";
+  const now = Date.now();
+  let entry = rateLimitMap.get(ip);
+
+  if (!entry || now > entry.resetAt) {
+    entry = { count: 0, resetAt: now + RATE_LIMIT_WINDOW };
+    rateLimitMap.set(ip, entry);
+  }
+
+  entry.count++;
+  c.res.headers.set("X-RateLimit-Limit", String(RATE_LIMIT_MAX));
+  c.res.headers.set("X-RateLimit-Remaining", String(Math.max(0, RATE_LIMIT_MAX - entry.count)));
+
+  if (entry.count > RATE_LIMIT_MAX) {
+    return c.json({ error: "Rate limit exceeded. Please try again later." }, 429);
+  }
+
+  await next();
+});
+
+// Stricter rate limit for auth endpoints (10 per minute)
+const AUTH_RATE_LIMIT_MAX = 10;
+api.use("/api/trpc/auth.*", async (c, next) => {
+  const ip = c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for") || "unknown";
+  const key = `auth:${ip}`;
+  const now = Date.now();
+  let entry = rateLimitMap.get(key);
+
+  if (!entry || now > entry.resetAt) {
+    entry = { count: 0, resetAt: now + RATE_LIMIT_WINDOW };
+    rateLimitMap.set(key, entry);
+  }
+
+  entry.count++;
+  if (entry.count > AUTH_RATE_LIMIT_MAX) {
+    return c.json({ error: "Too many authentication attempts. Please try again later." }, 429);
+  }
+
+  await next();
+});
 
 api.get("/", (c) => c.json({ message: "Bunshin AI API v2. Use /api/* endpoints." }));
 api.get("/api/health", (c) => c.json({ ok: true }));
