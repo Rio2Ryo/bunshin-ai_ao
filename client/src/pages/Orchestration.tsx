@@ -44,7 +44,7 @@ const AI_PROVIDERS = [
 ];
 
 export default function Orchestration() {
-  const { data: settings, isLoading, refetch } = trpc.orchestration.getSettings.useQuery();
+  const { data: settings, isLoading, isError, refetch } = trpc.orchestration.getSettings.useQuery();
   const updateSettings = trpc.orchestration.updateSettings.useMutation();
 
   const [defaultProvider, setDefaultProvider] = useState<string>("builtin");
@@ -66,6 +66,17 @@ export default function Orchestration() {
       <DashboardLayout>
         <div className="flex items-center justify-center h-64">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (isError) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center h-64 gap-4">
+          <p className="text-muted-foreground">オーケストレーション設定の読み込みに失敗しました</p>
+          <button onClick={() => window.location.reload()} className="text-primary underline text-sm">再読み込み</button>
         </div>
       </DashboardLayout>
     );

@@ -52,9 +52,9 @@ const evolutionIcons: Record<string, string> = {
 type SkillType = "conversation" | "imageGeneration" | "analysis" | "diagnosis" | "matching";
 
 export default function Growth() {
-  const { data: growthStatus, isLoading: statusLoading, refetch: refetchStatus } = trpc.growth.getStatus.useQuery();
-  const { data: skillsData, isLoading: skillsLoading, refetch: refetchSkills } = trpc.growth.getSkills.useQuery();
-  const { data: milestonesData, isLoading: milestonesLoading } = trpc.growth.getMilestones.useQuery();
+  const { data: growthStatus, isLoading: statusLoading, isError: statusError, refetch: refetchStatus } = trpc.growth.getStatus.useQuery();
+  const { data: skillsData, isLoading: skillsLoading, isError: skillsError, refetch: refetchSkills } = trpc.growth.getSkills.useQuery();
+  const { data: milestonesData, isLoading: milestonesLoading, isError: milestonesError } = trpc.growth.getMilestones.useQuery();
   const { data: areSkillsConfigured, refetch: refetchSkillsConfigured } = trpc.growth.areSkillsConfigured.useQuery();
   const { data: availablePoints } = trpc.growth.getAvailableSkillPoints.useQuery({ isCampaign: true }); // キャンペーン中
 
@@ -72,6 +72,7 @@ export default function Growth() {
   });
 
   const [showSkillSetup, setShowSkillSetup] = useState(false);
+  const [hasAutoShownDialog, setHasAutoShownDialog] = useState(false);
   const [skillLevels, setSkillLevels] = useState<Record<SkillType, number>>({
     conversation: 5,
     imageGeneration: 5,
@@ -81,13 +82,15 @@ export default function Growth() {
   });
 
   const isLoading = statusLoading || skillsLoading || milestonesLoading;
+  const isError = statusError || skillsError || milestonesError;
 
-  // スキルが未設定の場合は自動でダイアログを表示
+  // スキルが未設定の場合は自動でダイアログを表示（初回のみ）
   useEffect(() => {
-    if (areSkillsConfigured === false && !showSkillSetup && growthStatus) {
+    if (areSkillsConfigured === false && !showSkillSetup && !hasAutoShownDialog && growthStatus) {
       setShowSkillSetup(true);
+      setHasAutoShownDialog(true);
     }
-  }, [areSkillsConfigured, showSkillSetup, growthStatus]);
+  }, [areSkillsConfigured, showSkillSetup, hasAutoShownDialog, growthStatus]);
 
   const totalPoints = Object.values(skillLevels).reduce((sum, level) => sum + level, 0);
   const maxPoints = availablePoints || 25; // キャンペーン時は25
@@ -127,6 +130,17 @@ export default function Growth() {
       <DashboardLayout>
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (isError) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+          <p className="text-muted-foreground">育成データの読み込みに失敗しました</p>
+          <button onClick={() => window.location.reload()} className="text-primary underline text-sm">再読み込み</button>
         </div>
       </DashboardLayout>
     );

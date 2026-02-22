@@ -12,7 +12,7 @@ import { Loader2, Save, Plus, X } from "lucide-react";
 
 export default function Profile() {
   const { user } = useAuth();
-  const { data: profile, isLoading } = trpc.profile.get.useQuery();
+  const { data: profile, isLoading, isError } = trpc.profile.get.useQuery();
   const updateProfile = trpc.profile.update.useMutation();
 
   const [formData, setFormData] = useState({
@@ -83,6 +83,17 @@ export default function Profile() {
       <DashboardLayout>
         <div className="flex items-center justify-center h-64">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (isError) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center h-64 gap-4">
+          <p className="text-muted-foreground">プロフィールの読み込みに失敗しました</p>
+          <button onClick={() => window.location.reload()} className="text-primary underline text-sm">再読み込み</button>
         </div>
       </DashboardLayout>
     );

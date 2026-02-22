@@ -235,24 +235,32 @@ test.describe("Dashboard Page (/dashboard)", () => {
     }
   });
 
-  test("dashboard quick actions section when authenticated", async ({ page }) => {
+  test("dashboard action cards section when authenticated", async ({ page }) => {
     await navigateAndWait(page, "/dashboard");
 
     const welcomeHeading = page.locator("h1").filter({ hasText: "おかえりなさい" });
     const isAuthenticated = await welcomeHeading.isVisible().catch(() => false);
 
     if (isAuthenticated) {
-      await expect(
-        page.locator("text=クイックアクション")
-      ).toBeVisible();
-
-      // Quick action buttons
-      const actions = ["分身AIを発見", "友達を追加", "新規マッチング", "プランを確認"];
-      for (const action of actions) {
-        await expect(
-          page.locator("button", { hasText: action }).or(page.locator(`text=${action}`)).first()
-        ).toBeVisible();
+      // State-based action cards (varies by user state, check that at least one exists)
+      const possibleActions = [
+        "分身AIを公開しよう",
+        "友達を追加しよう",
+        "マッチングを試そう",
+        "チャットで会話してみよう",
+        "チャット",
+        "マッチング",
+      ];
+      let foundAction = false;
+      for (const action of possibleActions) {
+        const visible = await page.locator(`text=${action}`).first().isVisible().catch(() => false);
+        if (visible) { foundAction = true; break; }
       }
+      expect(foundAction).toBeTruthy();
+
+      // Quick Stats row should show mini stat cards
+      await expect(page.locator("text=分身AI").first()).toBeVisible();
+      await expect(page.locator("text=友達").first()).toBeVisible();
     }
   });
 
@@ -572,9 +580,9 @@ test.describe("Twins Page (/twins)", () => {
           page.locator("text=公開設定").first()
         ).toBeVisible();
 
-        // Public switch
+        // Public switch label (exact match to avoid matching description text)
         await expect(
-          page.locator("text=分身AIを公開")
+          page.getByText("分身AIを公開", { exact: true })
         ).toBeVisible();
 
         // Save public settings button

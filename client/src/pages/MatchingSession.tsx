@@ -14,7 +14,7 @@ export default function MatchingSession() {
   const { id } = useParams<{ id: string }>();
   const sessionId = parseInt(id || "0");
 
-  const { data, isLoading } = trpc.matching.getSession.useQuery(
+  const { data, isLoading, isError } = trpc.matching.getSession.useQuery(
     { id: sessionId },
     { enabled: sessionId > 0 }
   );
@@ -53,7 +53,7 @@ export default function MatchingSession() {
     );
   }
 
-  if (!data?.session) {
+  if (isError || !data?.session) {
     return (
       <DashboardLayout>
         <div className="text-center py-16">

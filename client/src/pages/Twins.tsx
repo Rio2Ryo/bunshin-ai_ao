@@ -21,7 +21,7 @@ import { CumulativeWaveformChart } from "@/components/CumulativeWaveformChart";
 import { OtherPerspectiveWaveformChart } from "@/components/OtherPerspectiveWaveformChart";
 
 export default function MyTwin() {
-  const { data: twin, isLoading, refetch } = trpc.myTwin.get.useQuery();
+  const { data: twin, isLoading, isError, refetch } = trpc.myTwin.get.useQuery();
   const upsertMutation = trpc.myTwin.upsert.useMutation();
   const updateMutation = trpc.myTwin.update.useMutation();
   const updatePublicMutation = trpc.myTwin.updatePublicSettings.useMutation();
@@ -108,6 +108,17 @@ export default function MyTwin() {
       <DashboardLayout>
         <div className="flex items-center justify-center h-64">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (isError) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center h-64 gap-4">
+          <p className="text-muted-foreground">分身AIの読み込みに失敗しました</p>
+          <button onClick={() => window.location.reload()} className="text-primary underline text-sm">再読み込み</button>
         </div>
       </DashboardLayout>
     );

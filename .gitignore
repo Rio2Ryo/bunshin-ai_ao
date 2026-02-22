@@ -18,6 +18,7 @@ build/
 # Test artifacts
 test-results/
 test_screenshots/
+e2e/.auth/
 
 # IDE and editor files
 .vscode/
