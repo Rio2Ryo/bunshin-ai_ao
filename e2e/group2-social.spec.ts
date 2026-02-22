@@ -44,13 +44,13 @@ function filterCriticalErrors(errors: string[]): string[] {
 }
 
 /**
- * Check whether the page shows the sign-in gate.
- * DashboardLayout shows "Sign in to continue" when not authenticated.
+ * Check whether the page shows the login page (redirected by auth guard).
  */
 async function isOnSignInPage(page: Page): Promise<boolean> {
+  if (page.url().includes("/login")) return true;
   return (
-    (await page.getByText("Sign in to continue").isVisible().catch(() => false)) ||
-    (await page.getByRole("button", { name: "Sign in" }).isVisible().catch(() => false))
+    (await page.getByText("分身AIにログイン").isVisible().catch(() => false)) ||
+    (await page.getByRole("button", { name: "ログイン" }).isVisible().catch(() => false))
   );
 }
 
@@ -79,9 +79,9 @@ test.describe("Matching Page (/matching)", () => {
 
     const signedOut = await isOnSignInPage(page);
     if (signedOut) {
-      await expect(page.getByText("Sign in to continue")).toBeVisible();
-      await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Sign in" })).toBeEnabled();
+      await expect(page.getByText("分身AIにログイン")).toBeVisible();
+      await expect(page.getByRole("button", { name: "ログイン" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "ログイン" })).toBeEnabled();
     } else {
       await expect(
         page.getByRole("heading", { name: "ビジネスマッチング" })
@@ -183,8 +183,8 @@ test.describe("Friends Page (/friends)", () => {
 
     const signedOut = await isOnSignInPage(page);
     if (signedOut) {
-      await expect(page.getByText("Sign in to continue")).toBeVisible();
-      await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+      await expect(page.getByText("分身AIにログイン")).toBeVisible();
+      await expect(page.getByRole("button", { name: "ログイン" })).toBeVisible();
     } else {
       // Use locator scoped to main to avoid matching sidebar button text
       await expect(mainContent(page).locator("h1")).toContainText("友達");
@@ -322,7 +322,7 @@ test.describe("Plan Page (/plan)", () => {
 
     const signedOut = await isOnSignInPage(page);
     if (signedOut) {
-      await expect(page.getByText("Sign in to continue")).toBeVisible();
+      await expect(page.getByText("分身AIにログイン")).toBeVisible();
     } else {
       // Plan page shows "現在のプラン" as a CardDescription (also appears as button text)
       await expect(page.getByText("現在のプラン").first()).toBeVisible({ timeout: 20000 });
@@ -422,7 +422,7 @@ test.describe("Points Page (/points)", () => {
 
     const signedOut = await isOnSignInPage(page);
     if (signedOut) {
-      await expect(page.getByText("Sign in to continue")).toBeVisible();
+      await expect(page.getByText("分身AIにログイン")).toBeVisible();
     } else {
       await expect(
         page.getByRole("heading", { name: "ポイント" })
@@ -563,7 +563,7 @@ test.describe("Growth Page (/growth)", () => {
 
     const signedOut = await isOnSignInPage(page);
     if (signedOut) {
-      await expect(page.getByText("Sign in to continue")).toBeVisible();
+      await expect(page.getByText("分身AIにログイン")).toBeVisible();
     } else {
       await expect(page.getByText("分身AI育成")).toBeVisible({ timeout: 20000 });
     }
@@ -728,7 +728,7 @@ test.describe("Cards Page (/cards)", () => {
 
     const signedOut = await isOnSignInPage(page);
     if (signedOut) {
-      await expect(page.getByText("Sign in to continue")).toBeVisible();
+      await expect(page.getByText("分身AIにログイン")).toBeVisible();
     } else {
       await expect(
         page.getByRole("heading", { name: "カード管理" })

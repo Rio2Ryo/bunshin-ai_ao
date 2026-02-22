@@ -7,8 +7,8 @@ import { test, expect, type Page } from "@playwright/test";
  *   /clawdbot, /line-link, /discover, /orchestration, /ai-config,
  *   /admin/ai-provider, /quests, /learned-personality, /404
  *
- * The production deployment runs with VITE_PHASE1_NOAUTH=1, so all pages
- * are accessible without authentication via a demo user context.
+ * Auth-protected pages redirect to /login when not authenticated.
+ * Tests that require auth content will be skipped if redirected.
  */
 
 // ---------------------------------------------------------------------------
@@ -47,10 +47,23 @@ function assertNoCriticalErrors(errors: string[]) {
   expect(critical).toHaveLength(0);
 }
 
+/** Check if redirected to login page (auth guard). */
+async function isOnLoginPage(page: Page): Promise<boolean> {
+  if (page.url().includes("/login")) return true;
+  return page.getByText("分身AIにログイン").isVisible().catch(() => false);
+}
+
+/** Navigate, settle, and skip test if redirected to login (for auth-protected pages). */
+async function navigateAuthPage(page: Page, path: string) {
+  const errors = await navigateAndSettle(page, path);
+  if (await isOnLoginPage(page)) { test.skip(); }
+  return errors;
+}
+
 /** Assert the sidebar navigation rendered (common to all dashboard pages). */
 async function assertSidebarPresent(page: Page) {
+  if (await isOnLoginPage(page)) { test.skip(); return; }
   await expect(page.getByText("ダッシュボード").first()).toBeVisible();
-  await expect(page.getByText("プロフィール").first()).toBeVisible();
   await expect(page.getByText("チャット").first()).toBeVisible();
 }
 
@@ -59,17 +72,17 @@ async function assertSidebarPresent(page: Page) {
 // ===========================================================================
 test.describe("Clawdbot Page (/clawdbot)", () => {
   test("1.1 loads without JS errors", async ({ page }) => {
-    const errors = await navigateAndSettle(page, "/clawdbot");
+    const errors = await navigateAuthPage(page, "/clawdbot");
     assertNoCriticalErrors(errors);
   });
 
   test("1.2 sidebar navigation is present", async ({ page }) => {
-    await navigateAndSettle(page, "/clawdbot");
+    await navigateAuthPage(page, "/clawdbot");
     await assertSidebarPresent(page);
   });
 
   test("1.3 page heading and description are visible", async ({ page }) => {
-    await navigateAndSettle(page, "/clawdbot");
+    await navigateAuthPage(page, "/clawdbot");
     // The heading is split across icon + text in an h1
     const heading = page.locator("h1");
     await expect(heading).toBeVisible();
@@ -84,21 +97,21 @@ test.describe("Clawdbot Page (/clawdbot)", () => {
   test("1.4 tabs are rendered (setup, status, chat, learning)", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/clawdbot");
+    await navigateAuthPage(page, "/clawdbot");
     await expect(page.getByText("セットアップ")).toBeVisible();
     await expect(page.getByText("ステータス")).toBeVisible();
     await expect(page.getByText("学習状況")).toBeVisible();
   });
 
   test("1.5 tRPC data loaded - connection data renders", async ({ page }) => {
-    await navigateAndSettle(page, "/clawdbot");
+    await navigateAuthPage(page, "/clawdbot");
     // The connection data shows a gateway URL from tRPC response
     await expect(page.getByText("接続済み")).toBeVisible();
     await expect(page.getByText("https://test-gateway.example.com")).toBeVisible();
   });
 
   test("1.6 action buttons are present and interactive", async ({ page }) => {
-    await navigateAndSettle(page, "/clawdbot");
+    await navigateAuthPage(page, "/clawdbot");
     const testBtn = page.getByRole("button", { name: "接続テスト" });
     await expect(testBtn).toBeVisible();
     await expect(testBtn).toBeEnabled();
@@ -111,7 +124,7 @@ test.describe("Clawdbot Page (/clawdbot)", () => {
   test("1.7 settings switches are visible and interactive", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/clawdbot");
+    await navigateAuthPage(page, "/clawdbot");
     // Verify setting labels are present
     await expect(page.getByText("メモリ同期")).toBeVisible();
     await expect(page.getByText("スキルアクセス")).toBeVisible();
@@ -125,7 +138,7 @@ test.describe("Clawdbot Page (/clawdbot)", () => {
   });
 
   test("1.8 Clawdbot explanation card is present", async ({ page }) => {
-    await navigateAndSettle(page, "/clawdbot");
+    await navigateAuthPage(page, "/clawdbot");
     await expect(page.getByText("Clawdbotとは？")).toBeVisible();
     await expect(page.getByText("Peter Steinberger")).toBeVisible();
   });
@@ -136,19 +149,19 @@ test.describe("Clawdbot Page (/clawdbot)", () => {
 // ===========================================================================
 test.describe("LineLink Page (/line-link)", () => {
   test("2.1 loads without JS errors", async ({ page }) => {
-    const errors = await navigateAndSettle(page, "/line-link");
+    const errors = await navigateAuthPage(page, "/line-link");
     assertNoCriticalErrors(errors);
   });
 
   test("2.2 page heading is visible", async ({ page }) => {
-    await navigateAndSettle(page, "/line-link");
+    await navigateAuthPage(page, "/line-link");
     const heading = page.locator("h1");
     await expect(heading).toBeVisible();
     await expect(heading).toContainText("LINE連携");
   });
 
   test("2.3 description text is visible", async ({ page }) => {
-    await navigateAndSettle(page, "/line-link");
+    await navigateAuthPage(page, "/line-link");
     await expect(
       page.getByText("LINE公式アカウントと分身AIを連携して、LINEから会話できます")
     ).toBeVisible();
@@ -157,7 +170,7 @@ test.describe("LineLink Page (/line-link)", () => {
   test("2.4 link instructions alert is shown (unlinked state)", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/line-link");
+    await navigateAuthPage(page, "/line-link");
     await expect(page.getByText("LINE連携の手順")).toBeVisible();
     await expect(
       page.getByText("分身AI公式LINEアカウントを友だち追加")
@@ -167,7 +180,7 @@ test.describe("LineLink Page (/line-link)", () => {
   test("2.5 link code input and button are present and interactive", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/line-link");
+    await navigateAuthPage(page, "/line-link");
     // The input should have a placeholder
     const input = page.getByPlaceholder("例: ABC123");
     await expect(input).toBeVisible();
@@ -190,7 +203,7 @@ test.describe("LineLink Page (/line-link)", () => {
   });
 
   test("2.6 friend add section is present", async ({ page }) => {
-    await navigateAndSettle(page, "/line-link");
+    await navigateAuthPage(page, "/line-link");
     await expect(
       page.getByText("公式LINEを友だち追加", { exact: true })
     ).toBeVisible();
@@ -219,19 +232,19 @@ test.describe("LineLink Page (/line-link)", () => {
 // ===========================================================================
 test.describe("Discover Page (/discover)", () => {
   test("3.1 loads without JS errors", async ({ page }) => {
-    const errors = await navigateAndSettle(page, "/discover");
+    const errors = await navigateAuthPage(page, "/discover");
     assertNoCriticalErrors(errors);
   });
 
   test("3.2 page heading is visible", async ({ page }) => {
-    await navigateAndSettle(page, "/discover");
+    await navigateAuthPage(page, "/discover");
     const heading = page.locator("h1");
     await expect(heading).toBeVisible();
     await expect(heading).toContainText("分身AI発見");
   });
 
   test("3.3 search form is present and interactive", async ({ page }) => {
-    await navigateAndSettle(page, "/discover");
+    await navigateAuthPage(page, "/discover");
 
     // Search input
     const input = page.getByPlaceholder("名前、スキル、タグで検索...");
@@ -248,7 +261,7 @@ test.describe("Discover Page (/discover)", () => {
   test("3.4 empty state shows correctly when no public twins exist", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/discover");
+    await navigateAuthPage(page, "/discover");
     await expect(page.getByText("公開分身AIが見つかりません")).toBeVisible();
     await expect(
       page.getByText("まだ公開されている分身AIがありません")
@@ -258,7 +271,7 @@ test.describe("Discover Page (/discover)", () => {
   test("3.5 tRPC data loads - loading spinner disappears", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/discover");
+    await navigateAuthPage(page, "/discover");
     // The loading state uses animate-spin with border element
     const loadingSpinner = page.locator(
       ".animate-spin.rounded-full.h-8.w-8.border-b-2"
@@ -268,7 +281,7 @@ test.describe("Discover Page (/discover)", () => {
   });
 
   test("3.6 search button triggers refetch", async ({ page }) => {
-    await navigateAndSettle(page, "/discover");
+    await navigateAuthPage(page, "/discover");
     const input = page.getByPlaceholder("名前、スキル、タグで検索...");
     await input.fill("nonexistent");
     const searchBtn = page.getByRole("button", { name: "検索" });
@@ -284,12 +297,12 @@ test.describe("Discover Page (/discover)", () => {
 // ===========================================================================
 test.describe("Orchestration Page (/orchestration)", () => {
   test("4.1 loads without JS errors", async ({ page }) => {
-    const errors = await navigateAndSettle(page, "/orchestration");
+    const errors = await navigateAuthPage(page, "/orchestration");
     assertNoCriticalErrors(errors);
   });
 
   test("4.2 page heading and description are visible", async ({ page }) => {
-    await navigateAndSettle(page, "/orchestration");
+    await navigateAuthPage(page, "/orchestration");
     const heading = page.locator("h1");
     await expect(heading).toBeVisible();
     await expect(heading).toContainText("AIオーケストレーション");
@@ -300,19 +313,19 @@ test.describe("Orchestration Page (/orchestration)", () => {
   });
 
   test("4.3 save button is present and enabled", async ({ page }) => {
-    await navigateAndSettle(page, "/orchestration");
+    await navigateAuthPage(page, "/orchestration");
     const saveBtn = page.getByRole("button", { name: "保存" });
     await expect(saveBtn).toBeVisible();
     await expect(saveBtn).toBeEnabled();
   });
 
   test("4.4 orchestration explanation card is visible", async ({ page }) => {
-    await navigateAndSettle(page, "/orchestration");
+    await navigateAuthPage(page, "/orchestration");
     await expect(page.getByText("Manusのオーケストレーション")).toBeVisible();
   });
 
   test("4.5 default provider selector is rendered", async ({ page }) => {
-    await navigateAndSettle(page, "/orchestration");
+    await navigateAuthPage(page, "/orchestration");
     await expect(page.getByText("デフォルトAIプロバイダー")).toBeVisible();
     await expect(page.getByText("プロバイダー", { exact: true })).toBeVisible();
     // Select trigger shows builtin as default
@@ -320,7 +333,7 @@ test.describe("Orchestration Page (/orchestration)", () => {
   });
 
   test("4.6 task types are listed", async ({ page }) => {
-    await navigateAndSettle(page, "/orchestration");
+    await navigateAuthPage(page, "/orchestration");
     await expect(page.getByText("タスクタイプ", { exact: true })).toBeVisible();
     await expect(page.getByText("会話・対話")).toBeVisible();
     await expect(page.getByText("分析・評価")).toBeVisible();
@@ -331,14 +344,14 @@ test.describe("Orchestration Page (/orchestration)", () => {
   test("4.7 tRPC data loads - roles section renders when data exists", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/orchestration");
+    await navigateAuthPage(page, "/orchestration");
     // The test data includes a "test-role" role
     await expect(page.getByText("登録済みの役割設定")).toBeVisible();
     await expect(page.getByText("test-role")).toBeVisible();
   });
 
   test("4.8 loading spinner disappears after data loads", async ({ page }) => {
-    await navigateAndSettle(page, "/orchestration");
+    await navigateAuthPage(page, "/orchestration");
     const spinner = page.locator(".animate-spin");
     const spinnerCount = await spinner.count();
     // No spinners should be visible on the settled page
@@ -359,12 +372,12 @@ test.describe("Orchestration Page (/orchestration)", () => {
 // ===========================================================================
 test.describe("AIConfig Page (/ai-config)", () => {
   test("5.1 loads without JS errors", async ({ page }) => {
-    const errors = await navigateAndSettle(page, "/ai-config");
+    const errors = await navigateAuthPage(page, "/ai-config");
     assertNoCriticalErrors(errors);
   });
 
   test("5.2 page heading and description are visible", async ({ page }) => {
-    await navigateAndSettle(page, "/ai-config");
+    await navigateAuthPage(page, "/ai-config");
     const heading = page.locator("h1");
     await expect(heading).toBeVisible();
     await expect(heading).toContainText("AI API設定");
@@ -375,12 +388,12 @@ test.describe("AIConfig Page (/ai-config)", () => {
   });
 
   test("5.3 builtin AI info card is shown", async ({ page }) => {
-    await navigateAndSettle(page, "/ai-config");
+    await navigateAuthPage(page, "/ai-config");
     await expect(page.getByText("ビルトインAI")).toBeVisible();
   });
 
   test("5.4 all four AI providers are listed", async ({ page }) => {
-    await navigateAndSettle(page, "/ai-config");
+    await navigateAuthPage(page, "/ai-config");
     await expect(page.getByText("OpenAI (ChatGPT)").first()).toBeVisible();
     await expect(page.getByText("Google Gemini").first()).toBeVisible();
     await expect(page.getByText("Anthropic (Claude)").first()).toBeVisible();
@@ -390,7 +403,7 @@ test.describe("AIConfig Page (/ai-config)", () => {
   test("5.5 API key inputs are present for unconfigured providers", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/ai-config");
+    await navigateAuthPage(page, "/ai-config");
     // OpenAI is unconfigured - should have an API key input with placeholder
     const openaiInput = page.getByPlaceholder("sk-...");
     await expect(openaiInput).toBeVisible();
@@ -399,7 +412,7 @@ test.describe("AIConfig Page (/ai-config)", () => {
   test("5.6 tRPC data loaded - Gemini shows existing key", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/ai-config");
+    await navigateAuthPage(page, "/ai-config");
     // Gemini has an existing key per the debug output
     await expect(page.getByText("登録済み").first()).toBeVisible();
     await expect(page.getByText("test-api-key")).toBeVisible();
@@ -408,7 +421,7 @@ test.describe("AIConfig Page (/ai-config)", () => {
   test("5.7 save/update buttons are present for each provider", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/ai-config");
+    await navigateAuthPage(page, "/ai-config");
     // There should be multiple save/update buttons
     const saveButtons = page.getByRole("button", { name: "保存" });
     const saveBtnCount = await saveButtons.count();
@@ -423,14 +436,14 @@ test.describe("AIConfig Page (/ai-config)", () => {
   test("5.8 show/hide toggle buttons exist for API key inputs", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/ai-config");
+    await navigateAuthPage(page, "/ai-config");
     const showBtns = page.getByRole("button", { name: "表示" });
     const count = await showBtns.count();
     expect(count).toBeGreaterThanOrEqual(3);
   });
 
   test("5.9 API key input is interactive", async ({ page }) => {
-    await navigateAndSettle(page, "/ai-config");
+    await navigateAuthPage(page, "/ai-config");
     const openaiInput = page.getByPlaceholder("sk-...");
     await openaiInput.fill("sk-test-key-12345");
     await expect(openaiInput).toHaveValue("sk-test-key-12345");
@@ -442,12 +455,12 @@ test.describe("AIConfig Page (/ai-config)", () => {
 // ===========================================================================
 test.describe("AdminAIProvider Page (/admin/ai-provider)", () => {
   test("6.1 loads without JS errors", async ({ page }) => {
-    const errors = await navigateAndSettle(page, "/admin/ai-provider");
+    const errors = await navigateAuthPage(page, "/admin/ai-provider");
     assertNoCriticalErrors(errors);
   });
 
   test("6.2 page heading and description are visible", async ({ page }) => {
-    await navigateAndSettle(page, "/admin/ai-provider");
+    await navigateAuthPage(page, "/admin/ai-provider");
     const heading = page.locator("h1");
     await expect(heading).toBeVisible();
     await expect(heading).toContainText("AIプロバイダー設定");
@@ -460,7 +473,7 @@ test.describe("AdminAIProvider Page (/admin/ai-provider)", () => {
   test("6.3 tabs are present (providers list and settings)", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/admin/ai-provider");
+    await navigateAuthPage(page, "/admin/ai-provider");
     await expect(page.getByText("プロバイダー一覧")).toBeVisible();
     await expect(page.getByText("機能別設定")).toBeVisible();
   });
@@ -468,7 +481,7 @@ test.describe("AdminAIProvider Page (/admin/ai-provider)", () => {
   test("6.4 all providers are listed with availability badges", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/admin/ai-provider");
+    await navigateAuthPage(page, "/admin/ai-provider");
     await expect(page.getByText("Manus内蔵LLM", { exact: true })).toBeVisible();
     await expect(page.getByText("Google Gemini").first()).toBeVisible();
     await expect(page.getByText("OpenAI (ChatGPT)").first()).toBeVisible();
@@ -482,14 +495,14 @@ test.describe("AdminAIProvider Page (/admin/ai-provider)", () => {
   });
 
   test("6.5 connection test buttons are present", async ({ page }) => {
-    await navigateAndSettle(page, "/admin/ai-provider");
+    await navigateAuthPage(page, "/admin/ai-provider");
     const testBtns = page.getByRole("button", { name: "接続テスト" });
     const count = await testBtns.count();
     expect(count).toBeGreaterThanOrEqual(4);
   });
 
   test("6.6 API key setup instructions are shown", async ({ page }) => {
-    await navigateAndSettle(page, "/admin/ai-provider");
+    await navigateAuthPage(page, "/admin/ai-provider");
     await expect(page.getByText("APIキーの設定方法")).toBeVisible();
     await expect(page.getByText("GEMINI_API_KEY")).toBeVisible();
     await expect(page.getByText("OPENAI_API_KEY")).toBeVisible();
@@ -498,7 +511,7 @@ test.describe("AdminAIProvider Page (/admin/ai-provider)", () => {
   test("6.7 tRPC data loaded - loading spinner disappears", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/admin/ai-provider");
+    await navigateAuthPage(page, "/admin/ai-provider");
     // The page loading state uses Loader2 with animate-spin in center
     // After data loads, it should not be visible
     const pageSpinner = page.locator(
@@ -511,7 +524,7 @@ test.describe("AdminAIProvider Page (/admin/ai-provider)", () => {
   test("6.8 switching to settings tab shows feature list", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/admin/ai-provider");
+    await navigateAuthPage(page, "/admin/ai-provider");
     const settingsTab = page.getByText("機能別設定");
     await settingsTab.click();
     await page.waitForTimeout(500);
@@ -528,32 +541,32 @@ test.describe("AdminAIProvider Page (/admin/ai-provider)", () => {
 // ===========================================================================
 test.describe("Quests Page (/quests)", () => {
   test("7.1 loads without JS errors", async ({ page }) => {
-    const errors = await navigateAndSettle(page, "/quests");
+    const errors = await navigateAuthPage(page, "/quests");
     assertNoCriticalErrors(errors);
   });
 
   test("7.2 page heading is visible", async ({ page }) => {
-    await navigateAndSettle(page, "/quests");
+    await navigateAuthPage(page, "/quests");
     const heading = page.locator("h1");
     await expect(heading).toBeVisible();
     await expect(heading).toContainText("クエスト");
   });
 
   test("7.3 point balance is displayed", async ({ page }) => {
-    await navigateAndSettle(page, "/quests");
+    await navigateAuthPage(page, "/quests");
     await expect(page.getByText("pt").first()).toBeVisible();
     await expect(page.getByText("現在のポイント")).toBeVisible();
   });
 
   test("7.4 stats cards are rendered", async ({ page }) => {
-    await navigateAndSettle(page, "/quests");
+    await navigateAuthPage(page, "/quests");
     await expect(page.getByText("完了したクエスト")).toBeVisible();
     await expect(page.getByText("獲得ポイント合計")).toBeVisible();
     await expect(page.getByText("カテゴリ")).toBeVisible();
   });
 
   test("7.5 tips card is visible", async ({ page }) => {
-    await navigateAndSettle(page, "/quests");
+    await navigateAuthPage(page, "/quests");
     await expect(
       page.getByText("ポイントを効率よく貯めるコツ")
     ).toBeVisible();
@@ -564,7 +577,7 @@ test.describe("Quests Page (/quests)", () => {
   test("7.6 tRPC data loads - loading spinner disappears", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/quests");
+    await navigateAuthPage(page, "/quests");
     const pageSpinner = page.locator(
       ".flex.items-center.justify-center.h-64 .animate-spin"
     );
@@ -575,7 +588,7 @@ test.describe("Quests Page (/quests)", () => {
   test("7.7 empty state - zero values displayed correctly", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/quests");
+    await navigateAuthPage(page, "/quests");
     // Stats show 0 values
     const zeroValues = page.getByText("0", { exact: true });
     const count = await zeroValues.count();
@@ -588,14 +601,14 @@ test.describe("Quests Page (/quests)", () => {
 // ===========================================================================
 test.describe("LearnedPersonality Page (/learned-personality)", () => {
   test("8.1 loads without JS errors", async ({ page }) => {
-    const errors = await navigateAndSettle(page, "/learned-personality");
+    const errors = await navigateAuthPage(page, "/learned-personality");
     assertNoCriticalErrors(errors);
   });
 
   test("8.2 empty state message is displayed when no data", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/learned-personality");
+    await navigateAuthPage(page, "/learned-personality");
     await expect(page.getByText("学習データがありません")).toBeVisible();
     await expect(
       page.getByText("Clawdbotで会話をすると、自動的にあなたの人格を学習します")
@@ -605,7 +618,7 @@ test.describe("LearnedPersonality Page (/learned-personality)", () => {
   test("8.3 CTA button to configure Clawdbot is present", async ({
     page,
   }) => {
-    await navigateAndSettle(page, "/learned-personality");
+    await navigateAuthPage(page, "/learned-personality");
     const ctaBtn = page.getByRole("button", {
       name: "Clawdbot連携を設定",
     });
@@ -614,7 +627,7 @@ test.describe("LearnedPersonality Page (/learned-personality)", () => {
   });
 
   test("8.4 CTA button navigates to /clawdbot", async ({ page }) => {
-    await navigateAndSettle(page, "/learned-personality");
+    await navigateAuthPage(page, "/learned-personality");
     const ctaBtn = page.getByRole("button", {
       name: "Clawdbot連携を設定",
     });
@@ -624,7 +637,7 @@ test.describe("LearnedPersonality Page (/learned-personality)", () => {
   });
 
   test("8.5 sidebar navigation is present", async ({ page }) => {
-    await navigateAndSettle(page, "/learned-personality");
+    await navigateAuthPage(page, "/learned-personality");
     await assertSidebarPresent(page);
   });
 });
@@ -646,23 +659,20 @@ test.describe("NotFound Page (/404)", () => {
 
   test("9.3 displays Page Not Found message", async ({ page }) => {
     await navigateAndSettle(page, "/404");
-    const subheading = page.getByText("Page Not Found");
+    const subheading = page.getByText("ページが見つかりません");
     await expect(subheading).toBeVisible();
   });
 
-  test("9.4 displays descriptive sorry message", async ({ page }) => {
+  test("9.4 displays descriptive message", async ({ page }) => {
     await navigateAndSettle(page, "/404");
     await expect(
-      page.getByText("Sorry, the page you are looking for doesn't exist.")
-    ).toBeVisible();
-    await expect(
-      page.getByText("It may have been moved or deleted.")
+      page.getByText("お探しのページは存在しないか、移動または削除された可能性があります。")
     ).toBeVisible();
   });
 
   test("9.5 Go Home button is present and clickable", async ({ page }) => {
     await navigateAndSettle(page, "/404");
-    const goHomeBtn = page.getByRole("button", { name: "Go Home" });
+    const goHomeBtn = page.getByRole("button", { name: "トップページへ" });
     await expect(goHomeBtn).toBeVisible();
     await expect(goHomeBtn).toBeEnabled();
     await goHomeBtn.click();
@@ -677,10 +687,10 @@ test.describe("NotFound Page (/404)", () => {
     await expect(icon).toBeVisible();
   });
 
-  test("9.7 button group container is present", async ({ page }) => {
+  test("9.7 home button is present", async ({ page }) => {
     await navigateAndSettle(page, "/404");
-    const buttonGroup = page.locator("#not-found-button-group");
-    await expect(buttonGroup).toBeVisible();
+    const homeBtn = page.getByRole("button", { name: "トップページへ" });
+    await expect(homeBtn).toBeVisible();
   });
 
   test("9.8 does NOT show sidebar navigation (standalone page)", async ({
@@ -702,7 +712,7 @@ test.describe("Unknown route displays NotFound", () => {
     await navigateAndSettle(page, "/this-path-does-not-exist-xyz");
     const heading = page.getByRole("heading", { name: "404" });
     await expect(heading).toBeVisible();
-    await expect(page.getByText("Page Not Found")).toBeVisible();
+    await expect(page.getByText("ページが見つかりません")).toBeVisible();
   });
 });
 

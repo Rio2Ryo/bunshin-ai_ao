@@ -32,6 +32,13 @@ async function navigateAndWait(page: Page, path: string) {
   await page.waitForTimeout(2000);
 }
 
+/** Check if page redirected to login or shows login page content. */
+async function isOnLoginPage(page: Page): Promise<boolean> {
+  if (page.url().includes("/login")) return true;
+  const loginHeading = page.locator("text=分身AIにログイン");
+  return loginHeading.isVisible().catch(() => false);
+}
+
 // ===========================================================================
 // GROUP 1 - CORE PAGES
 // ===========================================================================
@@ -185,35 +192,30 @@ test.describe("Dashboard Page (/dashboard)", () => {
     expect(crashes).toHaveLength(0);
   });
 
-  test("shows either dashboard content or sign-in prompt", async ({ page }) => {
+  test("shows either dashboard content or login redirect", async ({ page }) => {
     await navigateAndWait(page, "/dashboard");
 
-    // Either we see the authenticated dashboard or the sign-in gate
-    const signInBtn = page.locator("button", { hasText: "Sign in" });
+    // Either we see the authenticated dashboard or get redirected to login
     const welcomeHeading = page.locator("h1").filter({ hasText: "おかえりなさい" });
-
-    const signInVisible = await signInBtn.isVisible().catch(() => false);
     const welcomeVisible = await welcomeHeading.isVisible().catch(() => false);
+    const loginRedirected = await isOnLoginPage(page);
 
-    expect(signInVisible || welcomeVisible).toBeTruthy();
+    expect(welcomeVisible || loginRedirected).toBeTruthy();
   });
 
-  test("sign-in gate has proper UI when unauthenticated", async ({ page }) => {
+  test("sign-in gate redirects to login when unauthenticated", async ({ page }) => {
     await navigateAndWait(page, "/dashboard");
 
-    const signInBtn = page.locator("button", { hasText: "Sign in" });
-    const isSignInGate = await signInBtn.isVisible().catch(() => false);
+    const loginRedirected = await isOnLoginPage(page);
+    const isAuthenticated = await page.locator("h1").filter({ hasText: "おかえりなさい" }).isVisible().catch(() => false);
 
-    if (isSignInGate) {
-      // Verify the sign-in gate renders properly
-      await expect(
-        page.locator("h1").filter({ hasText: "Sign in to continue" })
-      ).toBeVisible();
-      await expect(
-        page.locator("text=Access to this dashboard requires authentication")
-      ).toBeVisible();
-      await expect(signInBtn).toBeEnabled();
+    if (loginRedirected) {
+      // Verify login page renders properly
+      await expect(page.locator("text=分身AIにログイン")).toBeVisible();
+      await expect(page.locator("button", { hasText: "ログイン" })).toBeEnabled();
     }
+    // Either redirected to login or already authenticated
+    expect(loginRedirected || isAuthenticated).toBeTruthy();
   });
 
   test("dashboard stat cards are present when authenticated", async ({ page }) => {
@@ -322,16 +324,14 @@ test.describe("Profile Page (/profile)", () => {
     expect(crashes).toHaveLength(0);
   });
 
-  test("shows either profile form or sign-in prompt", async ({ page }) => {
+  test("shows either profile form or login redirect", async ({ page }) => {
     await navigateAndWait(page, "/profile");
 
-    const signInBtn = page.locator("button", { hasText: "Sign in" });
     const profileHeading = page.locator("h1").filter({ hasText: "プロフィール設定" });
-
-    const signInVisible = await signInBtn.isVisible().catch(() => false);
     const profileVisible = await profileHeading.isVisible().catch(() => false);
+    const loginRedirected = await isOnLoginPage(page);
 
-    expect(signInVisible || profileVisible).toBeTruthy();
+    expect(profileVisible || loginRedirected).toBeTruthy();
   });
 
   test("profile form fields are present when authenticated", async ({ page }) => {
@@ -430,7 +430,7 @@ test.describe("Profile Page (/profile)", () => {
 
     // After full load, the loading spinner should be gone (replaced by form or sign-in)
     const spinner = page.locator(".animate-spin").first();
-    const signInBtn = page.locator("button", { hasText: "Sign in" });
+    const signInBtn = page.locator("button", { hasText: "ログイン" });
     const profileHeading = page.locator("h1").filter({ hasText: "プロフィール設定" });
 
     const spinnerGone = await spinner.isHidden().catch(() => true);
@@ -468,7 +468,7 @@ test.describe("Twins Page (/twins)", () => {
   test("shows either twins content or sign-in prompt", async ({ page }) => {
     await navigateAndWait(page, "/twins");
 
-    const signInBtn = page.locator("button", { hasText: "Sign in" });
+    const signInBtn = page.locator("button", { hasText: "ログイン" });
     const twinsHeading = page.locator("h1").filter({ hasText: "自分の分身AI" });
 
     const signInVisible = await signInBtn.isVisible().catch(() => false);
@@ -590,7 +590,7 @@ test.describe("Twins Page (/twins)", () => {
 
     // After full load, either we see content or sign-in
     const spinner = page.locator(".animate-spin").first();
-    const signInBtn = page.locator("button", { hasText: "Sign in" });
+    const signInBtn = page.locator("button", { hasText: "ログイン" });
     const twinsHeading = page.locator("h1").filter({ hasText: "自分の分身AI" });
 
     const spinnerGone = await spinner.isHidden().catch(() => true);
@@ -642,7 +642,7 @@ test.describe("Chat Page (/chat)", () => {
   test("shows either chat UI or sign-in prompt", async ({ page }) => {
     await navigateAndWait(page, "/chat");
 
-    const signInBtn = page.locator("button", { hasText: "Sign in" });
+    const signInBtn = page.locator("button", { hasText: "ログイン" });
     const chatTitle = page.locator("text=分身AIチャット");
     const chatTwinTitle = page.locator("text=とチャット");
 
@@ -656,7 +656,7 @@ test.describe("Chat Page (/chat)", () => {
   test("shows chat creation prompt when no session is active", async ({ page }) => {
     await navigateAndWait(page, "/chat");
 
-    const signInBtn = page.locator("button", { hasText: "Sign in" });
+    const signInBtn = page.locator("button", { hasText: "ログイン" });
     const isSignIn = await signInBtn.isVisible().catch(() => false);
 
     if (!isSignIn) {
@@ -679,7 +679,7 @@ test.describe("Chat Page (/chat)", () => {
   test("new chat button is present when authenticated", async ({ page }) => {
     await navigateAndWait(page, "/chat");
 
-    const signInBtn = page.locator("button", { hasText: "Sign in" });
+    const signInBtn = page.locator("button", { hasText: "ログイン" });
     const isSignIn = await signInBtn.isVisible().catch(() => false);
 
     if (!isSignIn) {
@@ -702,7 +702,7 @@ test.describe("Chat Page (/chat)", () => {
     await page.setViewportSize({ width: 1280, height: 720 });
     await navigateAndWait(page, "/chat");
 
-    const signInBtn = page.locator("button", { hasText: "Sign in" });
+    const signInBtn = page.locator("button", { hasText: "ログイン" });
     const isSignIn = await signInBtn.isVisible().catch(() => false);
 
     if (!isSignIn) {
@@ -717,7 +717,7 @@ test.describe("Chat Page (/chat)", () => {
   test("message input field is present when in active chat", async ({ page }) => {
     await navigateAndWait(page, "/chat");
 
-    const signInBtn = page.locator("button", { hasText: "Sign in" });
+    const signInBtn = page.locator("button", { hasText: "ログイン" });
     const isSignIn = await signInBtn.isVisible().catch(() => false);
 
     if (!isSignIn) {
@@ -737,7 +737,7 @@ test.describe("Chat Page (/chat)", () => {
   test("chat UI shows create-twin CTA if no twin exists", async ({ page }) => {
     await navigateAndWait(page, "/chat");
 
-    const signInBtn = page.locator("button", { hasText: "Sign in" });
+    const signInBtn = page.locator("button", { hasText: "ログイン" });
     const isSignIn = await signInBtn.isVisible().catch(() => false);
 
     if (!isSignIn) {
@@ -774,7 +774,7 @@ test.describe("Chat Page (/chat)", () => {
     await page.setViewportSize({ width: 1280, height: 720 });
     await navigateAndWait(page, "/chat");
 
-    const signInBtn = page.locator("button", { hasText: "Sign in" });
+    const signInBtn = page.locator("button", { hasText: "ログイン" });
     const isSignIn = await signInBtn.isVisible().catch(() => false);
 
     if (!isSignIn) {
