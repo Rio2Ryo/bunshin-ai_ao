@@ -513,6 +513,17 @@ export async function ensureSchema(db: D1Database) {
     }
   }
 
+  // Seed default redeemable products
+  try {
+    await db.batch([
+      db.prepare(`INSERT OR IGNORE INTO redeemable_products (id, name, description, pointsCost, category, isActive, sortOrder) VALUES (1, 'AIチャット追加枠 (10回)', '分身AIとの追加チャット枠', 100, 'デジタル', 1, 1)`),
+      db.prepare(`INSERT OR IGNORE INTO redeemable_products (id, name, description, pointsCost, category, isActive, sortOrder) VALUES (2, 'プレミアムマッチング分析', '詳細なマッチング分析レポート', 500, 'デジタル', 1, 2)`),
+      db.prepare(`INSERT OR IGNORE INTO redeemable_products (id, name, description, pointsCost, category, isActive, sortOrder) VALUES (3, 'Amazonギフトカード ¥500', 'Amazonギフトカード', 5000, 'ギフト', 1, 3)`),
+    ]);
+  } catch {
+    // Products already seeded or table not ready
+  }
+
   schemaReady = true;
 }
 

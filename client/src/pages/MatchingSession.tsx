@@ -6,7 +6,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
 import { useParams, Link } from "wouter";
-import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, Users, Calendar, DollarSign, Target, Rocket } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, Users, Calendar, DollarSign, Target, Rocket, Share2, Link, ExternalLink } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Streamdown } from "streamdown";
 import { toast } from "sonner";
 
@@ -41,7 +42,52 @@ export default function MatchingSession() {
     }
   };
 
+  const shareUrl = `https://bunshin-ai.pages.dev/matching/${sessionId}`;
 
+  const handleShare = async () => {
+    const shareText = data?.result
+      ? `「${data.session.theme}」のマッチング結果: 相性 ${parseFloat(data.result.compatibilityScore || "0")}%`
+      : `「${data?.session.theme}」のマッチングセッション`;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: "分身AI - マッチング結果",
+          text: shareText,
+          url: shareUrl,
+        });
+      } catch {
+        // User cancelled
+      }
+    } else {
+      await navigator.clipboard.writeText(`${shareText}\n${shareUrl}`);
+      toast.success("リンクをクリップボードにコピーしました");
+    }
+  };
+
+  const handleShareLine = () => {
+    const text = encodeURIComponent(
+      data?.result
+        ? `「${data.session.theme}」のマッチング結果: 相性 ${parseFloat(data.result.compatibilityScore || "0")}%\n${shareUrl}`
+        : `「${data?.session.theme}」のマッチングセッション\n${shareUrl}`
+    );
+    window.open(`https://line.me/R/share?text=${text}`, "_blank");
+  };
+
+  const handleShareTwitter = () => {
+    const text = encodeURIComponent(
+      data?.result
+        ? `「${data.session.theme}」のマッチング結果: 相性 ${parseFloat(data.result.compatibilityScore || "0")}% #分身AI`
+        : `「${data?.session.theme}」のマッチングセッション #分身AI`
+    );
+    const url = encodeURIComponent(shareUrl);
+    window.open(`https://twitter.com/intent/tweet?text=${text}&url=${url}`, "_blank");
+  };
+
+  const handleCopyLink = async () => {
+    await navigator.clipboard.writeText(shareUrl);
+    toast.success("リンクをクリップボードにコピーしました");
+  };
 
   if (isLoading) {
     return (
@@ -88,20 +134,50 @@ export default function MatchingSession() {
             </div>
           </div>
           
-          {/* Export Button */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleExportPdf}
-            disabled={isExporting}
-          >
-            {isExporting ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <Download className="h-4 w-4 mr-2" />
-            )}
-            PDF印刷
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Share Button */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <Share2 className="h-4 w-4 mr-2" />
+                  共有
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleShare}>
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  共有...
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleShareLine}>
+                  <MessageSquare className="h-4 w-4 mr-2" />
+                  LINEで共有
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleShareTwitter}>
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  Xで共有
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleCopyLink}>
+                  <Link className="h-4 w-4 mr-2" />
+                  リンクをコピー
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* Export Button */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportPdf}
+              disabled={isExporting}
+            >
+              {isExporting ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4 mr-2" />
+              )}
+              PDF印刷
+            </Button>
+          </div>
         </div>
 
         {/* Score Overview */}

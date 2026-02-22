@@ -1686,7 +1686,105 @@ JSONのみ出力し、他の説明は不要です。`;
       .mutation(async () => ({ compatibilityScore: 0, summary: "分析にはマッチング対話の生成が必要です", strengths: [], challenges: [], recommendations: [] })),
     exportReport: protectedProcedure
       .input(z.object({ sessionId: z.number() }))
-      .query(async () => ({ html: "<p>Phase 1</p>" })),
+      .query(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+        if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+        const twin1 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+        const twin2 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+        const dialogues = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionId).all<any>();
+        const result = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(input.sessionId).first<any>();
+        const parsedResult = result ? {
+          ...result,
+          scoreBreakdown: parseJson<any>(result.scoreBreakdown),
+          strengths: parseJson<string[]>(result.strengths),
+          challenges: parseJson<string[]>(result.challenges),
+          recommendations: parseJson<string[]>(result.recommendations),
+        } : null;
+
+        const score = parsedResult?.compatibilityScore ? parseFloat(parsedResult.compatibilityScore) : 0;
+        const twin1Name = twin1?.name || `Twin #${session.twin1Id}`;
+        const twin2Name = twin2?.name || `Twin #${session.twin2Id}`;
+        const date = session.createdAt?.slice(0, 10) || "";
+        const sb = parsedResult?.scoreBreakdown || {};
+
+        const escHtml = (s: string | null | undefined) => (s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+        const breakdownRows = [
+          { label: "スキルマッチ度", key: "skillMatch" },
+          { label: "価値観の一致度", key: "valueAlignment" },
+          { label: "コミュニケーション", key: "communicationStyle" },
+          { label: "ビジネス目標適合度", key: "businessGoalFit" },
+          { label: "相互補完性", key: "complementaryStrengths" },
+        ].map(({ label, key }) => {
+          const d = sb[key] || {};
+          return `<tr><td>${label}</td><td style="text-align:center;font-weight:bold">${d.score || 0}/20</td><td>${escHtml(d.reason)}</td></tr>`;
+        }).join("");
+
+        const listItems = (arr: string[] | null | undefined) =>
+          arr && arr.length > 0 ? arr.map(s => `<li>${escHtml(s)}</li>`).join("") : "<li>データなし</li>";
+
+        const dialogueHtml = (dialogues.results ?? []).map((d: any) => {
+          const isTwin1 = d.speakerTwinId === session.twin1Id;
+          const name = isTwin1 ? twin1Name : twin2Name;
+          const bg = isTwin1 ? "#f0f4ff" : "#f0fff4";
+          return `<div style="margin:8px 0;padding:12px;background:${bg};border-radius:8px"><strong>${escHtml(name)}</strong><p style="margin:4px 0 0">${escHtml(d.content)}</p></div>`;
+        }).join("");
+
+        const sectionHtml = (title: string, content: string | null | undefined) =>
+          content ? `<div style="margin:16px 0"><h3>${title}</h3><div style="white-space:pre-wrap">${escHtml(content)}</div></div>` : "";
+
+        const html = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>マッチングレポート - ${escHtml(session.theme)}</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:800px;margin:0 auto;padding:24px;color:#1a1a2e;line-height:1.6}
+  h1{color:#6366f1;border-bottom:3px solid #6366f1;padding-bottom:8px}
+  h2{color:#4f46e5;margin-top:32px;border-bottom:1px solid #e5e7eb;padding-bottom:4px}
+  h3{color:#374151;margin-bottom:8px}
+  table{width:100%;border-collapse:collapse;margin:16px 0}
+  th,td{padding:8px 12px;border:1px solid #e5e7eb;text-align:left}
+  th{background:#f8fafc;font-weight:600}
+  .score-bar{background:#e5e7eb;border-radius:4px;height:24px;position:relative;overflow:hidden}
+  .score-fill{background:linear-gradient(90deg,#6366f1,#818cf8);height:100%;border-radius:4px;transition:width 0.3s}
+  .score-text{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-weight:bold;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,0.3)}
+  .meta{color:#6b7280;font-size:14px}
+  ul{padding-left:20px}
+  li{margin:4px 0}
+  @media print{body{padding:0}h1{font-size:20px}h2{font-size:16px}}
+</style></head><body>
+<h1>マッチングレポート</h1>
+<p class="meta">テーマ: <strong>${escHtml(session.theme)}</strong><br>
+${escHtml(twin1Name)} × ${escHtml(twin2Name)}<br>
+日付: ${date}</p>
+
+<h2>相性スコア</h2>
+<div style="text-align:center;font-size:48px;font-weight:bold;color:#6366f1;margin:16px 0">${score}%</div>
+<div class="score-bar"><div class="score-fill" style="width:${score}%"></div><div class="score-text">${score}%</div></div>
+${parsedResult?.summary ? `<p style="margin-top:12px"><strong>総合評価:</strong> ${escHtml(parsedResult.summary)}</p>` : ""}
+
+<h2>スコア内訳</h2>
+<table><thead><tr><th>観点</th><th style="width:80px">スコア</th><th>理由</th></tr></thead><tbody>${breakdownRows}</tbody></table>
+
+<h2>強み</h2><ul>${listItems(parsedResult?.strengths)}</ul>
+<h2>課題</h2><ul>${listItems(parsedResult?.challenges)}</ul>
+<h2>提案</h2><ol>${parsedResult?.recommendations && parsedResult.recommendations.length > 0 ? parsedResult.recommendations.map((r: string) => `<li>${escHtml(r)}</li>`).join("") : "<li>データなし</li>"}</ol>
+
+${parsedResult?.collaborationPotential ? `<h2>協業可能性</h2><p>${escHtml(parsedResult.collaborationPotential)}</p>` : ""}
+${sectionHtml("役割分担", parsedResult?.roleDistribution)}
+${sectionHtml("タイムライン", parsedResult?.timeline)}
+${sectionHtml("必要リソース", parsedResult?.resources)}
+${sectionHtml("期待成果・KPI", parsedResult?.kpis)}
+${sectionHtml("明日からできるアクション", parsedResult?.nextSteps)}
+${parsedResult?.detailedAnalysis ? `<h2>詳細分析</h2><div style="white-space:pre-wrap">${escHtml(parsedResult.detailedAnalysis)}</div>` : ""}
+
+<h2>対話履歴（${(dialogues.results ?? []).length}ターン）</h2>
+${dialogueHtml || "<p>対話がまだ行われていません</p>"}
+
+<hr style="margin-top:32px;border:none;border-top:1px solid #e5e7eb">
+<p class="meta" style="text-align:center">分身AI マッチングレポート | ${date}</p>
+</body></html>`;
+
+        return { html };
+      }),
     generatePresentation: protectedProcedure
       .input(z.object({ sessionId: z.number() }))
       .mutation(async () => ({ slideContent: { markdown: "", slideCount: 0 }, slideCount: 0 })),
@@ -1719,7 +1817,34 @@ JSONのみ出力し、他の説明は不要です。`;
     }),
     redeem: protectedProcedure
       .input(z.object({ productId: z.number() }))
-      .mutation(async () => ({ success: false, message: "Phase 1: ポイント交換は未対応" })),
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const product = await ctx.env.DB.prepare(
+          `SELECT * FROM redeemable_products WHERE id=? AND isActive=1`
+        ).bind(input.productId).first<any>();
+        if (!product) return { success: false, message: "商品が見つかりません" };
+
+        const pts = await ctx.env.DB.prepare(`SELECT * FROM user_points WHERE userId=?`).bind(ctx.userId).first<any>();
+        if (!pts || pts.balance < product.pointsCost) {
+          return { success: false, message: "ポイントが不足しています" };
+        }
+
+        const newBalance = pts.balance - product.pointsCost;
+        const newTotalSpent = (pts.totalSpent || 0) + product.pointsCost;
+        await ctx.env.DB.prepare(
+          `UPDATE user_points SET balance=?, totalSpent=?, lastActivityAt=?, updatedAt=? WHERE userId=?`
+        ).bind(newBalance, newTotalSpent, now(), now(), ctx.userId).run();
+
+        await ctx.env.DB.prepare(
+          `INSERT INTO point_transactions (userId, type, amount, balanceAfter, actionType, description, createdAt) VALUES (?,?,?,?,?,?,?)`
+        ).bind(ctx.userId, "spend", -product.pointsCost, newBalance, "redeem", product.name, now()).run();
+
+        await ctx.env.DB.prepare(
+          `INSERT INTO point_redemptions (userId, productId, pointsUsed, status, createdAt) VALUES (?,?,?,?,?)`
+        ).bind(ctx.userId, product.id, product.pointsCost, "pending", now()).run();
+
+        return { success: true, message: `${product.name} を交換しました` };
+      }),
     getRedemptions: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB.prepare(`SELECT * FROM point_redemptions WHERE userId=? ORDER BY createdAt DESC`).bind(ctx.userId).all<any>();
@@ -1735,19 +1860,125 @@ JSONのみ出力し、他の説明は不要です。`;
       .mutation(async () => ({ success: true })),
     redeemProduct: protectedProcedure
       .input(z.object({ productId: z.number(), shippingInfo: z.record(z.string(), z.unknown()).optional() }))
-      .mutation(async () => ({ success: false, message: "Phase 1: ポイント交換は未対応" })),
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const product = await ctx.env.DB.prepare(
+          `SELECT * FROM redeemable_products WHERE id=? AND isActive=1`
+        ).bind(input.productId).first<any>();
+        if (!product) return { success: false, message: "商品が見つかりません" };
+
+        if (product.stock !== null && product.stock <= 0) {
+          return { success: false, message: "在庫切れです" };
+        }
+
+        const pts = await ctx.env.DB.prepare(`SELECT * FROM user_points WHERE userId=?`).bind(ctx.userId).first<any>();
+        if (!pts || pts.balance < product.pointsCost) {
+          return { success: false, message: "ポイントが不足しています" };
+        }
+
+        const newBalance = pts.balance - product.pointsCost;
+        const newTotalSpent = (pts.totalSpent || 0) + product.pointsCost;
+        await ctx.env.DB.prepare(
+          `UPDATE user_points SET balance=?, totalSpent=?, lastActivityAt=?, updatedAt=? WHERE userId=?`
+        ).bind(newBalance, newTotalSpent, now(), now(), ctx.userId).run();
+
+        await ctx.env.DB.prepare(
+          `INSERT INTO point_transactions (userId, type, amount, balanceAfter, actionType, description, createdAt) VALUES (?,?,?,?,?,?,?)`
+        ).bind(ctx.userId, "spend", -product.pointsCost, newBalance, "redeem", product.name, now()).run();
+
+        await ctx.env.DB.prepare(
+          `INSERT INTO point_redemptions (userId, productId, pointsUsed, status, shippingInfo, createdAt) VALUES (?,?,?,?,?,?)`
+        ).bind(ctx.userId, product.id, product.pointsCost, "pending", input.shippingInfo ? toJson(input.shippingInfo) : null, now()).run();
+
+        // Decrement stock if tracked
+        if (product.stock !== null) {
+          await ctx.env.DB.prepare(
+            `UPDATE redeemable_products SET stock = stock - 1, updatedAt=? WHERE id=?`
+          ).bind(now(), product.id).run();
+        }
+
+        return { success: true, message: `${product.name} を交換しました` };
+      }),
     getQuests: protectedProcedure.query(async () => ({
       stats: { completedToday: 0, totalCompleted: 0, currentStreak: 0, totalPoints: 0 },
       categories: [] as { name: string; quests: any[] }[],
     })),
-    checkDailyLogin: protectedProcedure.mutation(async () => ({ points: 0, isFirstLogin: false, awarded: false, streak: 0, streakBonus: null as { name: string; points: number } | null })),
+    checkDailyLogin: protectedProcedure.mutation(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const today = now().slice(0, 10); // YYYY-MM-DD
+
+      // Check if already awarded today
+      const existing = await ctx.env.DB.prepare(
+        `SELECT id FROM point_transactions WHERE userId=? AND actionType='daily_login' AND createdAt LIKE ?`
+      ).bind(ctx.userId, `${today}%`).first<any>();
+
+      if (existing) {
+        const pts = await ctx.env.DB.prepare(`SELECT * FROM user_points WHERE userId=?`).bind(ctx.userId).first<any>();
+        return { points: 0, isFirstLogin: false, awarded: false, streak: 0, streakBonus: null as { name: string; points: number } | null };
+      }
+
+      // Calculate streak from twin_growth_status
+      let streak = 1;
+      const growth = await ctx.env.DB.prepare(
+        `SELECT consecutiveLoginDays, lastLoginDate FROM twin_growth_status WHERE userId=?`
+      ).bind(ctx.userId).first<any>();
+      if (growth) {
+        const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+        if (growth.lastLoginDate && growth.lastLoginDate.slice(0, 10) === yesterday) {
+          streak = (growth.consecutiveLoginDays || 0) + 1;
+        }
+        await ctx.env.DB.prepare(
+          `UPDATE twin_growth_status SET consecutiveLoginDays=?, lastLoginDate=?, updatedAt=? WHERE userId=?`
+        ).bind(streak, today, now(), ctx.userId).run();
+      }
+
+      // Bonus points for streaks
+      const basePoints = 10;
+      let streakBonus: { name: string; points: number } | null = null;
+      let totalPoints = basePoints;
+      if (streak >= 30) {
+        streakBonus = { name: "30日連続ログイン", points: 50 };
+        totalPoints += 50;
+      } else if (streak >= 7) {
+        streakBonus = { name: "7日連続ログイン", points: 20 };
+        totalPoints += 20;
+      }
+
+      // Upsert user_points
+      const pts = await ctx.env.DB.prepare(`SELECT * FROM user_points WHERE userId=?`).bind(ctx.userId).first<any>();
+      const newBalance = (pts?.balance || 0) + totalPoints;
+      const newTotalEarned = (pts?.totalEarned || 0) + totalPoints;
+      if (pts) {
+        await ctx.env.DB.prepare(
+          `UPDATE user_points SET balance=?, totalEarned=?, lastActivityAt=?, updatedAt=? WHERE userId=?`
+        ).bind(newBalance, newTotalEarned, now(), now(), ctx.userId).run();
+      } else {
+        await ctx.env.DB.prepare(
+          `INSERT INTO user_points (userId, balance, totalEarned, totalSpent, totalExpired, lastActivityAt) VALUES (?,?,?,0,0,?)`
+        ).bind(ctx.userId, newBalance, newTotalEarned, now()).run();
+      }
+
+      // Record transaction
+      await ctx.env.DB.prepare(
+        `INSERT INTO point_transactions (userId, type, amount, balanceAfter, actionType, description, createdAt) VALUES (?,?,?,?,?,?,?)`
+      ).bind(ctx.userId, "earn", totalPoints, newBalance, "daily_login", "デイリーログインボーナス", now()).run();
+
+      return { points: totalPoints, isFirstLogin: true, awarded: true, streak, streakBonus };
+    }),
     checkMilestones: protectedProcedure.mutation(async () => ({ milestones: [] as any[], newMilestones: [] as any[], awarded: [] as { name: string; points: number }[] })),
   }),
 
   // ============ Quests ============
   quests: router({
     list: protectedProcedure.query(async () => []),
-    checkDailyLogin: protectedProcedure.mutation(async () => ({ points: 0, isFirstLogin: false })),
+    checkDailyLogin: protectedProcedure.mutation(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const today = now().slice(0, 10);
+      const existing = await ctx.env.DB.prepare(
+        `SELECT id FROM point_transactions WHERE userId=? AND actionType='daily_login' AND createdAt LIKE ?`
+      ).bind(ctx.userId, `${today}%`).first<any>();
+      return { points: existing ? 0 : 10, isFirstLogin: !existing };
+    }),
   }),
 
   // ============ Growth ============
