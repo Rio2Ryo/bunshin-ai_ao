@@ -14,6 +14,9 @@ import {
   normalizeTwin,
   getCumulativeWaveform,
   getOtherPerspectiveWaveform,
+  ensureNpcFriends,
+  addTrustAction,
+  getTrustRank,
 } from "./db-helpers";
 import { invokeLLM, getUserLLMConfig } from "./llm";
 
@@ -182,6 +185,12 @@ Step 5完了時に以下を出力:
           `INSERT INTO chat_messages (sessionId, role, content) VALUES (?, ?, ?)`
         ).bind(onboardingSessionId, "assistant", welcomeMessage).run();
 
+        // Auto-create NPC friends (田中ハジメ, 佐藤ミキ)
+        await ensureNpcFriends(ctx.env.DB, user.id);
+
+        // Initialize trust score with registration bonus
+        await addTrustAction(ctx.env.DB, user.id, "register", 5, "アカウント作成ボーナス");
+
         const token = await createSessionToken(user.id, ctx.env);
         return {
           user: { id: user.id, name: user.name, email: user.email, role: user.role, plan: user.plan },
@@ -205,7 +214,21 @@ Step 5完了時に以下を出力:
       await ensureSchema(ctx.env.DB);
       if (ctx.user) {
         const row = await ctx.env.DB.prepare(`SELECT onboardingCompleted FROM users WHERE id=?`).bind(ctx.user.id).first<any>();
-        return { ...ctx.user, onboardingCompleted: row?.onboardingCompleted ?? 0 };
+        // Get trust score
+        const trustRow = await ctx.env.DB.prepare(`SELECT score, rank FROM trust_scores WHERE userId=?`).bind(ctx.user.id).first<any>();
+        const trustScore = trustRow?.score ?? 0;
+        const trustRank = trustRow?.rank ?? "bronze";
+
+        // Award daily login trust bonus (once per day)
+        const today = new Date().toISOString().slice(0, 10);
+        const todayLogin = await ctx.env.DB.prepare(
+          `SELECT id FROM trust_score_history WHERE userId=? AND action='daily_login' AND createdAt >= ?`
+        ).bind(ctx.user.id, today).first<any>();
+        if (!todayLogin) {
+          await addTrustAction(ctx.env.DB, ctx.user.id, "daily_login", 2, "デイリーログインボーナス");
+        }
+
+        return { ...ctx.user, onboardingCompleted: row?.onboardingCompleted ?? 0, trustScore, trustRank };
       }
       // Not logged in
       return null;
@@ -266,6 +289,16 @@ Step 5完了時に以下を出力:
               input.industry ?? null, input.company ?? null,
               input.position ?? null
             ).run();
+        }
+        // Award trust points for first profile completion (check if fields have content)
+        const filledFields = [input.displayName, input.bio, input.company, input.position, input.industry, input.experience].filter(Boolean).length;
+        if (filledFields >= 3) {
+          const alreadyAwarded = await ctx.env.DB.prepare(
+            `SELECT id FROM trust_score_history WHERE userId=? AND action='profile_complete'`
+          ).bind(ctx.userId).first<any>();
+          if (!alreadyAwarded) {
+            await addTrustAction(ctx.env.DB, ctx.userId, "profile_complete", 10, "プロフィールを充実させました");
+          }
         }
         return { success: true };
       }),
@@ -914,7 +947,7 @@ ${isLastQuestion ? `
     list: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB
-        .prepare(`SELECT f.*, u.id as fId, u.name as fName, u.email as fEmail, u.friendCode as fFriendCode FROM friendships f JOIN users u ON u.id = CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END WHERE (f.userId=? OR f.friendId=?) AND f.status='accepted'`)
+        .prepare(`SELECT f.*, u.id as fId, u.name as fName, u.email as fEmail, u.friendCode as fFriendCode, u.isNpc as fIsNpc FROM friendships f JOIN users u ON u.id = CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END WHERE (f.userId=? OR f.friendId=?) AND f.status='accepted'`)
         .bind(ctx.userId, ctx.userId, ctx.userId)
         .all<any>();
       const results = [];
@@ -922,7 +955,7 @@ ${isLastQuestion ? `
         const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(r.fId).first<any>();
         results.push({
           friendship: { id: r.id, status: r.status, createdAt: r.createdAt },
-          friend: { id: r.fId, name: r.fName, email: r.fEmail, friendCode: r.fFriendCode },
+          friend: { id: r.fId, name: r.fName, email: r.fEmail, friendCode: r.fFriendCode, isNpc: r.fIsNpc === 1 },
           twin: normalizeTwin(twin),
         });
       }
@@ -1483,6 +1516,15 @@ ${isLastQuestion ? `
 
         const res = await ctx.env.DB.prepare(`INSERT INTO chat_messages (sessionId, role, content) VALUES (?,?,?)`).bind(input.sessionId, "assistant", response).run();
         await ctx.env.DB.prepare(`UPDATE chat_sessions SET updatedAt=datetime('now') WHERE id=?`).bind(input.sessionId).run();
+
+        // Award trust score for conversation (max 1 per 5 messages to avoid spam)
+        const totalUserMsgs = (await ctx.env.DB.prepare(
+          `SELECT COUNT(*) as c FROM chat_messages WHERE sessionId=? AND role='user'`
+        ).bind(input.sessionId).first<any>())?.c ?? 0;
+        if (totalUserMsgs % 5 === 0) {
+          await addTrustAction(ctx.env.DB, ctx.userId, "chat_conversation", 2, "会話を継続しました");
+        }
+
         return { messageId: Number(res.meta.last_row_id), response };
       }),
   }),
@@ -1494,9 +1536,24 @@ ${isLastQuestion ? `
       const rows = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE initiatorUserId=? ORDER BY createdAt DESC`).bind(ctx.userId).all<any>();
       const results = [];
       for (const session of rows.results ?? []) {
-        const twin1 = await ctx.env.DB.prepare(`SELECT id, name FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
-        const twin2 = await ctx.env.DB.prepare(`SELECT id, name FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
-        results.push({ ...session, twin1: twin1 ?? { id: session.twin1Id, name: `Twin #${session.twin1Id}` }, twin2: twin2 ?? { id: session.twin2Id, name: `Twin #${session.twin2Id}` } });
+        const twin1 = await ctx.env.DB.prepare(`SELECT id, name, userId FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+        const twin2 = await ctx.env.DB.prepare(`SELECT id, name, userId FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+        // Check if either twin belongs to an NPC user
+        let isNpcSession = false;
+        if (twin1?.userId) {
+          const u1 = await ctx.env.DB.prepare(`SELECT isNpc FROM users WHERE id=?`).bind(twin1.userId).first<any>();
+          if (u1?.isNpc === 1) isNpcSession = true;
+        }
+        if (twin2?.userId) {
+          const u2 = await ctx.env.DB.prepare(`SELECT isNpc FROM users WHERE id=?`).bind(twin2.userId).first<any>();
+          if (u2?.isNpc === 1) isNpcSession = true;
+        }
+        results.push({
+          ...session,
+          twin1: twin1 ?? { id: session.twin1Id, name: `Twin #${session.twin1Id}` },
+          twin2: twin2 ?? { id: session.twin2Id, name: `Twin #${session.twin2Id}` },
+          isNpcSession,
+        });
       }
       return results;
     }),
@@ -1546,6 +1603,17 @@ ${isLastQuestion ? `
         if (!myTwin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIを作成してください" });
         const friendTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.friendId).first<any>();
         if (!friendTwin) throw new TRPCError({ code: "NOT_FOUND", message: "友達の分身AIがありません" });
+
+        // Check trust score threshold (NPC friends are exempt)
+        const friendUser = await ctx.env.DB.prepare(`SELECT isNpc FROM users WHERE id=?`).bind(input.friendId).first<any>();
+        const isNpcMatch = friendUser?.isNpc === 1;
+        if (!isNpcMatch) {
+          const trustRow = await ctx.env.DB.prepare(`SELECT score FROM trust_scores WHERE userId=?`).bind(ctx.userId).first<any>();
+          const trustScore = trustRow?.score ?? 0;
+          if (trustScore < 30) {
+            throw new TRPCError({ code: "FORBIDDEN", message: `マッチングには信頼度スコア30以上が必要です（現在: ${trustScore}）。プロフィールの充実や会話を続けてスコアを上げましょう。` });
+          }
+        }
 
         // Create session in 'running' status
         const sessionRes = await ctx.env.DB.prepare(
@@ -1677,6 +1745,10 @@ JSONのみ出力し、他の説明は不要です。`;
         }
 
         await ctx.env.DB.prepare(`UPDATE matching_sessions SET status='completed', completedAt=datetime('now') WHERE id=?`).bind(sessionId).run();
+
+        // Award trust points for matching completion
+        await addTrustAction(ctx.env.DB, ctx.userId, "matching_complete", 5, `マッチング完了: ${input.theme}`);
+
         return { id: sessionId, dialogues: dialogueHistory };
       }),
     runDialogue: protectedProcedure
@@ -3112,6 +3184,35 @@ JSON形式で出力:
       }),
   }),
 
+  // ============ Trust Score ============
+  trust: router({
+    getScore: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(`SELECT * FROM trust_scores WHERE userId=?`).bind(ctx.userId).first<any>();
+      const score = row?.score ?? 0;
+      const rankInfo = getTrustRank(score);
+      return { score, rank: rankInfo.rank, rankLabel: rankInfo.label };
+    }),
+    getHistory: protectedProcedure
+      .input(z.object({ limit: z.number().min(1).max(100).default(50) }))
+      .query(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const rows = await ctx.env.DB.prepare(
+          `SELECT * FROM trust_score_history WHERE userId=? ORDER BY createdAt DESC LIMIT ?`
+        ).bind(ctx.userId, input.limit).all<any>();
+        return rows.results ?? [];
+      }),
+    // Internal: award trust points for an action (called from other routes too)
+    addAction: protectedProcedure
+      .input(z.object({ action: z.string(), delta: z.number(), description: z.string() }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const newScore = await addTrustAction(ctx.env.DB, ctx.userId, input.action, input.delta, input.description);
+        const rankInfo = getTrustRank(newScore);
+        return { score: newScore, rank: rankInfo.rank, rankLabel: rankInfo.label };
+      }),
+  }),
+
   // ============ Onboarding ============
   onboarding: router({
     getStatus: publicProcedure.query(async ({ ctx }) => {
@@ -3156,6 +3257,8 @@ JSON形式で出力:
             await ctx.env.DB.prepare(`UPDATE digital_twins SET ${sets.join(",")} WHERE id=?`).bind(...binds).run();
           }
         }
+        // Award trust score for completing onboarding
+        await addTrustAction(ctx.env.DB, ctx.userId, "onboarding_complete", 10, "オンボーディングを完了しました");
         return { success: true };
       }),
   }),

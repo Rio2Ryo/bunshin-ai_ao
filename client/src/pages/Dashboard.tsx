@@ -8,7 +8,7 @@ import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import {
   Bot, MessageSquare, Users, FileText, UserPlus,
-  Clock, CheckCircle, Crown, Globe, ArrowRight
+  Clock, CheckCircle, Crown, Globe, ArrowRight, Shield
 } from "lucide-react";
 
 export default function Dashboard() {
@@ -19,6 +19,7 @@ export default function Dashboard() {
   const { data: chatSessions } = trpc.chat.sessions.useQuery();
   const { data: matchingSessions } = trpc.matching.sessions.useQuery();
   const { data: planInfo } = trpc.plan.getInfo.useQuery();
+  const { data: trustData } = trpc.trust.getScore.useQuery();
 
   const completedMatchings = matchingSessions?.filter(s => s.status === "completed").length || 0;
   const recentMatchings = matchingSessions?.slice(0, 3) || [];
@@ -119,7 +120,8 @@ export default function Dashboard() {
         </div>
 
         {/* Quick Stats */}
-        <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 grid-cols-2 lg:grid-cols-5">
+          <MiniStat icon={Shield} label="信頼度" value={`${trustData?.score ?? 0}pt`} href="/trust" />
           <MiniStat icon={Bot} label="分身AI" value={myTwin ? "作成済み" : "未作成"} href="/twins" />
           <MiniStat icon={UserPlus} label="友達" value={`${friends?.length || 0}人`} href="/friends" />
           <MiniStat icon={MessageSquare} label="チャット" value={`${chatSessions?.length || 0}件`} href="/chat" />

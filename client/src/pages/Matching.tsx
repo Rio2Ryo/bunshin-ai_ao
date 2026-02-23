@@ -11,13 +11,17 @@ import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Users, Plus, Loader2, Play, CheckCircle, XCircle, Clock, UserPlus, Bot, MessageSquare } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { Users, Plus, Loader2, Play, CheckCircle, XCircle, Clock, UserPlus, Bot, MessageSquare, Shield } from "lucide-react";
 
 export default function Matching() {
   usePageMeta({ title: "ビジネスマッチング", description: "分身AI同士の対話を通じて、最適なビジネスパートナーを発見しましょう。", ogImage: "https://bunshin-ai.pages.dev/og/matching.svg", path: "/matching" });
+  const { user } = useAuth();
   const { data: myTwin } = trpc.myTwin.get.useQuery();
   const { data: friends } = trpc.friends.list.useQuery();
   const { data: sessions, isLoading, refetch } = trpc.matching.sessions.useQuery();
+  const { data: trustData } = trpc.trust.getScore.useQuery();
 
   const createSession = trpc.matching.create.useMutation();
   const runDialogue = trpc.matching.runDialogue.useMutation();
@@ -105,6 +109,20 @@ export default function Matching() {
 
   // 友達の中で分身AIを持っている人だけフィルタ
   const friendsWithTwin = friends?.filter(f => f.twin) || [];
+
+  // Filter NPC sessions: hide when onboarding is complete AND user has real matchings
+  const me = user as any;
+  const onboardingDone = me?.onboardingCompleted === 1;
+  const realMatchings = sessions?.filter((s: any) => !s.isNpcSession) || [];
+  const hasRealMatchings = realMatchings.length > 0;
+  const hideNpcSessions = onboardingDone && hasRealMatchings;
+
+  const displayedSessions = hideNpcSessions
+    ? sessions?.filter((s: any) => !s.isNpcSession) || []
+    : sessions || [];
+
+  const trustScore = trustData?.score ?? 0;
+  const canMatch = trustScore >= 30;
 
   return (
     <DashboardLayout>
@@ -250,17 +268,40 @@ export default function Matching() {
           </Card>
         )}
 
+        {/* Trust score warning */}
+        {!canMatch && myTwin && friendsWithTwin.length > 0 && (
+          <Card className="border-yellow-500/50 bg-yellow-500/10">
+            <CardContent className="flex items-center gap-4 py-4">
+              <Shield className="h-8 w-8 text-yellow-500" />
+              <div className="flex-1">
+                <p className="font-medium">信頼度スコアが不足しています</p>
+                <p className="text-sm text-muted-foreground">
+                  実ユーザーとのマッチングには信頼度30以上が必要です（現在: {trustScore}）
+                </p>
+              </div>
+              <Link href="/trust">
+                <Button variant="outline">スコアを確認</Button>
+              </Link>
+            </CardContent>
+          </Card>
+        )}
+
         {isLoading ? (
           <div className="flex items-center justify-center h-64">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>
-        ) : sessions && sessions.length > 0 ? (
+        ) : displayedSessions.length > 0 ? (
           <div className="grid gap-4">
-            {sessions.map((session) => (
+            {displayedSessions.map((session: any) => (
               <Card key={session.id} className="hover:border-primary/50 transition-colors">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
-                    <CardTitle className="text-lg">{session.theme}</CardTitle>
+                    <div className="flex items-center gap-2">
+                      <CardTitle className="text-lg">{session.theme}</CardTitle>
+                      {session.isNpcSession && (
+                        <Badge variant="secondary" className="text-xs">チュートリアル</Badge>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2">
                       {getStatusIcon(session.status)}
                       <span className="text-sm text-muted-foreground">

@@ -20,11 +20,13 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
+import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { trpc } from "@/lib/trpc";
 
 type MenuItem = { icon: React.ElementType; label: string; path: string };
 type MenuGroup = { label: string; items: MenuItem[] };
@@ -34,6 +36,7 @@ const menuGroups: MenuGroup[] = [
     label: "メイン",
     items: [
       { icon: LayoutDashboard, label: "ダッシュボード", path: "/dashboard" },
+      { icon: Shield, label: "信頼度", path: "/trust" },
       { icon: Bot, label: "分身AI", path: "/twins" },
       { icon: MessageSquare, label: "チャット", path: "/chat" },
     ],
@@ -131,6 +134,7 @@ function DashboardLayoutContent({
   const sidebarRef = useRef<HTMLDivElement>(null);
   const activeMenuItem = menuItems.find(item => item.path === location);
   const isMobile = useIsMobile();
+  const { data: trustData } = trpc.trust.getScore.useQuery();
 
   useEffect(() => {
     if (isCollapsed) {
@@ -211,18 +215,24 @@ function DashboardLayoutContent({
                   )}
                   {group.items.map(item => {
                     const isActive = location === item.path || (item.path === "/chat" && location.startsWith("/chat/"));
+                    const isTrustItem = item.path === "/trust";
                     return (
                       <SidebarMenuItem key={item.path}>
                         <SidebarMenuButton
                           isActive={isActive}
                           onClick={() => setLocation(item.path)}
-                          tooltip={item.label}
+                          tooltip={isTrustItem && trustData ? `${item.label}: ${trustData.score}pt` : item.label}
                           className={`h-10 transition-all font-normal`}
                         >
                           <item.icon
                             className={`h-4 w-4 ${isActive ? "text-primary" : ""}`}
                           />
-                          <span>{item.label}</span>
+                          <span className="flex-1">{item.label}</span>
+                          {isTrustItem && trustData && !isCollapsed && (
+                            <Badge variant="secondary" className="ml-auto text-[10px] px-1.5 py-0 h-5">
+                              {trustData.score}
+                            </Badge>
+                          )}
                         </SidebarMenuButton>
                       </SidebarMenuItem>
                     );

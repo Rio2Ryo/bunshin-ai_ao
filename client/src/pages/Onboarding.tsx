@@ -1,17 +1,17 @@
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
-import { Bot, Send, Loader2, SkipForward } from "lucide-react";
+import { Bot, Send, Loader2, SkipForward, ArrowRight, MessageSquare, Users, Shield, Sparkles } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 
-const STEPS = [
-  "仕事・スキル",
-  "経験・実績",
-  "興味・趣味",
-  "性格・価値観",
-  "確認",
+const ONBOARDING_STEPS = [
+  { label: "ようこそ", icon: Sparkles },
+  { label: "練習会話", icon: MessageSquare },
+  { label: "自己紹介", icon: Users },
+  { label: "完了", icon: Shield },
 ];
 
 export default function Onboarding() {
@@ -19,7 +19,7 @@ export default function Onboarding() {
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<Array<{ role: string; content: string }>>([]);
   const [sessionId, setSessionId] = useState<number | null>(null);
-  const [currentStep, setCurrentStep] = useState(1);
+  const [step, setStep] = useState(0); // 0=welcome, 1=NPC practice, 2=profile chat, 3=done
   const [completing, setCompleting] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -31,6 +31,7 @@ export default function Onboarding() {
     { id: sessionId! },
     { enabled: !!sessionId }
   );
+  const { data: friends } = trpc.friends.list.useQuery(undefined, { enabled: !!me });
 
   const sendMessage = trpc.chat.sendMessage.useMutation();
   const completeMutation = trpc.onboarding.complete.useMutation();
@@ -63,9 +64,11 @@ export default function Onboarding() {
   useEffect(() => {
     if (sessionData?.messages) {
       setMessages(sessionData.messages.map((m) => ({ role: m.role, content: m.content })));
-      // Estimate current step from message count
       const userMsgCount = sessionData.messages.filter((m) => m.role === "user").length;
-      setCurrentStep(Math.min(Math.floor(userMsgCount / 2) + 1, 5));
+      // If user has already sent messages, skip to profile chat step
+      if (userMsgCount > 0 && step < 2) {
+        setStep(2);
+      }
     }
   }, [sessionData]);
 
@@ -91,8 +94,8 @@ export default function Onboarding() {
       sessionStorage.removeItem("onboardingSessionId");
       await utils.auth.me.invalidate();
       toast.success("分身AIのプロフィールが完成しました！");
-      // Short delay for the toast to show
-      setTimeout(() => navigate("/dashboard"), 1500);
+      setStep(3);
+      setTimeout(() => navigate("/dashboard"), 2000);
       return true;
     } catch {
       toast.error("プロフィールの保存に失敗しました");
@@ -114,11 +117,6 @@ export default function Onboarding() {
         content: userMessage,
       });
       setMessages((prev) => [...prev, { role: "assistant", content: result.response }]);
-
-      // Update step estimate
-      setCurrentStep((prev) => Math.min(prev + 1, 5));
-
-      // Check for profile data completion
       await handleProfileData(result.response);
     } catch {
       toast.error("メッセージの送信に失敗しました");
@@ -143,6 +141,9 @@ export default function Onboarding() {
     }
   };
 
+  // Get NPC friends for practice step
+  const npcFriends = friends?.filter((f) => f.friend.isNpc) || [];
+
   if (meLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -151,7 +152,7 @@ export default function Onboarding() {
     );
   }
 
-  if (completing) {
+  if (completing || step === 3) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4">
         <div className="relative">
@@ -186,87 +187,212 @@ export default function Onboarding() {
       {/* Progress bar */}
       <div className="max-w-3xl mx-auto w-full px-4 py-3">
         <div className="flex items-center gap-2">
-          {STEPS.map((step, i) => (
-            <div key={step} className="flex-1 flex flex-col items-center gap-1">
+          {ONBOARDING_STEPS.map((s, i) => (
+            <div key={s.label} className="flex-1 flex flex-col items-center gap-1">
               <div
                 className={`h-1.5 w-full rounded-full transition-colors ${
-                  i < currentStep ? "bg-primary" : "bg-muted"
+                  i <= step ? "bg-primary" : "bg-muted"
                 }`}
               />
-              <span className={`text-[10px] hidden sm:block ${i < currentStep ? "text-primary" : "text-muted-foreground"}`}>
-                {step}
+              <span className={`text-[10px] hidden sm:block ${i <= step ? "text-primary" : "text-muted-foreground"}`}>
+                {s.label}
               </span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Chat area */}
-      <div className="flex-1 overflow-hidden max-w-3xl mx-auto w-full">
-        <div ref={scrollRef} className="h-full overflow-y-auto px-4 pb-4 space-y-4">
-          {messages.map((msg, i) => (
-            <div
-              key={i}
-              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-            >
-              <div
-                className={`max-w-[85%] rounded-2xl px-4 py-3 ${
-                  msg.role === "user"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted"
-                }`}
-              >
-                {msg.role === "assistant" && (
-                  <div className="flex items-center gap-2 mb-1">
-                    <Bot className="h-3 w-3" />
-                    <span className="text-xs font-medium">分身AI</span>
-                  </div>
-                )}
-                <p className="text-sm whitespace-pre-wrap">
-                  {msg.content.replace(/---PROFILE_DATA---[\s\S]*?---END_PROFILE_DATA---/, "").trim()}
-                </p>
+      {/* Step 0: Welcome screen */}
+      {step === 0 && (
+        <div className="flex-1 flex items-center justify-center px-4">
+          <div className="max-w-lg w-full space-y-8 text-center">
+            <div className="relative mx-auto w-24 h-24">
+              <div className="w-24 h-24 rounded-full bg-primary/20 flex items-center justify-center">
+                <Bot className="h-12 w-12 text-primary" />
+              </div>
+              <div className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center border-2 border-background">
+                <Sparkles className="h-4 w-4 text-green-500" />
               </div>
             </div>
-          ))}
-          {sendMessage.isPending && (
-            <div className="flex justify-start">
-              <div className="bg-muted rounded-2xl px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span className="text-sm text-muted-foreground">考え中...</span>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
 
-      {/* Input area */}
-      <div className="border-t bg-background/95 backdrop-blur sticky bottom-0">
-        <div className="max-w-3xl mx-auto px-4 py-3">
-          <div className="flex gap-2">
-            <Input
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="メッセージを入力..."
-              disabled={sendMessage.isPending || !sessionId}
-              className="flex-1"
-            />
-            <Button
-              onClick={handleSend}
-              disabled={!message.trim() || sendMessage.isPending || !sessionId}
-              size="icon"
-            >
-              {sendMessage.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Send className="h-4 w-4" />
-              )}
+            <div className="space-y-3">
+              <h1 className="text-3xl font-bold">
+                <span className="text-gradient">分身AI</span>へようこそ！
+              </h1>
+              <p className="text-muted-foreground text-base leading-relaxed">
+                あなた専用のデジタル分身（AI）を作成し、<br />
+                ビジネスマッチングを自動で行うサービスです。
+              </p>
+            </div>
+
+            <div className="grid gap-3 text-left">
+              <Card className="border-primary/20 bg-primary/5">
+                <CardContent className="flex items-start gap-3 p-4">
+                  <Bot className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-medium text-sm">分身AIを作成</p>
+                    <p className="text-xs text-muted-foreground">会話を通じてあなたの分身AIが完成します</p>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="border-primary/20 bg-primary/5">
+                <CardContent className="flex items-start gap-3 p-4">
+                  <Users className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-medium text-sm">自動マッチング</p>
+                    <p className="text-xs text-muted-foreground">分身AI同士が対話してビジネスパートナーを見つけます</p>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="border-primary/20 bg-primary/5">
+                <CardContent className="flex items-start gap-3 p-4">
+                  <Shield className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-medium text-sm">信頼度スコア</p>
+                    <p className="text-xs text-muted-foreground">会話やプロフィールの充実でスコアが上がり、マッチングが解放されます</p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Button size="lg" onClick={() => setStep(1)} className="w-full max-w-xs mx-auto">
+              はじめる
+              <ArrowRight className="h-4 w-4 ml-2" />
             </Button>
           </div>
         </div>
-      </div>
+      )}
+
+      {/* Step 1: NPC Practice */}
+      {step === 1 && (
+        <div className="flex-1 flex items-center justify-center px-4">
+          <div className="max-w-lg w-full space-y-6 text-center">
+            <div className="space-y-3">
+              <MessageSquare className="h-10 w-10 text-primary mx-auto" />
+              <h2 className="text-2xl font-bold">まずは練習してみましょう</h2>
+              <p className="text-muted-foreground text-sm leading-relaxed">
+                あなたにはすでに2人のガイドキャラクターが友達として追加されています。<br />
+                サービスに慣れるために、まず彼らとの会話を体験しましょう。
+              </p>
+            </div>
+
+            <div className="grid gap-3 text-left">
+              {npcFriends.length > 0 ? npcFriends.map((f) => (
+                <Card key={f.friend.id} className="border-muted">
+                  <CardContent className="flex items-center gap-4 p-4">
+                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-cyan-500 to-purple-500 flex items-center justify-center shrink-0">
+                      <span className="text-white font-bold">{f.friend.name?.charAt(0)}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium">{f.friend.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {f.twin?.description?.slice(0, 50) || "ガイドキャラクター"}
+                      </p>
+                    </div>
+                    <span className="text-xs text-primary bg-primary/10 px-2 py-1 rounded-full">ガイド</span>
+                  </CardContent>
+                </Card>
+              )) : (
+                <Card className="border-muted">
+                  <CardContent className="p-4 text-center text-sm text-muted-foreground">
+                    ガイドキャラクターを準備中...
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              ガイドキャラクターとのマッチングはいつでもダッシュボードから試せます。<br />
+              次のステップで、あなた自身の情報を入力しましょう。
+            </p>
+
+            <Button size="lg" onClick={() => setStep(2)} className="w-full max-w-xs mx-auto">
+              自己紹介へ進む
+              <ArrowRight className="h-4 w-4 ml-2" />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 2: Profile chat (original AI conversation) */}
+      {step === 2 && (
+        <>
+          {/* Chat area */}
+          <div className="flex-1 overflow-hidden max-w-3xl mx-auto w-full">
+            <div ref={scrollRef} className="h-full overflow-y-auto px-4 pb-4 space-y-4">
+              {messages.length === 0 && !sessionId && (
+                <div className="flex justify-center pt-8">
+                  <div className="text-center space-y-2">
+                    <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" />
+                    <p className="text-sm text-muted-foreground">セッションを読み込んでいます...</p>
+                  </div>
+                </div>
+              )}
+              {messages.map((msg, i) => (
+                <div
+                  key={i}
+                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                >
+                  <div
+                    className={`max-w-[85%] rounded-2xl px-4 py-3 ${
+                      msg.role === "user"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted"
+                    }`}
+                  >
+                    {msg.role === "assistant" && (
+                      <div className="flex items-center gap-2 mb-1">
+                        <Bot className="h-3 w-3" />
+                        <span className="text-xs font-medium">分身AI</span>
+                      </div>
+                    )}
+                    <p className="text-sm whitespace-pre-wrap">
+                      {msg.content.replace(/---PROFILE_DATA---[\s\S]*?---END_PROFILE_DATA---/, "").trim()}
+                    </p>
+                  </div>
+                </div>
+              ))}
+              {sendMessage.isPending && (
+                <div className="flex justify-start">
+                  <div className="bg-muted rounded-2xl px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span className="text-sm text-muted-foreground">考え中...</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Input area */}
+          <div className="border-t bg-background/95 backdrop-blur sticky bottom-0">
+            <div className="max-w-3xl mx-auto px-4 py-3">
+              <div className="flex gap-2">
+                <Input
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="メッセージを入力..."
+                  disabled={sendMessage.isPending || !sessionId}
+                  className="flex-1"
+                />
+                <Button
+                  onClick={handleSend}
+                  disabled={!message.trim() || sendMessage.isPending || !sessionId}
+                  size="icon"
+                >
+                  {sendMessage.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

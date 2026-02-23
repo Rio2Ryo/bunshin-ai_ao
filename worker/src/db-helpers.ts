@@ -463,6 +463,26 @@ CREATE TABLE IF NOT EXISTS ai_provider_settings (
   createdAt TEXT NOT NULL DEFAULT (datetime('now')),
   updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS trust_scores (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL UNIQUE,
+  score INTEGER NOT NULL DEFAULT 0,
+  rank TEXT NOT NULL DEFAULT 'bronze',
+  createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+  updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS trust_score_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  delta INTEGER NOT NULL,
+  scoreAfter INTEGER NOT NULL,
+  description TEXT,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_trust_history_userId ON trust_score_history(userId);
 `;
 
 // Migrations to run after schema creation (ALTER TABLE etc.)
@@ -481,6 +501,8 @@ ALTER TABLE value_scenario_responses ADD COLUMN virtueScore REAL;
 ALTER TABLE value_scenario_responses ADD COLUMN mineScore REAL;
 ALTER TABLE cumulative_waveforms ADD COLUMN waveformType TEXT DEFAULT 'self';
 ALTER TABLE cumulative_waveforms ADD COLUMN waveformData TEXT;
+ALTER TABLE users ADD COLUMN isNpc INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN onboardingStep INTEGER NOT NULL DEFAULT 0;
 `;
 
 let schemaReady = false;
@@ -525,6 +547,113 @@ export async function ensureSchema(db: D1Database) {
   }
 
   schemaReady = true;
+}
+
+// ============ NPC helpers ============
+
+const NPC_DEFINITIONS = [
+  {
+    openId: "npc_tanaka_hajime",
+    name: "田中 ハジメ",
+    email: "tanaka.hajime@npc.bunshin-ai.local",
+    twinName: "田中ハジメの分身AI",
+    twinDescription: "東京在住のソフトウェアエンジニア。30代。Web技術とAIに詳しく、カフェ巡りと読書が趣味。落ち着いた性格で論理的な会話が得意。",
+    twinPersonality: "論理的で落ち着いた性格。技術談義が好きで、相手の話を丁寧に聞く。カフェ巡りの話になると饒舌になる。",
+    tags: '["エンジニア","AI","カフェ","読書","東京"]',
+  },
+  {
+    openId: "npc_sato_miki",
+    name: "佐藤 ミキ",
+    email: "sato.miki@npc.bunshin-ai.local",
+    twinName: "佐藤ミキの分身AI",
+    twinDescription: "大阪在住のUIデザイナー。20代。デザイン思考とユーザー体験に情熱を持ち、料理と旅行が趣味。明るくクリエイティブな性格。",
+    twinPersonality: "明るくクリエイティブ。デザインの話になると目を輝かせる。旅行先で見つけた料理の再現が得意。関西弁を少し使う。",
+    tags: '["デザイナー","UX","料理","旅行","大阪"]',
+  },
+] as const;
+
+/**
+ * Ensure NPC users + twins exist and befriend the given user.
+ * Called during registration so the new user has 2 NPC friends.
+ */
+export async function ensureNpcFriends(db: D1Database, userId: number) {
+  for (const npc of NPC_DEFINITIONS) {
+    // Upsert NPC user
+    let npcUser = await db.prepare(`SELECT id FROM users WHERE openId=?`).bind(npc.openId).first<any>();
+    if (!npcUser) {
+      const code = `NPC${npc.openId === "npc_tanaka_hajime" ? "TH" : "SM"}${String(Date.now()).slice(-4)}`;
+      await db.prepare(
+        `INSERT INTO users (openId, name, email, loginMethod, role, plan, friendCode, isNpc, onboardingCompleted) VALUES (?,?,?,'npc','npc','free',?,1,1)`
+      ).bind(npc.openId, npc.name, npc.email, code).run();
+      npcUser = await db.prepare(`SELECT id FROM users WHERE openId=?`).bind(npc.openId).first<any>();
+    }
+    if (!npcUser) continue;
+
+    // Upsert NPC twin
+    let npcTwin = await db.prepare(`SELECT id FROM digital_twins WHERE userId=?`).bind(npcUser.id).first<any>();
+    if (!npcTwin) {
+      await db.prepare(
+        `INSERT INTO digital_twins (userId, name, description, personality, tags, status, isPublic) VALUES (?,?,?,?,?,'active',1)`
+      ).bind(npcUser.id, npc.twinName, npc.twinDescription, npc.twinPersonality, npc.tags).run();
+    }
+
+    // Auto-accept friendship (skip if already friends)
+    const existing = await db.prepare(
+      `SELECT id FROM friendships WHERE (userId=? AND friendId=?) OR (userId=? AND friendId=?)`
+    ).bind(userId, npcUser.id, npcUser.id, userId).first<any>();
+    if (!existing) {
+      await db.prepare(
+        `INSERT INTO friendships (userId, friendId, status) VALUES (?,?,'accepted')`
+      ).bind(npcUser.id, userId).run();
+    }
+  }
+}
+
+// ============ Trust score helpers ============
+
+const TRUST_RANKS = [
+  { min: 0, rank: "bronze", label: "Bronze" },
+  { min: 30, rank: "silver", label: "Silver" },
+  { min: 60, rank: "gold", label: "Gold" },
+  { min: 85, rank: "platinum", label: "Platinum" },
+] as const;
+
+export function getTrustRank(score: number) {
+  const s = Math.max(0, Math.min(100, score));
+  return [...TRUST_RANKS].reverse().find(r => s >= r.min) ?? TRUST_RANKS[0];
+}
+
+/**
+ * Add a trust score action, updating score and recording history.
+ * Returns the new score.
+ */
+export async function addTrustAction(
+  db: D1Database,
+  userId: number,
+  action: string,
+  delta: number,
+  description: string,
+): Promise<number> {
+  // Get or create trust_scores row
+  let row = await db.prepare(`SELECT * FROM trust_scores WHERE userId=?`).bind(userId).first<any>();
+  let currentScore = row?.score ?? 0;
+  const newScore = Math.max(0, Math.min(100, currentScore + delta));
+  const rank = getTrustRank(newScore);
+
+  if (row) {
+    await db.prepare(`UPDATE trust_scores SET score=?, rank=?, updatedAt=datetime('now') WHERE userId=?`)
+      .bind(newScore, rank.rank, userId).run();
+  } else {
+    await db.prepare(`INSERT INTO trust_scores (userId, score, rank) VALUES (?,?,?)`)
+      .bind(userId, newScore, rank.rank).run();
+  }
+
+  // Record history
+  await db.prepare(
+    `INSERT INTO trust_score_history (userId, action, delta, scoreAfter, description) VALUES (?,?,?,?,?)`
+  ).bind(userId, action, delta, newScore, description).run();
+
+  return newScore;
 }
 
 // ============ Twin helpers ============
