@@ -25,6 +25,7 @@ export default function Matching() {
 
   const createSession = trpc.matching.create.useMutation();
   const runDialogue = trpc.matching.runDialogue.useMutation();
+  const completeTutorial = trpc.onboarding.completeTutorial.useMutation();
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedFriendId, setSelectedFriendId] = useState("");
@@ -117,6 +118,19 @@ export default function Matching() {
   const displayedSessions = tutorialDone
     ? sessions?.filter((s: any) => !s.isNpcSession) || []
     : sessions || [];
+
+  const npcSessions = sessions?.filter((s: any) => s.isNpcSession) || [];
+  const hasNpcSessions = npcSessions.length > 0;
+
+  const handleCompleteTutorial = async () => {
+    try {
+      await completeTutorial.mutateAsync();
+      toast.success("チュートリアルを完了しました");
+      window.location.reload();
+    } catch {
+      toast.error("チュートリアル完了に失敗しました");
+    }
+  };
 
   const trustScore = trustData?.score ?? 0;
   const canMatch = trustScore >= 30;
@@ -261,6 +275,25 @@ export default function Matching() {
               <Link href="/friends">
                 <Button variant="outline">友達を追加</Button>
               </Link>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Tutorial dismiss banner */}
+        {!tutorialDone && hasNpcSessions && (
+          <Card className="border-cyan-500/50 bg-cyan-500/10">
+            <CardContent className="flex items-center gap-4 py-4">
+              <Bot className="h-8 w-8 text-cyan-500" />
+              <div className="flex-1">
+                <p className="font-medium">チュートリアルセッション表示中</p>
+                <p className="text-sm text-muted-foreground">
+                  ガイドキャラクターとの練習マッチングが表示されています。非表示にするにはチュートリアルを完了してください。
+                </p>
+              </div>
+              <Button variant="outline" onClick={handleCompleteTutorial} disabled={completeTutorial.isPending}>
+                {completeTutorial.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                チュートリアル完了
+              </Button>
             </CardContent>
           </Card>
         )}
