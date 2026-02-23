@@ -3381,6 +3381,28 @@ api.use("/api/trpc/auth.*", async (c, next) => {
 api.get("/", (c) => c.json({ message: "Bunshin AI API v2. Use /api/* endpoints." }));
 api.get("/api/health", (c) => c.json({ ok: true }));
 
+api.get("/api/status", async (c) => {
+  const db = (c.env as Env).DB;
+  await ensureSchema(db);
+  const userCount = await db.prepare(`SELECT COUNT(*) as cnt FROM users WHERE isNpc=0`).first<any>();
+  const npcCount = await db.prepare(`SELECT COUNT(*) as cnt FROM users WHERE isNpc=1`).first<any>();
+  const twinCount = await db.prepare(`SELECT COUNT(*) as cnt FROM digital_twins`).first<any>();
+  return c.json({
+    status: "ok",
+    version: "2.1.0",
+    features: {
+      npcTutorial: true,
+      trustScore: true,
+      onboarding5Step: true,
+    },
+    stats: {
+      users: userCount?.cnt ?? 0,
+      npcs: npcCount?.cnt ?? 0,
+      twins: twinCount?.cnt ?? 0,
+    },
+  });
+});
+
 api.all("/api/trpc/*", async (c) => {
   const env = c.env as Env;
   const db = env.DB;
