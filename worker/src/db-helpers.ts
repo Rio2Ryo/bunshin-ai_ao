@@ -503,6 +503,7 @@ ALTER TABLE cumulative_waveforms ADD COLUMN waveformType TEXT DEFAULT 'self';
 ALTER TABLE cumulative_waveforms ADD COLUMN waveformData TEXT;
 ALTER TABLE users ADD COLUMN isNpc INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN onboardingStep INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN tutorialCompleted INTEGER NOT NULL DEFAULT 0;
 `;
 
 let schemaReady = false;
@@ -553,27 +554,44 @@ export async function ensureSchema(db: D1Database) {
 
 const NPC_DEFINITIONS = [
   {
-    openId: "npc_tanaka_hajime",
-    name: "田中 ハジメ",
-    email: "tanaka.hajime@npc.bunshin-ai.local",
-    twinName: "田中ハジメの分身AI",
-    twinDescription: "東京在住のソフトウェアエンジニア。30代。Web技術とAIに詳しく、カフェ巡りと読書が趣味。落ち着いた性格で論理的な会話が得意。",
-    twinPersonality: "論理的で落ち着いた性格。技術談義が好きで、相手の話を丁寧に聞く。カフェ巡りの話になると饒舌になる。",
-    tags: '["エンジニア","AI","カフェ","読書","東京"]',
+    openId: "npc_guide_taro",
+    name: "ガイド太郎",
+    email: "guide.taro@npc.bunshin-ai.local",
+    friendCodePrefix: "NPCGT",
+    twinName: "ガイド太郎の分身AI",
+    twinDescription: "分身AIサービスの案内役。サービスの使い方やマッチングの始め方を丁寧に教えてくれる頼れるガイド。ビジネスの話題にも詳しい。",
+    twinPersonality: "フレンドリーで親切。わかりやすい説明が得意で、初心者にも安心感を与える。ビジネストークが好き。",
+    tags: '["ガイド","チュートリアル","ビジネス"]',
+    welcomeMessage: `はじめまして！ガイド太郎です。
+
+分身AIサービスへようこそ！僕はあなたの最初の友達として、サービスの使い方をご案内します。
+
+このサービスでは、あなたの「デジタル分身AI」を作成し、他のユーザーの分身AIと自動でビジネスマッチングを行います。
+
+まずはオンボーディングを完了して、あなたの分身AIを作りましょう！完了したらマッチングページから僕との練習マッチングも試せますよ。`,
   },
   {
-    openId: "npc_sato_miki",
-    name: "佐藤 ミキ",
-    email: "sato.miki@npc.bunshin-ai.local",
-    twinName: "佐藤ミキの分身AI",
-    twinDescription: "大阪在住のUIデザイナー。20代。デザイン思考とユーザー体験に情熱を持ち、料理と旅行が趣味。明るくクリエイティブな性格。",
-    twinPersonality: "明るくクリエイティブ。デザインの話になると目を輝かせる。旅行先で見つけた料理の再現が得意。関西弁を少し使う。",
-    tags: '["デザイナー","UX","料理","旅行","大阪"]',
+    openId: "npc_guide_hanako",
+    name: "案内花子",
+    email: "guide.hanako@npc.bunshin-ai.local",
+    friendCodePrefix: "NPCHA",
+    twinName: "案内花子の分身AI",
+    twinDescription: "分身AIサービスのナビゲーター。マッチング機能の使い方や信頼度スコアの上げ方をアドバイスしてくれるサポーター。",
+    twinPersonality: "明るく元気。サービスのTIPSを教えるのが得意で、ユーザーのモチベーションを上げる声かけが上手い。",
+    tags: '["ガイド","チュートリアル","マッチング"]',
+    welcomeMessage: `こんにちは！案内花子です。
+
+私はマッチング機能の使い方をご案内する担当です！
+
+分身AIができたら、「マッチング」ページから私との練習マッチングを試してみてください。マッチングでは、お互いの分身AI同士がビジネスの可能性について対話します。
+
+信頼度スコアが30以上になると、実際のユーザーとのマッチングも始められます。プロフィールを充実させたり、チャットで会話を続けるとスコアが上がりますよ！`,
   },
 ] as const;
 
 /**
  * Ensure NPC users + twins exist and befriend the given user.
+ * Also creates tutorial chat sessions with welcome messages from each NPC.
  * Called during registration so the new user has 2 NPC friends.
  */
 export async function ensureNpcFriends(db: D1Database, userId: number) {
@@ -581,7 +599,7 @@ export async function ensureNpcFriends(db: D1Database, userId: number) {
     // Upsert NPC user
     let npcUser = await db.prepare(`SELECT id FROM users WHERE openId=?`).bind(npc.openId).first<any>();
     if (!npcUser) {
-      const code = `NPC${npc.openId === "npc_tanaka_hajime" ? "TH" : "SM"}${String(Date.now()).slice(-4)}`;
+      const code = `${npc.friendCodePrefix}${String(Date.now()).slice(-4)}`;
       await db.prepare(
         `INSERT INTO users (openId, name, email, loginMethod, role, plan, friendCode, isNpc, onboardingCompleted) VALUES (?,?,?,'npc','npc','free',?,1,1)`
       ).bind(npc.openId, npc.name, npc.email, code).run();
@@ -595,7 +613,9 @@ export async function ensureNpcFriends(db: D1Database, userId: number) {
       await db.prepare(
         `INSERT INTO digital_twins (userId, name, description, personality, tags, status, isPublic) VALUES (?,?,?,?,?,'active',1)`
       ).bind(npcUser.id, npc.twinName, npc.twinDescription, npc.twinPersonality, npc.tags).run();
+      npcTwin = await db.prepare(`SELECT id FROM digital_twins WHERE userId=?`).bind(npcUser.id).first<any>();
     }
+    if (!npcTwin) continue;
 
     // Auto-accept friendship (skip if already friends)
     const existing = await db.prepare(
@@ -605,6 +625,20 @@ export async function ensureNpcFriends(db: D1Database, userId: number) {
       await db.prepare(
         `INSERT INTO friendships (userId, friendId, status) VALUES (?,?,'accepted')`
       ).bind(npcUser.id, userId).run();
+    }
+
+    // Create a tutorial chat session with a welcome message from this NPC
+    const existingSession = await db.prepare(
+      `SELECT id FROM chat_sessions WHERE userId=? AND twinId=? AND mode='npc_tutorial'`
+    ).bind(userId, npcTwin.id).first<any>();
+    if (!existingSession) {
+      const sessionRes = await db.prepare(
+        `INSERT INTO chat_sessions (userId, twinId, title, mode) VALUES (?,?,?,?)`
+      ).bind(userId, npcTwin.id, `${npc.name}からのメッセージ`, "npc_tutorial").run();
+      const sessionId = Number(sessionRes.meta.last_row_id);
+      await db.prepare(
+        `INSERT INTO chat_messages (sessionId, role, content) VALUES (?,?,?)`
+      ).bind(sessionId, "assistant", npc.welcomeMessage).run();
     }
   }
 }

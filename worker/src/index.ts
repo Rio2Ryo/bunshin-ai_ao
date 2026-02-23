@@ -174,18 +174,18 @@ Step 5完了時に以下を出力:
         // Insert welcome message
         const welcomeMessage = `はじめまして！私はあなた専用の分身AI「${twinName}」です。
 
-これから私があなたのことを学んで、あなたの「デジタル分身」になっていきます。
+これからあなたの「デジタル分身」としてビジネスマッチングをお手伝いします。
 
-まずは自己紹介から始めましょう！
+ガイド太郎さんと案内花子さんがすでに友達として追加されています。サービスの使い方はオンボーディング画面でご案内しますね！
 
-あなたのお仕事や得意なことを教えてください。
+まずはあなたのお仕事や得意なことを教えてください。
 例えば「マーケティング10年やってます」「デザインが得意です」など、なんでもOKです！`;
 
         await ctx.env.DB.prepare(
           `INSERT INTO chat_messages (sessionId, role, content) VALUES (?, ?, ?)`
         ).bind(onboardingSessionId, "assistant", welcomeMessage).run();
 
-        // Auto-create NPC friends (田中ハジメ, 佐藤ミキ)
+        // Auto-create NPC friends (ガイド太郎, 案内花子) with tutorial messages
         await ensureNpcFriends(ctx.env.DB, user.id);
 
         // Initialize trust score with registration bonus
@@ -213,7 +213,7 @@ Step 5完了時に以下を出力:
     me: publicProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       if (ctx.user) {
-        const row = await ctx.env.DB.prepare(`SELECT onboardingCompleted FROM users WHERE id=?`).bind(ctx.user.id).first<any>();
+        const row = await ctx.env.DB.prepare(`SELECT onboardingCompleted, tutorialCompleted FROM users WHERE id=?`).bind(ctx.user.id).first<any>();
         // Get trust score
         const trustRow = await ctx.env.DB.prepare(`SELECT score, rank FROM trust_scores WHERE userId=?`).bind(ctx.user.id).first<any>();
         const trustScore = trustRow?.score ?? 0;
@@ -228,7 +228,7 @@ Step 5完了時に以下を出力:
           await addTrustAction(ctx.env.DB, ctx.user.id, "daily_login", 2, "デイリーログインボーナス");
         }
 
-        return { ...ctx.user, onboardingCompleted: row?.onboardingCompleted ?? 0, trustScore, trustRank };
+        return { ...ctx.user, onboardingCompleted: row?.onboardingCompleted ?? 0, tutorialCompleted: row?.tutorialCompleted ?? 0, trustScore, trustRank };
       }
       // Not logged in
       return null;
@@ -3217,9 +3217,9 @@ JSON形式で出力:
   onboarding: router({
     getStatus: publicProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
-      if (!ctx.userId) return { onboardingCompleted: 0 };
-      const row = await ctx.env.DB.prepare(`SELECT onboardingCompleted FROM users WHERE id=?`).bind(ctx.userId).first<any>();
-      return { onboardingCompleted: row?.onboardingCompleted ?? 0 };
+      if (!ctx.userId) return { onboardingCompleted: 0, tutorialCompleted: 0 };
+      const row = await ctx.env.DB.prepare(`SELECT onboardingCompleted, tutorialCompleted FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      return { onboardingCompleted: row?.onboardingCompleted ?? 0, tutorialCompleted: row?.tutorialCompleted ?? 0 };
     }),
     getSession: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
@@ -3261,6 +3261,12 @@ JSON形式で出力:
         await addTrustAction(ctx.env.DB, ctx.userId, "onboarding_complete", 10, "オンボーディングを完了しました");
         return { success: true };
       }),
+    completeTutorial: protectedProcedure.mutation(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`UPDATE users SET tutorialCompleted=1 WHERE id=?`).bind(ctx.userId).run();
+      await addTrustAction(ctx.env.DB, ctx.userId, "tutorial_complete", 5, "チュートリアルを完了しました");
+      return { success: true };
+    }),
   }),
 
   // ============ Admin AI Provider ============

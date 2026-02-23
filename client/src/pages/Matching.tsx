@@ -110,14 +110,11 @@ export default function Matching() {
   // 友達の中で分身AIを持っている人だけフィルタ
   const friendsWithTwin = friends?.filter(f => f.twin) || [];
 
-  // Filter NPC sessions: hide when onboarding is complete AND user has real matchings
+  // Filter NPC sessions: hide when tutorial_completed=true
   const me = user as any;
-  const onboardingDone = me?.onboardingCompleted === 1;
-  const realMatchings = sessions?.filter((s: any) => !s.isNpcSession) || [];
-  const hasRealMatchings = realMatchings.length > 0;
-  const hideNpcSessions = onboardingDone && hasRealMatchings;
+  const tutorialDone = me?.tutorialCompleted === 1;
 
-  const displayedSessions = hideNpcSessions
+  const displayedSessions = tutorialDone
     ? sessions?.filter((s: any) => !s.isNpcSession) || []
     : sessions || [];
 
