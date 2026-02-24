@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Slider } from "@/components/ui/slider";
-import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
@@ -14,7 +14,16 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { Users, Plus, Loader2, Play, CheckCircle, XCircle, Clock, UserPlus, Bot, MessageSquare, Shield, Star, TrendingUp, ArrowRight, Sparkles } from "lucide-react";
+import {
+  Users, Plus, Loader2, Play, CheckCircle, XCircle, Clock,
+  UserPlus, Bot, MessageSquare, Shield, Star, TrendingUp,
+  ArrowRight, Sparkles, Search, Send, Inbox, History,
+  ArrowUpRight, ArrowDownRight, Minus, Check, X,
+} from "lucide-react";
+
+// ---------------------------------------------------------------------------
+// Score components
+// ---------------------------------------------------------------------------
 
 function ScoreCircle({ score, size = "md", source }: { score: number; size?: "sm" | "md" | "lg"; source?: string }) {
   const sizeMap = { sm: "w-10 h-10 text-xs", md: "w-14 h-14 text-sm", lg: "w-20 h-20 text-lg" };
@@ -32,59 +41,66 @@ function ScoreCircle({ score, size = "md", source }: { score: number; size?: "sm
   );
 }
 
+function ScoreDiffBadge({ diff }: { diff: number }) {
+  if (diff > 0) return <Badge variant="secondary" className="text-xs gap-0.5"><ArrowUpRight className="h-3 w-3" />+{diff}</Badge>;
+  if (diff < 0) return <Badge variant="secondary" className="text-xs gap-0.5"><ArrowDownRight className="h-3 w-3" />{diff}</Badge>;
+  return <Badge variant="secondary" className="text-xs gap-0.5"><Minus className="h-3 w-3" />±0</Badge>;
+}
+
+function AvatarCircle({ name, size = "md" }: { name: string; size?: "sm" | "md" }) {
+  const s = size === "sm" ? "w-10 h-10 text-sm" : "w-12 h-12 text-base";
+  const initial = name?.charAt(0) || "?";
+  return (
+    <div className={`${s} rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center shrink-0`}>
+      {initial}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
 export default function Matching() {
-  usePageMeta({ title: "ビジネスマッチング", description: "分身AI同士の対話を通じて、最適なビジネスパートナーを発見しましょう。", ogImage: "https://bunshin-ai.pages.dev/og/matching.svg", path: "/matching" });
+  usePageMeta({ title: "ビジネスマッチング", description: "スコアに基づいたマッチング候補を発見しましょう。", path: "/matching" });
   const { user } = useAuth();
   const { data: myTwin } = trpc.myTwin.get.useQuery();
   const { data: friends } = trpc.friends.list.useQuery();
-  const { data: sessions, isLoading, refetch } = trpc.matching.sessions.useQuery();
+  const { data: sessions, isLoading: sessionsLoading, refetch: refetchSessions } = trpc.matching.sessions.useQuery();
   const { data: trustData } = trpc.trust.getScore.useQuery();
   const { data: candidates, isLoading: candidatesLoading } = trpc.matching.suggestedCandidates.useQuery();
+
+  // New: discover candidates (±20 trust score)
+  const { data: discovered, isLoading: discoverLoading, refetch: refetchDiscover } = trpc.matching.discoverCandidates.useQuery();
+  const { data: receivedReqs, isLoading: recvLoading, refetch: refetchRecv } = trpc.matching.receivedRequests.useQuery();
+  const { data: sentReqs, isLoading: sentLoading, refetch: refetchSent } = trpc.matching.sentRequests.useQuery();
 
   const createSession = trpc.matching.create.useMutation();
   const runDialogue = trpc.matching.runDialogue.useMutation();
   const completeTutorial = trpc.onboarding.completeTutorial.useMutation();
+  const sendRequestMut = trpc.matching.sendRequest.useMutation();
+  const acceptRequestMut = trpc.matching.acceptRequest.useMutation();
+  const rejectRequestMut = trpc.matching.rejectRequest.useMutation();
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedFriendId, setSelectedFriendId] = useState("");
   const [theme, setTheme] = useState("");
   const [turns, setTurns] = useState(5);
+  const [requestMsg, setRequestMsg] = useState("");
+  const [requestTargetId, setRequestTargetId] = useState<number | null>(null);
 
   const handleCreate = async () => {
-    if (!selectedFriendId || !theme.trim()) {
-      toast.error("友達とテーマを選択してください");
-      return;
-    }
-
-    if (!myTwin) {
-      toast.error("まず自分の分身AIを作成してください");
-      return;
-    }
-
+    if (!selectedFriendId || !theme.trim()) { toast.error("友達とテーマを選択してください"); return; }
+    if (!myTwin) { toast.error("まず自分の分身AIを作成してください"); return; }
     const friend = friends?.find(f => f.friend.id === parseInt(selectedFriendId));
-    if (!friend?.twin) {
-      toast.error("この友達はまだ分身AIを作成していません");
-      return;
-    }
-
+    if (!friend?.twin) { toast.error("この友達はまだ分身AIを作成していません"); return; }
     try {
       toast.info(`分身AI同士の対話を開始しています（${turns}ターン）...`);
-
-      await createSession.mutateAsync({
-        friendId: friend.friend.id,
-        theme: theme,
-        turns: turns,
-      });
-
+      await createSession.mutateAsync({ friendId: friend.friend.id, theme, turns });
       toast.success("対話と分析が完了しました！");
-      setIsCreateOpen(false);
-      setSelectedFriendId("");
-      setTheme("");
-      setTurns(5);
-      refetch();
-    } catch (error: any) {
-      toast.error(error?.message || "作成に失敗しました");
-    }
+      setIsCreateOpen(false); setSelectedFriendId(""); setTheme(""); setTurns(5);
+      refetchSessions();
+    } catch (error: any) { toast.error(error?.message || "作成に失敗しました"); }
   };
 
   const handleQuickMatch = (friendId: number, friendName: string) => {
@@ -93,73 +109,61 @@ export default function Matching() {
     setIsCreateOpen(true);
   };
 
-  const handleRunDialogue = async (sessionId: number) => {
+  const handleSendRequest = async (userId: number) => {
     try {
-      toast.info("対話を開始しています...");
-      await runDialogue.mutateAsync({ sessionId, turns: 5 });
-      toast.success("対話が完了しました");
-      refetch();
-    } catch (error) {
-      toast.error("対話の実行に失敗しました");
-    }
+      await sendRequestMut.mutateAsync({ receiverUserId: userId, message: requestMsg || undefined });
+      toast.success("リクエストを送信しました");
+      setRequestTargetId(null); setRequestMsg("");
+      refetchDiscover(); refetchSent();
+    } catch (error: any) { toast.error(error?.message || "送信に失敗しました"); }
+  };
+
+  const handleAcceptRequest = async (requestId: number) => {
+    try {
+      await acceptRequestMut.mutateAsync({ requestId });
+      toast.success("リクエストを承認しました");
+      refetchRecv(); refetchDiscover();
+    } catch (error: any) { toast.error(error?.message || "承認に失敗しました"); }
+  };
+
+  const handleRejectRequest = async (requestId: number) => {
+    try {
+      await rejectRequestMut.mutateAsync({ requestId });
+      toast.success("リクエストを拒否しました");
+      refetchRecv();
+    } catch (error: any) { toast.error(error?.message || "拒否に失敗しました"); }
+  };
+
+  const handleRunDialogue = async (sessionId: number) => {
+    try { toast.info("対話を開始しています..."); await runDialogue.mutateAsync({ sessionId, turns: 5 }); toast.success("対話が完了しました"); refetchSessions(); }
+    catch { toast.error("対話の実行に失敗しました"); }
   };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case "completed":
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case "running":
-        return <Loader2 className="h-4 w-4 animate-spin text-yellow-500" />;
-      case "failed":
-        return <XCircle className="h-4 w-4 text-red-500" />;
-      default:
-        return <Clock className="h-4 w-4 text-muted-foreground" />;
+      case "completed": return <CheckCircle className="h-4 w-4 text-green-500" />;
+      case "running": return <Loader2 className="h-4 w-4 animate-spin text-yellow-500" />;
+      case "failed": return <XCircle className="h-4 w-4 text-red-500" />;
+      default: return <Clock className="h-4 w-4 text-muted-foreground" />;
     }
   };
-
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case "completed": return "完了";
-      case "running": return "実行中";
-      case "failed": return "失敗";
-      default: return "待機中";
-    }
-  };
+  const getStatusText = (s: string) => s === "completed" ? "完了" : s === "running" ? "実行中" : s === "failed" ? "失敗" : "待機中";
 
   const friendsWithTwin = friends?.filter(f => f.twin) || [];
-
   const me = user as any;
   const tutorialDone = me?.tutorialCompleted === 1;
-
-  const displayedSessions = tutorialDone
-    ? sessions?.filter((s: any) => !s.isNpcSession) || []
-    : sessions || [];
-
+  const displayedSessions = tutorialDone ? sessions?.filter((s: any) => !s.isNpcSession) || [] : sessions || [];
   const npcSessions = sessions?.filter((s: any) => s.isNpcSession) || [];
-  const hasNpcSessions = npcSessions.length > 0;
-
-  const handleCompleteTutorial = async () => {
-    try {
-      await completeTutorial.mutateAsync();
-      toast.success("チュートリアルを完了しました");
-      window.location.reload();
-    } catch {
-      toast.error("チュートリアル完了に失敗しました");
-    }
-  };
-
   const trustScore = trustData?.score ?? 0;
-  const canMatch = trustScore >= 30;
 
-  // Sort sessions: completed with score first, then by date
   const sortedSessions = [...(displayedSessions || [])].sort((a: any, b: any) => {
     if (a.status === "completed" && b.status !== "completed") return -1;
     if (a.status !== "completed" && b.status === "completed") return 1;
-    if (a.compatibilityScore != null && b.compatibilityScore != null) {
-      return b.compatibilityScore - a.compatibilityScore;
-    }
+    if (a.compatibilityScore != null && b.compatibilityScore != null) return b.compatibilityScore - a.compatibilityScore;
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
+
+  const pendingRecvCount = receivedReqs?.length ?? 0;
 
   return (
     <DashboardLayout>
@@ -169,98 +173,52 @@ export default function Matching() {
           <div>
             <h1 className="text-3xl font-bold">ビジネスマッチング</h1>
             <p className="text-muted-foreground mt-2">
-              スコアに基づいたおすすめ候補からマッチングを始めましょう
+              信頼度スコアが近いユーザーとマッチングしましょう
             </p>
           </div>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button disabled={!myTwin}>
-                <Plus className="h-4 w-4 mr-2" />
-                新規マッチング
-              </Button>
+              <Button disabled={!myTwin}><Plus className="h-4 w-4 mr-2" />新規マッチング</Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-md">
               <DialogHeader>
                 <DialogTitle>新規マッチングセッション</DialogTitle>
-                <DialogDescription>
-                  友達の分身AIを選んで、ビジネステーマを設定してください
-                </DialogDescription>
+                <DialogDescription>友達の分身AIを選んで、ビジネステーマを設定してください</DialogDescription>
               </DialogHeader>
               <div className="space-y-4 mt-4">
                 <div className="p-3 rounded-lg bg-muted/50 border">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
-                    <Bot className="h-4 w-4" />
-                    あなたの分身AI
-                  </div>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1"><Bot className="h-4 w-4" />あなたの分身AI</div>
                   <p className="font-medium">{myTwin?.name || "未作成"}</p>
                 </div>
-
                 <div className="space-y-2">
                   <Label>対話相手（友達の分身AI）</Label>
                   <Select value={selectedFriendId} onValueChange={setSelectedFriendId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="友達を選択" />
-                    </SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder="友達を選択" /></SelectTrigger>
                     <SelectContent>
-                      {friendsWithTwin.length > 0 ? (
-                        friendsWithTwin.map((friend) => (
-                          <SelectItem key={friend.friend.id} value={friend.friend.id.toString()}>
-                            {friend.twin?.name} ({friend.friend.name})
-                          </SelectItem>
-                        ))
-                      ) : (
-                        <div className="p-2 text-sm text-muted-foreground text-center">
-                          分身AIを持つ友達がいません
-                        </div>
-                      )}
+                      {friendsWithTwin.length > 0 ? friendsWithTwin.map((friend) => (
+                        <SelectItem key={friend.friend.id} value={friend.friend.id.toString()}>
+                          {friend.twin?.name} ({friend.friend.name})
+                        </SelectItem>
+                      )) : <div className="p-2 text-sm text-muted-foreground text-center">分身AIを持つ友達がいません</div>}
                     </SelectContent>
                   </Select>
                 </div>
-
                 <div className="space-y-2">
                   <Label htmlFor="theme">対話テーマ</Label>
-                  <Input
-                    id="theme"
-                    value={theme}
-                    onChange={(e) => setTheme(e.target.value)}
-                    placeholder="例: AI活用した新規事業の可能性"
-                  />
+                  <Input id="theme" value={theme} onChange={(e) => setTheme(e.target.value)} placeholder="例: AI活用した新規事業の可能性" />
                 </div>
-
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <Label className="flex items-center gap-2">
-                      <MessageSquare className="h-4 w-4" />
-                      対話ターン数
-                    </Label>
+                    <Label className="flex items-center gap-2"><MessageSquare className="h-4 w-4" />対話ターン数</Label>
                     <span className="text-sm font-medium text-primary">{turns}ターン</span>
                   </div>
-                  <Slider
-                    value={[turns]}
-                    onValueChange={(value) => setTurns(value[0])}
-                    min={3}
-                    max={30}
-                    step={1}
-                    className="w-full"
-                  />
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>3（簡潔）</span>
-                    <span>15（標準）</span>
-                    <span>30（徹底議論）</span>
-                  </div>
+                  <Slider value={[turns]} onValueChange={(v) => setTurns(v[0])} min={3} max={30} step={1} className="w-full" />
+                  <div className="flex justify-between text-xs text-muted-foreground"><span>3（簡潔）</span><span>15（標準）</span><span>30（徹底議論）</span></div>
                 </div>
-
                 <div className="flex justify-end gap-2">
-                  <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
-                    キャンセル
-                  </Button>
-                  <Button
-                    onClick={handleCreate}
-                    disabled={createSession.isPending || runDialogue.isPending || friendsWithTwin.length === 0}
-                  >
-                    {(createSession.isPending || runDialogue.isPending) && (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    )}
+                  <Button variant="outline" onClick={() => setIsCreateOpen(false)}>キャンセル</Button>
+                  <Button onClick={handleCreate} disabled={createSession.isPending || friendsWithTwin.length === 0}>
+                    {createSession.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                     作成して対話開始
                   </Button>
                 </div>
@@ -274,269 +232,328 @@ export default function Matching() {
           <Card className="border-yellow-500/50 bg-yellow-500/10">
             <CardContent className="flex items-center gap-4 py-4">
               <Bot className="h-8 w-8 text-yellow-500" />
-              <div className="flex-1">
-                <p className="font-medium">まず分身AIを作成してください</p>
-                <p className="text-sm text-muted-foreground">
-                  マッチングを始めるには、自分の分身AIが必要です
-                </p>
-              </div>
-              <Link href="/twins">
-                <Button>分身AIを作成</Button>
-              </Link>
+              <div className="flex-1"><p className="font-medium">まず分身AIを作成してください</p><p className="text-sm text-muted-foreground">マッチングを始めるには、自分の分身AIが必要です</p></div>
+              <Link href="/twins"><Button>分身AIを作成</Button></Link>
             </CardContent>
           </Card>
         )}
 
-        {friendsWithTwin.length === 0 && myTwin && (
-          <Card className="border-blue-500/50 bg-blue-500/10">
-            <CardContent className="flex items-center gap-4 py-4">
-              <UserPlus className="h-8 w-8 text-blue-500" />
-              <div className="flex-1">
-                <p className="font-medium">分身AIを持つ友達を追加しましょう</p>
-                <p className="text-sm text-muted-foreground">
-                  マッチングするには、分身AIを作成した友達が必要です
-                </p>
-              </div>
-              <Link href="/friends">
-                <Button variant="outline">友達を追加</Button>
-              </Link>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Tutorial dismiss banner */}
-        {!tutorialDone && hasNpcSessions && (
+        {!tutorialDone && npcSessions.length > 0 && (
           <Card className="border-cyan-500/50 bg-cyan-500/10">
             <CardContent className="flex items-center gap-4 py-4">
               <Bot className="h-8 w-8 text-cyan-500" />
-              <div className="flex-1">
-                <p className="font-medium">チュートリアルセッション表示中</p>
-                <p className="text-sm text-muted-foreground">
-                  ガイドキャラクターとの練習マッチングが表示されています。非表示にするにはチュートリアルを完了してください。
-                </p>
-              </div>
-              <Button variant="outline" onClick={handleCompleteTutorial} disabled={completeTutorial.isPending}>
-                {completeTutorial.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                チュートリアル完了
+              <div className="flex-1"><p className="font-medium">チュートリアルセッション表示中</p><p className="text-sm text-muted-foreground">ガイドキャラクターとの練習マッチングが表示されています。</p></div>
+              <Button variant="outline" onClick={async () => { try { await completeTutorial.mutateAsync(); toast.success("チュートリアル完了"); window.location.reload(); } catch { toast.error("失敗しました"); } }} disabled={completeTutorial.isPending}>
+                {completeTutorial.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}チュートリアル完了
               </Button>
             </CardContent>
           </Card>
         )}
 
-        {/* Trust score warning */}
-        {!canMatch && myTwin && friendsWithTwin.length > 0 && (
-          <Card className="border-yellow-500/50 bg-yellow-500/10">
-            <CardContent className="flex items-center gap-4 py-4">
-              <Shield className="h-8 w-8 text-yellow-500" />
-              <div className="flex-1">
-                <p className="font-medium">信頼度スコアが不足しています</p>
-                <p className="text-sm text-muted-foreground">
-                  実ユーザーとのマッチングには信頼度30以上が必要です（現在: {trustScore}）
-                </p>
+        {/* Tabs */}
+        <Tabs defaultValue="discover" className="w-full">
+          <TabsList className="w-full">
+            <TabsTrigger value="discover" className="gap-1.5"><Search className="h-4 w-4" />おすすめ候補</TabsTrigger>
+            <TabsTrigger value="received" className="gap-1.5">
+              <Inbox className="h-4 w-4" />受信
+              {pendingRecvCount > 0 && <Badge variant="destructive" className="text-[10px] px-1.5 py-0 ml-1">{pendingRecvCount}</Badge>}
+            </TabsTrigger>
+            <TabsTrigger value="sent" className="gap-1.5"><Send className="h-4 w-4" />送信済み</TabsTrigger>
+            <TabsTrigger value="history" className="gap-1.5"><History className="h-4 w-4" />履歴</TabsTrigger>
+          </TabsList>
+
+          {/* ===== Tab: Discover ===== */}
+          <TabsContent value="discover">
+            <div className="space-y-4 mt-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Shield className="h-5 w-5 text-primary" />
+                <p className="text-sm text-muted-foreground">あなたの信頼度: <span className="font-bold text-foreground">{trustScore}pt</span> — スコア差±20以内のユーザーが表示されます</p>
               </div>
-              <Link href="/trust">
-                <Button variant="outline">スコアを確認</Button>
-              </Link>
-            </CardContent>
-          </Card>
-        )}
 
-        {/* Suggested Candidates Section */}
-        {myTwin && candidates && candidates.length > 0 && (
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-primary" />
-              <h2 className="text-xl font-bold">おすすめマッチング候補</h2>
-              <Badge variant="secondary" className="text-xs">{candidates.length}件</Badge>
-            </div>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {candidates.map((c: any) => (
-                <Card key={c.friend.id} className="hover:border-primary/50 transition-colors">
-                  <CardContent className="p-4">
-                    <div className="flex items-start gap-3">
-                      {/* Score circle */}
-                      <ScoreCircle score={c.score} size="md" source={c.scoreSource} />
-                      {/* Info */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="font-medium text-sm truncate">{c.friend.name}</p>
-                          {c.friend.isNpc && (
-                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">NPC</Badge>
-                          )}
-                        </div>
-                        <p className="text-xs text-muted-foreground truncate">{c.twin.name}</p>
-                        <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
-                          {c.twin.description?.slice(0, 80) || "プロフィール未設定"}
-                        </p>
-                        {/* Tags */}
-                        {c.twin.tags && c.twin.tags.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-1.5">
-                            {c.twin.tags.slice(0, 3).map((tag: string, i: number) => (
-                              <span key={i} className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
-                                {tag}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        {/* Past result summary */}
-                        {c.bestResult && (
-                          <div className="mt-2 p-2 rounded bg-muted/50 border border-muted">
-                            <div className="flex items-center gap-1 mb-0.5">
-                              <Star className="h-3 w-3 text-yellow-500" />
-                              <span className="text-[10px] font-medium">過去ベスト: {c.bestResult.score}%</span>
+              {discoverLoading ? (
+                <div className="flex items-center justify-center h-32"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+              ) : discovered && discovered.length > 0 ? (
+                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                  {discovered.map((c: any) => (
+                    <Card key={c.userId} className="hover:border-primary/50 transition-colors">
+                      <CardContent className="p-4">
+                        <div className="flex items-start gap-3">
+                          <AvatarCircle name={c.name} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium text-sm truncate">{c.name}</p>
+                              {c.isFriend && <Badge variant="outline" className="text-[10px] px-1.5 py-0">友達</Badge>}
                             </div>
-                            <p className="text-[10px] text-muted-foreground line-clamp-1">
-                              {c.bestResult.summary}
-                            </p>
+                            {c.company && <p className="text-xs text-muted-foreground truncate">{c.company}{c.industry ? ` / ${c.industry}` : ""}</p>}
+                            <div className="flex items-center gap-2 mt-1">
+                              <Badge variant="secondary" className="text-xs">{c.trustScore}pt</Badge>
+                              <ScoreDiffBadge diff={c.scoreDiff} />
+                            </div>
+                            {c.bio && <p className="text-xs text-muted-foreground line-clamp-2 mt-1">{c.bio}</p>}
+                            {c.commonTags && c.commonTags.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1.5">
+                                {c.commonTags.map((tag: string, i: number) => (
+                                  <span key={i} className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">{tag}</span>
+                                ))}
+                              </div>
+                            )}
+                            {c.twin?.tags && c.twin.tags.length > 0 && (!c.commonTags || c.commonTags.length === 0) && (
+                              <div className="flex flex-wrap gap-1 mt-1.5">
+                                {c.twin.tags.slice(0, 3).map((tag: string, i: number) => (
+                                  <span key={i} className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">{tag}</span>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                        )}
-                        {c.matchCount > 0 && !c.bestResult && (
-                          <p className="text-[10px] text-muted-foreground mt-1">
-                            {c.matchCount}回マッチング済み
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                    {/* Actions */}
-                    <div className="flex gap-2 mt-3">
-                      <Button
-                        size="sm"
-                        className="flex-1"
-                        onClick={() => handleQuickMatch(c.friend.id, c.friend.name)}
-                        disabled={createSession.isPending}
-                      >
-                        <Play className="h-3 w-3 mr-1" />
-                        マッチング開始
-                      </Button>
-                      {c.bestResult?.sessionId && (
-                        <Link href={`/matching/${c.bestResult.sessionId}`}>
-                          <Button size="sm" variant="outline">
-                            <ArrowRight className="h-3 w-3" />
-                          </Button>
-                        </Link>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {candidatesLoading && myTwin && (
-          <div className="space-y-4">
-            <h2 className="text-xl font-bold flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-primary" />
-              おすすめマッチング候補
-            </h2>
-            <div className="flex items-center justify-center h-32">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
-            </div>
-          </div>
-        )}
-
-        {/* Matching History Section */}
-        <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-muted-foreground" />
-            <h2 className="text-xl font-bold">マッチング履歴</h2>
-            {sortedSessions.length > 0 && (
-              <Badge variant="secondary" className="text-xs">{sortedSessions.length}件</Badge>
-            )}
-          </div>
-
-          {isLoading ? (
-            <div className="flex items-center justify-center h-32">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
-            </div>
-          ) : sortedSessions.length > 0 ? (
-            <div className="grid gap-3">
-              {sortedSessions.map((session: any) => (
-                <Card key={session.id} className="hover:border-primary/50 transition-colors">
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-4">
-                      {/* Score */}
-                      {session.compatibilityScore != null ? (
-                        <ScoreCircle score={Math.round(session.compatibilityScore)} size="sm" />
-                      ) : (
-                        <div className="w-10 h-10 rounded-full border-2 border-muted flex items-center justify-center shrink-0">
-                          {getStatusIcon(session.status)}
                         </div>
-                      )}
-                      {/* Info */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="font-medium text-sm truncate">{session.theme}</p>
-                          {session.isNpcSession && (
-                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">チュートリアル</Badge>
-                          )}
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          {session.twin1?.name || `Twin #${session.twin1Id}`} × {session.twin2?.name || `Twin #${session.twin2Id}`}
-                        </p>
-                        {session.resultSummary && (
-                          <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
-                            {session.resultSummary}
-                          </p>
-                        )}
-                      </div>
-                      {/* Status + Actions */}
-                      <div className="flex items-center gap-2 shrink-0">
-                        <div className="text-right hidden sm:block">
-                          <div className="flex items-center gap-1 justify-end">
-                            {getStatusIcon(session.status)}
-                            <span className="text-xs text-muted-foreground">
-                              {getStatusText(session.status)}
-                            </span>
-                          </div>
-                          <span className="text-[10px] text-muted-foreground">
-                            {new Date(session.createdAt).toLocaleDateString("ja-JP", {
-                              month: "short",
-                              day: "numeric",
-                            })}
-                          </span>
-                        </div>
-                        <div className="flex gap-1">
-                          {session.status === "pending" && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleRunDialogue(session.id)}
-                              disabled={runDialogue.isPending}
-                            >
-                              <Play className="h-3 w-3" />
+                        <div className="mt-3">
+                          {c.requestStatus === "pending" && c.requestDirection === "sent" ? (
+                            <Button size="sm" variant="outline" className="w-full" disabled><Clock className="h-3 w-3 mr-1" />リクエスト送信済み</Button>
+                          ) : c.requestStatus === "pending" && c.requestDirection === "received" ? (
+                            <div className="flex gap-2">
+                              <Button size="sm" className="flex-1" onClick={() => handleAcceptRequest(c.requestId)} disabled={acceptRequestMut.isPending}>
+                                <Check className="h-3 w-3 mr-1" />承認
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={() => handleRejectRequest(c.requestId)} disabled={rejectRequestMut.isPending}>
+                                <X className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          ) : c.requestStatus === "accepted" ? (
+                            <Button size="sm" className="w-full" onClick={() => handleQuickMatch(c.userId, c.name)} disabled={createSession.isPending}>
+                              <Play className="h-3 w-3 mr-1" />マッチング開始
+                            </Button>
+                          ) : c.isFriend ? (
+                            <Button size="sm" className="w-full" onClick={() => handleQuickMatch(c.userId, c.name)} disabled={createSession.isPending}>
+                              <Play className="h-3 w-3 mr-1" />マッチング開始
+                            </Button>
+                          ) : requestTargetId === c.userId ? (
+                            <div className="space-y-2">
+                              <Input placeholder="メッセージ（任意）" value={requestMsg} onChange={(e) => setRequestMsg(e.target.value)} className="text-xs h-8" />
+                              <div className="flex gap-2">
+                                <Button size="sm" className="flex-1" onClick={() => handleSendRequest(c.userId)} disabled={sendRequestMut.isPending}>
+                                  {sendRequestMut.isPending && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}送信
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={() => { setRequestTargetId(null); setRequestMsg(""); }}>取消</Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <Button size="sm" variant="outline" className="w-full" onClick={() => setRequestTargetId(c.userId)}>
+                              <UserPlus className="h-3 w-3 mr-1" />リクエスト送信
                             </Button>
                           )}
-                          <Link href={`/matching/${session.id}`}>
-                            <Button size="sm" variant="outline">
-                              詳細
-                            </Button>
-                          </Link>
                         </div>
-                      </div>
-                    </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
+                <Card>
+                  <CardContent className="flex flex-col items-center justify-center py-12">
+                    <Search className="h-12 w-12 text-muted-foreground mb-3" />
+                    <h3 className="text-base font-medium mb-1">候補が見つかりません</h3>
+                    <p className="text-muted-foreground text-sm text-center">信頼度スコアが近いユーザーがまだいません。プロフィールを充実させてスコアを上げましょう。</p>
                   </CardContent>
                 </Card>
-              ))}
+              )}
             </div>
-          ) : (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <Users className="h-12 w-12 text-muted-foreground mb-3" />
-                <h3 className="text-base font-medium mb-1">マッチング履歴がありません</h3>
-                <p className="text-muted-foreground text-sm text-center mb-4">
-                  おすすめ候補からマッチングを始めましょう
-                </p>
-                {myTwin && friendsWithTwin.length > 0 && (
-                  <Button onClick={() => setIsCreateOpen(true)}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    最初のマッチングを作成
-                  </Button>
+          </TabsContent>
+
+          {/* ===== Tab: Received Requests ===== */}
+          <TabsContent value="received">
+            <div className="space-y-4 mt-4">
+              {recvLoading ? (
+                <div className="flex items-center justify-center h-32"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+              ) : receivedReqs && receivedReqs.length > 0 ? (
+                <div className="grid gap-3">
+                  {receivedReqs.map((r: any) => (
+                    <Card key={r.id} className="hover:border-primary/50 transition-colors">
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-4">
+                          <AvatarCircle name={r.senderName} size="sm" />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-sm">{r.senderName}</p>
+                            {r.senderCompany && <p className="text-xs text-muted-foreground">{r.senderCompany}{r.senderIndustry ? ` / ${r.senderIndustry}` : ""}</p>}
+                            <div className="flex items-center gap-2 mt-1">
+                              <Badge variant="secondary" className="text-xs">{r.senderTrustScore}pt</Badge>
+                              <ScoreDiffBadge diff={r.scoreDiff} />
+                            </div>
+                            {r.message && <p className="text-xs text-muted-foreground mt-1 italic">「{r.message}」</p>}
+                          </div>
+                          <div className="flex gap-2 shrink-0">
+                            <Button size="sm" onClick={() => handleAcceptRequest(r.id)} disabled={acceptRequestMut.isPending}>
+                              {acceptRequestMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3 mr-1" />}承認
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => handleRejectRequest(r.id)} disabled={rejectRequestMut.isPending}>
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
+                <Card>
+                  <CardContent className="flex flex-col items-center justify-center py-12">
+                    <Inbox className="h-12 w-12 text-muted-foreground mb-3" />
+                    <h3 className="text-base font-medium mb-1">受信リクエストはありません</h3>
+                    <p className="text-muted-foreground text-sm text-center">他のユーザーからのマッチングリクエストがここに表示されます</p>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </TabsContent>
+
+          {/* ===== Tab: Sent Requests ===== */}
+          <TabsContent value="sent">
+            <div className="space-y-4 mt-4">
+              {sentLoading ? (
+                <div className="flex items-center justify-center h-32"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+              ) : sentReqs && sentReqs.length > 0 ? (
+                <div className="grid gap-3">
+                  {sentReqs.map((r: any) => (
+                    <Card key={r.id}>
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-4">
+                          <AvatarCircle name={r.receiverName} size="sm" />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-sm">{r.receiverName}</p>
+                            {r.receiverCompany && <p className="text-xs text-muted-foreground">{r.receiverCompany}</p>}
+                            <Badge variant="secondary" className="text-xs mt-1">{r.receiverTrustScore}pt</Badge>
+                            {r.message && <p className="text-xs text-muted-foreground mt-1 italic">「{r.message}」</p>}
+                          </div>
+                          <div className="shrink-0">
+                            {r.status === "pending" && <Badge variant="secondary" className="gap-1"><Clock className="h-3 w-3" />保留中</Badge>}
+                            {r.status === "accepted" && <Badge className="gap-1 bg-green-500/20 text-green-600 border-green-500/30"><CheckCircle className="h-3 w-3" />承認済み</Badge>}
+                            {r.status === "rejected" && <Badge variant="destructive" className="gap-1"><XCircle className="h-3 w-3" />拒否</Badge>}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
+                <Card>
+                  <CardContent className="flex flex-col items-center justify-center py-12">
+                    <Send className="h-12 w-12 text-muted-foreground mb-3" />
+                    <h3 className="text-base font-medium mb-1">送信済みリクエストはありません</h3>
+                    <p className="text-muted-foreground text-sm text-center">おすすめ候補からリクエストを送信しましょう</p>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </TabsContent>
+
+          {/* ===== Tab: History ===== */}
+          <TabsContent value="history">
+            <div className="space-y-4 mt-4">
+              {/* Friend-based candidates (existing) */}
+              {myTwin && candidates && candidates.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-primary" />
+                    <h3 className="text-sm font-medium">友達マッチング候補</h3>
+                    <Badge variant="secondary" className="text-xs">{candidates.length}件</Badge>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                    {candidates.map((c: any) => (
+                      <Card key={c.friend.id} className="hover:border-primary/50 transition-colors">
+                        <CardContent className="p-4">
+                          <div className="flex items-start gap-3">
+                            <ScoreCircle score={c.score} size="md" source={c.scoreSource} />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="font-medium text-sm truncate">{c.friend.name}</p>
+                                {c.friend.isNpc && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">NPC</Badge>}
+                              </div>
+                              <p className="text-xs text-muted-foreground truncate">{c.twin.name}</p>
+                              <p className="text-xs text-muted-foreground line-clamp-2 mt-1">{c.twin.description?.slice(0, 80) || "プロフィール未設定"}</p>
+                              {c.twin.tags && c.twin.tags.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-1.5">
+                                  {c.twin.tags.slice(0, 3).map((tag: string, i: number) => (
+                                    <span key={i} className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">{tag}</span>
+                                  ))}
+                                </div>
+                              )}
+                              {c.bestResult && (
+                                <div className="mt-2 p-2 rounded bg-muted/50 border border-muted">
+                                  <div className="flex items-center gap-1 mb-0.5"><Star className="h-3 w-3 text-yellow-500" /><span className="text-[10px] font-medium">過去ベスト: {c.bestResult.score}%</span></div>
+                                  <p className="text-[10px] text-muted-foreground line-clamp-1">{c.bestResult.summary}</p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex gap-2 mt-3">
+                            <Button size="sm" className="flex-1" onClick={() => handleQuickMatch(c.friend.id, c.friend.name)} disabled={createSession.isPending}>
+                              <Play className="h-3 w-3 mr-1" />マッチング開始
+                            </Button>
+                            {c.bestResult?.sessionId && (
+                              <Link href={`/matching/${c.bestResult.sessionId}`}><Button size="sm" variant="outline"><ArrowRight className="h-3 w-3" /></Button></Link>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Session history */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                  <h3 className="text-sm font-medium">マッチング履歴</h3>
+                  {sortedSessions.length > 0 && <Badge variant="secondary" className="text-xs">{sortedSessions.length}件</Badge>}
+                </div>
+                {sessionsLoading ? (
+                  <div className="flex items-center justify-center h-32"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+                ) : sortedSessions.length > 0 ? (
+                  <div className="grid gap-3">
+                    {sortedSessions.map((session: any) => (
+                      <Card key={session.id} className="hover:border-primary/50 transition-colors">
+                        <CardContent className="p-4">
+                          <div className="flex items-center gap-4">
+                            {session.compatibilityScore != null ? (
+                              <ScoreCircle score={Math.round(session.compatibilityScore)} size="sm" />
+                            ) : (
+                              <div className="w-10 h-10 rounded-full border-2 border-muted flex items-center justify-center shrink-0">{getStatusIcon(session.status)}</div>
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="font-medium text-sm truncate">{session.theme}</p>
+                                {session.isNpcSession && <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">チュートリアル</Badge>}
+                              </div>
+                              <p className="text-xs text-muted-foreground">{session.twin1?.name || `Twin #${session.twin1Id}`} × {session.twin2?.name || `Twin #${session.twin2Id}`}</p>
+                              {session.resultSummary && <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{session.resultSummary}</p>}
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <div className="text-right hidden sm:block">
+                                <div className="flex items-center gap-1 justify-end">{getStatusIcon(session.status)}<span className="text-xs text-muted-foreground">{getStatusText(session.status)}</span></div>
+                                <span className="text-[10px] text-muted-foreground">{new Date(session.createdAt).toLocaleDateString("ja-JP", { month: "short", day: "numeric" })}</span>
+                              </div>
+                              <div className="flex gap-1">
+                                {session.status === "pending" && <Button size="sm" variant="outline" onClick={() => handleRunDialogue(session.id)} disabled={runDialogue.isPending}><Play className="h-3 w-3" /></Button>}
+                                <Link href={`/matching/${session.id}`}><Button size="sm" variant="outline">詳細</Button></Link>
+                              </div>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                ) : (
+                  <Card>
+                    <CardContent className="flex flex-col items-center justify-center py-12">
+                      <Users className="h-12 w-12 text-muted-foreground mb-3" />
+                      <h3 className="text-base font-medium mb-1">マッチング履歴がありません</h3>
+                      <p className="text-muted-foreground text-sm text-center">おすすめ候補からマッチングを始めましょう</p>
+                    </CardContent>
+                  </Card>
                 )}
-              </CardContent>
-            </Card>
-          )}
-        </div>
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
       </div>
     </DashboardLayout>
   );

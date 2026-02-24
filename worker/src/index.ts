@@ -2034,6 +2034,195 @@ ${dialogueHtml || "<p>対話がまだ行われていません</p>"}
 
         return { html };
       }),
+    // ---- Score-based candidate discovery (±20 trust score) ----
+    discoverCandidates: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const myTrust = await ctx.env.DB.prepare(`SELECT score FROM trust_scores WHERE userId=?`).bind(ctx.userId).first<any>();
+      const myScore = myTrust?.score ?? 0;
+      const myTwin = await getMyTwin(ctx.env.DB, ctx.userId);
+      const myTags: string[] = myTwin?.tags || [];
+
+      // Find users within ±20 trust score, excluding self and NPCs
+      const rows = await ctx.env.DB.prepare(
+        `SELECT u.id, u.name, u.friendCode, ts.score as trustScore
+         FROM users u
+         LEFT JOIN trust_scores ts ON ts.userId = u.id
+         WHERE u.id != ? AND u.isNpc = 0
+           AND ABS(COALESCE(ts.score, 0) - ?) <= 20
+         ORDER BY ABS(COALESCE(ts.score, 0) - ?) ASC
+         LIMIT 30`
+      ).bind(ctx.userId, myScore, myScore).all<any>();
+
+      const candidates = [];
+      for (const r of rows.results ?? []) {
+        // Check if already friends
+        const friendship = await ctx.env.DB.prepare(
+          `SELECT id FROM friendships WHERE ((userId=? AND friendId=?) OR (userId=? AND friendId=?)) AND status='accepted'`
+        ).bind(ctx.userId, r.id, r.id, ctx.userId).first<any>();
+
+        // Check existing matching request between the two users
+        const existingReq = await ctx.env.DB.prepare(
+          `SELECT id, status, senderUserId FROM matching_requests
+           WHERE ((senderUserId=? AND receiverUserId=?) OR (senderUserId=? AND receiverUserId=?))
+             AND status != 'rejected'
+           ORDER BY createdAt DESC LIMIT 1`
+        ).bind(ctx.userId, r.id, r.id, ctx.userId).first<any>();
+
+        const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(r.id).first<any>();
+        const profile = await ctx.env.DB.prepare(`SELECT displayName, bio, company, industry, position FROM user_profiles WHERE userId=?`).bind(r.id).first<any>();
+
+        const normalized = normalizeTwin(twin);
+        const twinTags: string[] = normalized?.tags || [];
+        const commonTags = myTags.filter((t: string) => twinTags.includes(t));
+
+        candidates.push({
+          userId: r.id,
+          name: profile?.displayName || r.name,
+          company: profile?.company || null,
+          industry: profile?.industry || null,
+          bio: profile?.bio || null,
+          trustScore: r.trustScore ?? 0,
+          scoreDiff: (r.trustScore ?? 0) - myScore,
+          isFriend: !!friendship,
+          twin: normalized ? { id: normalized.id, name: normalized.name, description: normalized.description, tags: twinTags } : null,
+          commonTags,
+          requestStatus: existingReq?.status ?? null,
+          requestDirection: existingReq ? (existingReq.senderUserId === ctx.userId ? "sent" : "received") : null,
+          requestId: existingReq?.id ?? null,
+        });
+      }
+
+      return candidates;
+    }),
+
+    sendRequest: protectedProcedure
+      .input(z.object({ receiverUserId: z.number(), message: z.string().optional() }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        if (input.receiverUserId === ctx.userId) throw new TRPCError({ code: "BAD_REQUEST", message: "自分にはリクエストを送れません" });
+
+        // Check target exists and is not NPC
+        const target = await ctx.env.DB.prepare(`SELECT id, isNpc FROM users WHERE id=?`).bind(input.receiverUserId).first<any>();
+        if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "ユーザーが見つかりません" });
+        if (target.isNpc === 1) throw new TRPCError({ code: "BAD_REQUEST", message: "NPCにはリクエストを送れません" });
+
+        // Check for existing pending request
+        const existing = await ctx.env.DB.prepare(
+          `SELECT id FROM matching_requests WHERE senderUserId=? AND receiverUserId=? AND status='pending'`
+        ).bind(ctx.userId, input.receiverUserId).first<any>();
+        if (existing) throw new TRPCError({ code: "CONFLICT", message: "すでにリクエストを送信済みです" });
+
+        const res = await ctx.env.DB.prepare(
+          `INSERT INTO matching_requests (senderUserId, receiverUserId, status, message) VALUES (?,?,'pending',?)`
+        ).bind(ctx.userId, input.receiverUserId, input.message || null).run();
+
+        await addTrustAction(ctx.env.DB, ctx.userId, "matching_request_sent", 2, "マッチングリクエスト送信");
+
+        return { id: Number(res.meta.last_row_id) };
+      }),
+
+    receivedRequests: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT mr.*, u.name as senderName, ts.score as senderTrustScore
+         FROM matching_requests mr
+         JOIN users u ON u.id = mr.senderUserId
+         LEFT JOIN trust_scores ts ON ts.userId = mr.senderUserId
+         WHERE mr.receiverUserId = ? AND mr.status = 'pending'
+         ORDER BY mr.createdAt DESC`
+      ).bind(ctx.userId).all<any>();
+
+      const results = [];
+      for (const r of rows.results ?? []) {
+        const profile = await ctx.env.DB.prepare(`SELECT displayName, bio, company, industry FROM user_profiles WHERE userId=?`).bind(r.senderUserId).first<any>();
+        const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(r.senderUserId).first<any>();
+        const normalized = normalizeTwin(twin);
+
+        const myTrust = await ctx.env.DB.prepare(`SELECT score FROM trust_scores WHERE userId=?`).bind(ctx.userId).first<any>();
+        results.push({
+          id: r.id,
+          senderUserId: r.senderUserId,
+          senderName: profile?.displayName || r.senderName,
+          senderCompany: profile?.company || null,
+          senderIndustry: profile?.industry || null,
+          senderBio: profile?.bio || null,
+          senderTrustScore: r.senderTrustScore ?? 0,
+          scoreDiff: (r.senderTrustScore ?? 0) - (myTrust?.score ?? 0),
+          message: r.message,
+          twin: normalized ? { name: normalized.name, description: normalized.description, tags: normalized.tags || [] } : null,
+          createdAt: r.createdAt,
+        });
+      }
+      return results;
+    }),
+
+    sentRequests: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT mr.*, u.name as receiverName, ts.score as receiverTrustScore
+         FROM matching_requests mr
+         JOIN users u ON u.id = mr.receiverUserId
+         LEFT JOIN trust_scores ts ON ts.userId = mr.receiverUserId
+         WHERE mr.senderUserId = ?
+         ORDER BY mr.createdAt DESC`
+      ).bind(ctx.userId).all<any>();
+
+      const results = [];
+      for (const r of rows.results ?? []) {
+        const profile = await ctx.env.DB.prepare(`SELECT displayName, company, industry FROM user_profiles WHERE userId=?`).bind(r.receiverUserId).first<any>();
+        results.push({
+          id: r.id,
+          receiverUserId: r.receiverUserId,
+          receiverName: profile?.displayName || r.receiverName,
+          receiverCompany: profile?.company || null,
+          receiverTrustScore: r.receiverTrustScore ?? 0,
+          status: r.status,
+          message: r.message,
+          createdAt: r.createdAt,
+        });
+      }
+      return results;
+    }),
+
+    acceptRequest: protectedProcedure
+      .input(z.object({ requestId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const req = await ctx.env.DB.prepare(
+          `SELECT * FROM matching_requests WHERE id=? AND receiverUserId=? AND status='pending'`
+        ).bind(input.requestId, ctx.userId).first<any>();
+        if (!req) throw new TRPCError({ code: "NOT_FOUND", message: "リクエストが見つかりません" });
+
+        await ctx.env.DB.prepare(
+          `UPDATE matching_requests SET status='accepted', updatedAt=datetime('now') WHERE id=?`
+        ).bind(input.requestId).run();
+
+        // Auto-create friendship if not already friends
+        const existingFriend = await ctx.env.DB.prepare(
+          `SELECT id FROM friendships WHERE ((userId=? AND friendId=?) OR (userId=? AND friendId=?)) AND status='accepted'`
+        ).bind(ctx.userId, req.senderUserId, req.senderUserId, ctx.userId).first<any>();
+        if (!existingFriend) {
+          await ctx.env.DB.prepare(
+            `INSERT INTO friendships (userId, friendId, status) VALUES (?,?,'accepted')`
+          ).bind(req.senderUserId, ctx.userId).run();
+        }
+
+        await addTrustAction(ctx.env.DB, ctx.userId, "matching_request_accepted", 3, "マッチングリクエスト承認");
+        await addTrustAction(ctx.env.DB, req.senderUserId, "matching_request_accepted", 3, "マッチングリクエストが承認されました");
+
+        return { success: true };
+      }),
+
+    rejectRequest: protectedProcedure
+      .input(z.object({ requestId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        await ctx.env.DB.prepare(
+          `UPDATE matching_requests SET status='rejected', updatedAt=datetime('now') WHERE id=? AND receiverUserId=?`
+        ).bind(input.requestId, ctx.userId).run();
+        return { success: true };
+      }),
+
     generatePresentation: protectedProcedure
       .input(z.object({ sessionId: z.number() }))
       .mutation(async () => ({ slideContent: { markdown: "", slideCount: 0 }, slideCount: 0 })),

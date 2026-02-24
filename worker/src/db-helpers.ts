@@ -483,6 +483,18 @@ CREATE TABLE IF NOT EXISTS trust_score_history (
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_trust_history_userId ON trust_score_history(userId);
+
+CREATE TABLE IF NOT EXISTS matching_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  senderUserId INTEGER NOT NULL,
+  receiverUserId INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  message TEXT,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+  updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_matching_req_sender ON matching_requests(senderUserId);
+CREATE INDEX IF NOT EXISTS idx_matching_req_receiver ON matching_requests(receiverUserId);
 `;
 
 // Migrations to run after schema creation (ALTER TABLE etc.)

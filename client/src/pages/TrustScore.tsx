@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
-import { Shield, TrendingUp, TrendingDown, Clock, MessageSquare, Users, UserCheck, Star, LogIn, Award } from "lucide-react";
+import { Shield, TrendingUp, TrendingDown, Clock, MessageSquare, Users, UserCheck, Star, LogIn, Award, UserPlus } from "lucide-react";
 import { Loader2 } from "lucide-react";
 
 const RANK_CONFIG = {
@@ -25,6 +25,8 @@ const ACTION_INFO = [
   { action: "profile_field_industry", label: "業種を設定", points: "+5", icon: UserCheck },
   { action: "onboarding_complete", label: "オンボーディング完了", points: "+10", icon: Award },
   { action: "matching_complete", label: "マッチング成功", points: "+5", icon: Users },
+  { action: "matching_request_sent", label: "マッチングリクエスト送信", points: "+2", icon: UserPlus },
+  { action: "matching_request_accepted", label: "マッチングリクエスト承認", points: "+3", icon: UserCheck },
 ];
 
 function getActionIcon(action: string) {
