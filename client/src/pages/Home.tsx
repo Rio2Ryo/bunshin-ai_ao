@@ -14,6 +14,9 @@ import {
   Sparkles,
   Globe,
   ChevronRight,
+  Brain,
+  Target,
+  TrendingUp,
 } from "lucide-react";
 
 export default function Home() {
@@ -71,11 +74,11 @@ export default function Home() {
       </header>
 
       {/* Hero Section */}
-      <section className="pt-28 pb-20 relative overflow-hidden">
+      <section className="pt-28 pb-16 relative overflow-hidden">
         {/* Background effects */}
         <div className="absolute inset-0 bg-grid opacity-10" />
-        <div className="absolute top-20 left-1/4 w-96 h-96 rounded-full bg-primary/8 blur-[100px]" />
-        <div className="absolute bottom-0 right-1/4 w-80 h-80 rounded-full bg-accent/8 blur-[100px]" />
+        <div className="absolute top-20 left-1/4 w-96 h-96 rounded-full bg-primary/8 blur-[100px] animate-pulse" style={{ animationDuration: "6s" }} />
+        <div className="absolute bottom-0 right-1/4 w-80 h-80 rounded-full bg-accent/8 blur-[100px] animate-pulse" style={{ animationDuration: "8s" }} />
 
         <div className="container relative">
           <div className="max-w-4xl mx-auto text-center">
@@ -119,8 +122,41 @@ export default function Home() {
             </div>
           </div>
 
+          {/* Hero Visual — Dashboard Preview Card */}
+          <div className="mt-16 max-w-4xl mx-auto">
+            <div className="relative rounded-2xl border border-border/50 bg-card/60 backdrop-blur-sm p-1 shadow-2xl shadow-primary/5">
+              {/* Gradient border glow */}
+              <div className="absolute -inset-px rounded-2xl bg-gradient-to-br from-primary/20 via-transparent to-accent/20 -z-10 blur-sm" />
+              <div className="rounded-xl bg-card/90 p-6 md:p-8">
+                {/* Mock header bar */}
+                <div className="flex items-center gap-2 mb-6">
+                  <div className="w-3 h-3 rounded-full bg-red-500/60" />
+                  <div className="w-3 h-3 rounded-full bg-yellow-500/60" />
+                  <div className="w-3 h-3 rounded-full bg-green-500/60" />
+                  <div className="ml-4 h-5 w-48 rounded bg-muted/50" />
+                </div>
+                {/* Mock dashboard content */}
+                <div className="grid grid-cols-3 gap-4 mb-6">
+                  <MockStatCard icon={<Brain className="h-5 w-5 text-cyan-400" />} label="分身AI" value="学習完了" color="border-cyan-500/30" />
+                  <MockStatCard icon={<Target className="h-5 w-5 text-violet-400" />} label="マッチング" value="相性 92%" color="border-violet-500/30" />
+                  <MockStatCard icon={<TrendingUp className="h-5 w-5 text-emerald-400" />} label="信頼スコア" value="ゴールド" color="border-emerald-500/30" />
+                </div>
+                {/* Mock chat preview */}
+                <div className="flex gap-3">
+                  <div className="w-8 h-8 rounded-full bg-primary/20 flex-shrink-0 flex items-center justify-center">
+                    <Bot className="h-4 w-4 text-primary" />
+                  </div>
+                  <div className="flex-1 rounded-xl bg-muted/30 border border-border/30 p-3">
+                    <div className="h-3 w-3/4 rounded bg-muted/60 mb-2" />
+                    <div className="h-3 w-1/2 rounded bg-muted/40" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Stats row */}
-          <div className="mt-20 max-w-3xl mx-auto">
+          <div className="mt-12 max-w-3xl mx-auto">
             <div className="grid grid-cols-3 gap-4">
               <StatPill icon={<Shield className="h-4 w-4" />} value="安全" label="エンドツーエンド暗号化" />
               <StatPill icon={<Globe className="h-4 w-4" />} value="5+" label="AI プロバイダー対応" />
@@ -129,6 +165,9 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {/* Divider */}
+      <div className="h-px bg-gradient-to-r from-transparent via-border to-transparent" />
 
       {/* Features Section */}
       <section id="features" className="py-24 relative">
@@ -190,9 +229,12 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Divider */}
+      <div className="h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+
       {/* How it Works Section */}
       <section className="py-24 relative overflow-hidden">
-        <div className="absolute top-1/2 left-0 w-72 h-72 rounded-full bg-primary/5 blur-[80px] -translate-y-1/2" />
+        <div className="absolute top-1/2 right-0 w-72 h-72 rounded-full bg-accent/5 blur-[80px] -translate-y-1/2" />
         <div className="container relative">
           <div className="text-center mb-16">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-muted/50 text-xs text-muted-foreground mb-4 uppercase tracking-wider">
@@ -203,41 +245,44 @@ export default function Home() {
               4つの簡単なステップで、分身AIを作成してビジネスマッチングを開始できます。
             </p>
           </div>
-          <div className="max-w-3xl mx-auto">
-            <div className="grid gap-0">
-              <StepCard
-                number={1}
-                title="プロフィールを設定"
-                description="あなたのスキル、経歴、ビジネス情報を入力します。"
-                isLast={false}
-              />
-              <StepCard
-                number={2}
-                title="分身AIを作成"
-                description="プロフィールを基に分身AIを作成。ドキュメントをアップロードして知識を追加できます。"
-                isLast={false}
-              />
-              <StepCard
-                number={3}
-                title="分身AIと対話"
-                description="作成した分身AIとチャットして、学習内容を確認・調整します。"
-                isLast={false}
-              />
-              <StepCard
-                number={4}
-                title="マッチング開始"
-                description="他のユーザーの分身AIと自動対話を開始。ビジネスマッチングの可能性を探ります。"
-                isLast={true}
-              />
-            </div>
+          {/* Desktop: 2x2 grid with numbered cards / Mobile: vertical list */}
+          <div className="max-w-4xl mx-auto grid md:grid-cols-2 gap-5">
+            <StepCard
+              number={1}
+              title="プロフィールを設定"
+              description="あなたのスキル、経歴、ビジネス情報を入力します。"
+              color="text-cyan-400 border-cyan-500/30 bg-cyan-500/10"
+            />
+            <StepCard
+              number={2}
+              title="分身AIを作成"
+              description="プロフィールを基に分身AIを作成。ドキュメントをアップロードして知識を追加できます。"
+              color="text-violet-400 border-violet-500/30 bg-violet-500/10"
+            />
+            <StepCard
+              number={3}
+              title="分身AIと対話"
+              description="作成した分身AIとチャットして、学習内容を確認・調整します。"
+              color="text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
+            />
+            <StepCard
+              number={4}
+              title="マッチング開始"
+              description="他のユーザーの分身AIと自動対話を開始。ビジネスマッチングの可能性を探ります。"
+              color="text-amber-400 border-amber-500/30 bg-amber-500/10"
+            />
           </div>
         </div>
       </section>
+
+      {/* Divider */}
+      <div className="h-px bg-gradient-to-r from-transparent via-border to-transparent" />
 
       {/* CTA Section */}
       <section className="py-24 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/5" />
         <div className="absolute top-0 right-1/3 w-64 h-64 rounded-full bg-primary/8 blur-[80px]" />
+        <div className="absolute bottom-0 left-1/4 w-48 h-48 rounded-full bg-accent/8 blur-[60px]" />
         <div className="container relative">
           <div className="max-w-2xl mx-auto text-center">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-primary/30 bg-primary/5 text-xs text-primary mb-6">
@@ -305,6 +350,28 @@ export default function Home() {
 
 /* ---------- Sub-components ---------- */
 
+function MockStatCard({
+  icon,
+  label,
+  value,
+  color,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  color: string;
+}) {
+  return (
+    <div className={`rounded-xl border ${color} bg-card/80 p-4`}>
+      <div className="flex items-center gap-2 mb-2">
+        {icon}
+        <span className="text-xs text-muted-foreground">{label}</span>
+      </div>
+      <div className="text-sm font-semibold">{value}</div>
+    </div>
+  );
+}
+
 function StatPill({
   icon,
   value,
@@ -340,7 +407,7 @@ function FeatureCard({
 }) {
   return (
     <div
-      className={`group relative p-6 rounded-2xl border border-border/50 bg-card/80 backdrop-blur-sm hover:border-primary/40 transition-all duration-300 hover:-translate-y-0.5`}
+      className="group relative p-6 rounded-2xl border border-border/50 bg-card/80 backdrop-blur-sm hover:border-primary/40 transition-all duration-300 hover:-translate-y-0.5"
     >
       <div className={`absolute inset-0 rounded-2xl bg-gradient-to-br ${gradient} opacity-0 group-hover:opacity-100 transition-opacity duration-300`} />
       <div className="relative">
@@ -358,27 +425,24 @@ function StepCard({
   number,
   title,
   description,
-  isLast,
+  color,
 }: {
   number: number;
   title: string;
   description: string;
-  isLast: boolean;
+  color: string;
 }) {
+  const [textColor, borderColor, bgColor] = color.split(" ");
   return (
-    <div className="flex gap-6 relative">
-      {/* Timeline connector */}
-      <div className="flex flex-col items-center">
-        <div className="relative z-10 flex-shrink-0 w-12 h-12 rounded-full bg-primary/15 border-2 border-primary/40 flex items-center justify-center">
-          <span className="text-lg font-bold text-primary">{number}</span>
+    <div className={`relative p-6 rounded-2xl border ${borderColor} bg-card/60 backdrop-blur-sm hover:bg-card/80 transition-colors`}>
+      <div className="flex items-start gap-4">
+        <div className={`flex-shrink-0 w-10 h-10 rounded-full ${bgColor} flex items-center justify-center`}>
+          <span className={`text-lg font-bold ${textColor}`}>{number}</span>
         </div>
-        {!isLast && (
-          <div className="w-px flex-1 bg-gradient-to-b from-primary/40 to-primary/10 min-h-8" />
-        )}
-      </div>
-      <div className={`pb-10 ${isLast ? "pb-0" : ""}`}>
-        <h3 className="text-lg font-semibold mb-1">{title}</h3>
-        <p className="text-muted-foreground leading-relaxed">{description}</p>
+        <div className="flex-1 min-w-0">
+          <h3 className="text-lg font-semibold mb-1">{title}</h3>
+          <p className="text-muted-foreground text-sm leading-relaxed">{description}</p>
+        </div>
       </div>
     </div>
   );
