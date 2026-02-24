@@ -14,10 +14,15 @@ const RANK_CONFIG = {
 } as const;
 
 const ACTION_INFO = [
-  { action: "register", label: "アカウント作成", points: "+5", icon: Star },
+  { action: "register", label: "アカウント作成", points: "+50", icon: Star },
   { action: "daily_login", label: "デイリーログイン", points: "+2/日", icon: LogIn },
+  { action: "login_streak_7", label: "7日連続ログイン", points: "+10", icon: Award },
   { action: "chat_conversation", label: "会話を継続（5メッセージごと）", points: "+2", icon: MessageSquare },
-  { action: "profile_complete", label: "プロフィール充実", points: "+10", icon: UserCheck },
+  { action: "profile_field_displayName", label: "表示名を設定", points: "+5", icon: UserCheck },
+  { action: "profile_field_bio", label: "自己紹介を設定", points: "+5", icon: UserCheck },
+  { action: "profile_field_company", label: "会社名を設定", points: "+5", icon: UserCheck },
+  { action: "profile_field_position", label: "役職を設定", points: "+5", icon: UserCheck },
+  { action: "profile_field_industry", label: "業種を設定", points: "+5", icon: UserCheck },
   { action: "onboarding_complete", label: "オンボーディング完了", points: "+10", icon: Award },
   { action: "matching_complete", label: "マッチング成功", points: "+5", icon: Users },
 ];

@@ -127,8 +127,8 @@ test.describe("NPC Auto-Friend on Registration", () => {
     const data = (await res.json()) as any;
     const trust = data.result.data.json;
 
-    expect(trust.score).toBeGreaterThanOrEqual(5); // +5 registration bonus
-    expect(trust.rank).toBe("bronze");
+    expect(trust.score).toBeGreaterThanOrEqual(50); // +50 registration bonus
+    expect(["silver", "gold"]).toContain(trust.rank);
   });
 
   test("trust score history shows registration action", async () => {
@@ -145,7 +145,7 @@ test.describe("NPC Auto-Friend on Registration", () => {
       (h: any) => h.action === "register"
     );
     expect(regAction).toBeTruthy();
-    expect(regAction.delta).toBe(5);
+    expect(regAction.delta).toBe(50);
   });
 
   test("auth.me includes trust score and tutorial flags", async () => {
@@ -155,8 +155,8 @@ test.describe("NPC Auto-Friend on Registration", () => {
     const data = (await res.json()) as any;
     const me = data.result.data.json;
 
-    expect(me.trustScore).toBeGreaterThanOrEqual(5);
-    expect(me.trustRank).toBe("bronze");
+    expect(me.trustScore).toBeGreaterThanOrEqual(50);
+    expect(["silver", "gold"]).toContain(me.trustRank);
     expect(me.onboardingCompleted).toBe(0);
     expect(me.tutorialCompleted).toBe(0);
   });

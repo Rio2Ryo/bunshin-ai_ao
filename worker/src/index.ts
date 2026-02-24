@@ -190,7 +190,7 @@ Step 5完了時に以下を出力:
         await ensureNpcFriends(ctx.env.DB, user.id);
 
         // Initialize trust score with registration bonus
-        await addTrustAction(ctx.env.DB, user.id, "register", 5, "アカウント作成ボーナス");
+        await addTrustAction(ctx.env.DB, user.id, "register", 50, "アカウント作成ボーナス");
 
         const token = await createSessionToken(user.id, ctx.env);
         return {
@@ -227,6 +227,20 @@ Step 5完了時に以下を出力:
         ).bind(ctx.user.id, today).first<any>();
         if (!todayLogin) {
           await addTrustAction(ctx.env.DB, ctx.user.id, "daily_login", 2, "デイリーログインボーナス");
+
+          // Check 7-day login streak bonus
+          const past7Days = await ctx.env.DB.prepare(
+            `SELECT DISTINCT date(createdAt) as d FROM trust_score_history WHERE userId=? AND action='daily_login' AND createdAt >= date('now', '-7 days') ORDER BY d`
+          ).bind(ctx.user.id).all<any>();
+          const streakDays = (past7Days.results?.length ?? 0);
+          if (streakDays >= 7) {
+            const alreadyStreaked = await ctx.env.DB.prepare(
+              `SELECT id FROM trust_score_history WHERE userId=? AND action='login_streak_7' AND createdAt >= date('now', '-7 days')`
+            ).bind(ctx.user.id).first<any>();
+            if (!alreadyStreaked) {
+              await addTrustAction(ctx.env.DB, ctx.user.id, "login_streak_7", 10, "7日連続ログインボーナス");
+            }
+          }
         }
 
         return { ...ctx.user, onboardingCompleted: row?.onboardingCompleted ?? 0, tutorialCompleted: row?.tutorialCompleted ?? 0, trustScore, trustRank };
@@ -291,14 +305,22 @@ Step 5完了時に以下を出力:
               input.position ?? null
             ).run();
         }
-        // Award trust points for first profile completion (check if fields have content)
-        const filledFields = [input.displayName, input.bio, input.company, input.position, input.industry, input.experience].filter(Boolean).length;
-        if (filledFields >= 3) {
-          const alreadyAwarded = await ctx.env.DB.prepare(
-            `SELECT id FROM trust_score_history WHERE userId=? AND action='profile_complete'`
-          ).bind(ctx.userId).first<any>();
-          if (!alreadyAwarded) {
-            await addTrustAction(ctx.env.DB, ctx.userId, "profile_complete", 10, "プロフィールを充実させました");
+        // Award trust points per profile field filled (+5 each, max +25)
+        const profileFields = [
+          { key: "displayName", value: input.displayName, action: "profile_field_displayName", label: "表示名" },
+          { key: "bio", value: input.bio, action: "profile_field_bio", label: "自己紹介" },
+          { key: "company", value: input.company, action: "profile_field_company", label: "会社名" },
+          { key: "position", value: input.position, action: "profile_field_position", label: "役職" },
+          { key: "industry", value: input.industry, action: "profile_field_industry", label: "業種" },
+        ];
+        for (const field of profileFields) {
+          if (field.value) {
+            const alreadyAwarded = await ctx.env.DB.prepare(
+              `SELECT id FROM trust_score_history WHERE userId=? AND action=?`
+            ).bind(ctx.userId, field.action).first<any>();
+            if (!alreadyAwarded) {
+              await addTrustAction(ctx.env.DB, ctx.userId, field.action, 5, `${field.label}を設定しました`);
+            }
           }
         }
         return { success: true };
