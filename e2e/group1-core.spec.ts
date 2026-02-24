@@ -643,7 +643,8 @@ test.describe("Twins Page (/twins)", () => {
 test.describe("Chat Page (/chat)", () => {
   test("loads without page crashes", async ({ page }) => {
     const crashes = trackPageCrashes(page);
-    await navigateAndWait(page, "/chat");
+    await page.goto("/chat", { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.waitForTimeout(3000);
     expect(crashes).toHaveLength(0);
   });
 

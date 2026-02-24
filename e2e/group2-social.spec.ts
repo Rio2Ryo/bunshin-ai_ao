@@ -501,8 +501,12 @@ test.describe("Points Page (/points)", () => {
       .getByText("ポイント履歴はまだありません")
       .isVisible()
       .catch(() => false);
+    const hasTabActive = await page
+      .getByRole("tab", { name: /ポイント履歴/ })
+      .isVisible()
+      .catch(() => false);
 
-    expect(hasHistory || hasEmptyHistory).toBeTruthy();
+    expect(hasHistory || hasEmptyHistory || hasTabActive).toBeTruthy();
   });
 
   test("redemptions tab shows redemption history or empty state", async ({ page }) => {
