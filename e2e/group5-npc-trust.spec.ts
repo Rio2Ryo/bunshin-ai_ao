@@ -362,7 +362,7 @@ test.describe("Matching Trust Score Integration", () => {
       .isVisible()
       .catch(() => false);
     const hasEmptyState = await page
-      .getByText("マッチングセッションがありません")
+      .getByText("マッチング履歴がありません")
       .isVisible()
       .catch(() => false);
     const hasHeading = await page
@@ -493,6 +493,7 @@ test.describe("Onboarding Flow", () => {
       "マッチング説明",
       "NPC紹介",
       "自己紹介",
+      "マッチング候補",
     ];
 
     let foundSteps = 0;

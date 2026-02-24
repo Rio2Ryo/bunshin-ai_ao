@@ -145,15 +145,16 @@ const appRouter = router({
 
         // Auto-create default Twin
         const twinName = `${input.name}の分身AI`;
-        const onboardingSystemPrompt = `あなたはオンボーディングガイドです。ユーザーの情報を会話で収集し、分身AIプロフィールを構築します。
+        const onboardingSystemPrompt = `あなたは「ガイド太郎」という分身AIサービスの案内キャラクターです。明るくフレンドリーな口調でユーザーの情報を会話で収集し、分身AIプロフィールを構築します。
 
-ステップ: 1.仕事・スキル → 2.経験・実績 → 3.趣味・興味 → 4.性格・価値観 → 5.まとめ確認
+ステップ: 1.名前・年齢 → 2.仕事・スキル → 3.趣味・興味 → 4.性格・価値観 → 5.まとめ確認
 
 ルール:
 - 各ステップ1-2問だけ聞いて次へ進む
 - 応答は200文字以内で短くフレンドリーに
 - ユーザーの回答が短くてもポジティブに受けて次へ
-- 考えすぎず直接応答する
+- 「ガイド太郎」として明るく丁寧に話す
+- ユーザーの名前を聞いたら、以降はその名前で呼びかける
 
 Step 5完了時に以下を出力:
 ---PROFILE_DATA---
@@ -172,14 +173,14 @@ Step 5完了時に以下を出力:
         const onboardingSessionId = Number(sessionRes.meta.last_row_id);
 
         // Insert welcome message
-        const welcomeMessage = `はじめまして！私はあなた専用の分身AI「${twinName}」です。
+        const welcomeMessage = `はじめまして！ガイド太郎です！あなたの「デジタル分身AI」を一緒に作りましょう！
 
-これからあなたの「デジタル分身」としてビジネスマッチングをお手伝いします。
+これから簡単な質問をしますので、気軽に答えてくださいね。案内花子さんも友達として追加されています。
 
-ガイド太郎さんと案内花子さんがすでに友達として追加されています。サービスの使い方はオンボーディング画面でご案内しますね！
+プロフィールが完成したら、マッチング候補をご紹介しますよ！
 
-まずはあなたのお仕事や得意なことを教えてください。
-例えば「マーケティング10年やってます」「デザインが得意です」など、なんでもOKです！`;
+まずはあなたのお名前と年齢を教えてください。
+例えば「田中太郎、30歳です」のように教えてもらえると嬉しいです！`;
 
         await ctx.env.DB.prepare(
           `INSERT INTO chat_messages (sessionId, role, content) VALUES (?, ?, ?)`
@@ -193,7 +194,7 @@ Step 5完了時に以下を出力:
 
         const token = await createSessionToken(user.id, ctx.env);
         return {
-          user: { id: user.id, name: user.name, email: user.email, role: user.role, plan: user.plan },
+          user: { id: user.id, name: user.name, email: user.email, role: user.role, plan: user.plan, onboardingCompleted: 0 },
           token,
           onboardingSessionId,
         };
@@ -1548,11 +1549,15 @@ ${isLastQuestion ? `
           const u2 = await ctx.env.DB.prepare(`SELECT isNpc FROM users WHERE id=?`).bind(twin2.userId).first<any>();
           if (u2?.isNpc === 1) isNpcSession = true;
         }
+        // Fetch compatibility score from matching_results
+        const resultRow = await ctx.env.DB.prepare(`SELECT compatibilityScore, summary FROM matching_results WHERE sessionId=?`).bind(session.id).first<any>();
         results.push({
           ...session,
           twin1: twin1 ?? { id: session.twin1Id, name: `Twin #${session.twin1Id}` },
           twin2: twin2 ?? { id: session.twin2Id, name: `Twin #${session.twin2Id}` },
           isNpcSession,
+          compatibilityScore: resultRow?.compatibilityScore ?? null,
+          resultSummary: resultRow?.summary ?? null,
         });
       }
       return results;
@@ -1594,6 +1599,78 @@ ${isLastQuestion ? `
         }
       }
       return results;
+    }),
+    suggestedCandidates: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const myTwin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!myTwin) return [];
+
+      const myTags: string[] = myTwin.tags || [];
+
+      // Get all friends with twins
+      const friendRows = await ctx.env.DB
+        .prepare(`SELECT f.*, u.id as fId, u.name as fName, u.isNpc as fIsNpc FROM friendships f JOIN users u ON u.id = CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END WHERE (f.userId=? OR f.friendId=?) AND f.status='accepted'`)
+        .bind(ctx.userId, ctx.userId, ctx.userId)
+        .all<any>();
+
+      const candidates = [];
+
+      for (const r of friendRows.results ?? []) {
+        const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(r.fId).first<any>();
+        if (!twin) continue;
+
+        const normalized = normalizeTwin(twin);
+        const twinTags: string[] = normalized?.tags || [];
+
+        // Best past matching result with this friend's twin
+        const bestResult = await ctx.env.DB.prepare(
+          `SELECT mr.compatibilityScore, mr.summary, ms.id as sessionId, ms.theme FROM matching_sessions ms JOIN matching_results mr ON mr.sessionId = ms.id WHERE ms.initiatorUserId=? AND (ms.twin1Id=? OR ms.twin2Id=?) AND ms.status='completed' ORDER BY mr.compatibilityScore DESC LIMIT 1`
+        ).bind(ctx.userId, twin.id, twin.id).first<any>();
+
+        // Count total matchings with this friend
+        const matchCount = await ctx.env.DB.prepare(
+          `SELECT COUNT(*) as cnt FROM matching_sessions WHERE initiatorUserId=? AND (twin1Id=? OR twin2Id=?)`
+        ).bind(ctx.userId, twin.id, twin.id).first<any>();
+
+        let score: number;
+        let scoreSource: string;
+
+        if (bestResult?.compatibilityScore != null) {
+          score = bestResult.compatibilityScore;
+          scoreSource = "actual";
+        } else {
+          // Heuristic score based on profile completeness and tag overlap
+          score = 50;
+          if (twin.description) score += 8;
+          if (twin.personality) score += 5;
+          if (twinTags.length > 0) score += Math.min(twinTags.length * 3, 12);
+          const overlap = myTags.filter((t: string) => twinTags.includes(t)).length;
+          score += Math.min(overlap * 5, 15);
+          if (r.fIsNpc === 1) score += 5;
+          if (twin.bigFiveTraits) score += 5;
+          score = Math.min(score, 95);
+          scoreSource = "estimated";
+        }
+
+        candidates.push({
+          friend: { id: r.fId, name: r.fName, isNpc: r.fIsNpc === 1 },
+          twin: { id: twin.id, name: twin.name, description: twin.description, personality: twin.personality, tags: twinTags },
+          score: Math.round(score),
+          scoreSource,
+          matchCount: matchCount?.cnt ?? 0,
+          bestResult: bestResult ? {
+            score: bestResult.compatibilityScore,
+            summary: bestResult.summary,
+            sessionId: bestResult.sessionId,
+            theme: bestResult.theme,
+          } : null,
+        });
+      }
+
+      // Sort by score descending
+      candidates.sort((a, b) => b.score - a.score);
+
+      return candidates;
     }),
     create: protectedProcedure
       .input(z.object({ friendId: z.number(), theme: z.string().min(1), turns: z.number().min(1).max(30).default(5) }))

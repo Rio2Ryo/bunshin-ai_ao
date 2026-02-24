@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
-import { Bot, Send, Loader2, SkipForward, ArrowRight, MessageSquare, Users, Shield, Sparkles, Zap, Target } from "lucide-react";
+import { Bot, Send, Loader2, SkipForward, ArrowRight, MessageSquare, Users, Shield, Sparkles, Zap, Target, UserPlus, CheckCircle, Play } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -13,6 +13,7 @@ const ONBOARDING_STEPS = [
   { label: "マッチング説明", icon: Target },
   { label: "NPC紹介", icon: MessageSquare },
   { label: "自己紹介", icon: Users },
+  { label: "マッチング候補", icon: UserPlus },
 ];
 
 export default function Onboarding() {
@@ -22,6 +23,8 @@ export default function Onboarding() {
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [step, setStep] = useState(0);
   const [completing, setCompleting] = useState(false);
+  const [showingCandidates, setShowingCandidates] = useState(false);
+  const [quickMatching, setQuickMatching] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const { data: me, isLoading: meLoading } = trpc.auth.me.useQuery();
@@ -36,10 +39,11 @@ export default function Onboarding() {
 
   const sendMessage = trpc.chat.sendMessage.useMutation();
   const completeMutation = trpc.onboarding.complete.useMutation();
+  const createMatching = trpc.matching.create.useMutation();
   const utils = trpc.useUtils();
 
   useEffect(() => {
-    if (meLoading) return;
+    if (meLoading || showingCandidates) return;
     if (!me) {
       navigate("/login");
       return;
@@ -47,7 +51,7 @@ export default function Onboarding() {
     if ((me as any).onboardingCompleted === 1) {
       navigate("/dashboard");
     }
-  }, [me, meLoading, navigate]);
+  }, [me, meLoading, navigate, showingCandidates]);
 
   useEffect(() => {
     const stored = sessionStorage.getItem("onboardingSessionId");
@@ -88,16 +92,18 @@ export default function Onboarding() {
         rawInput: data.rawInput || "",
       });
       sessionStorage.removeItem("onboardingSessionId");
-      await utils.auth.me.invalidate();
       toast.success("分身AIのプロフィールが完成しました！");
-      setTimeout(() => navigate("/dashboard"), 2000);
+      // Transition to matching candidates (step 5) instead of navigating away
+      setShowingCandidates(true);
+      setCompleting(false);
+      setStep(5);
       return true;
     } catch {
       toast.error("プロフィールの保存に失敗しました");
       setCompleting(false);
       return false;
     }
-  }, [completeMutation, navigate, utils]);
+  }, [completeMutation]);
 
   const handleSend = async () => {
     if (!message.trim() || !sessionId || sendMessage.isPending) return;
@@ -136,6 +142,34 @@ export default function Onboarding() {
     }
   };
 
+  const handleQuickMatch = async (friendId: number) => {
+    setQuickMatching(true);
+    try {
+      toast.info("分身AI同士の対話を開始しています...");
+      await createMatching.mutateAsync({
+        friendId,
+        theme: "ビジネスの可能性を探る初回マッチング",
+        turns: 3,
+      });
+      toast.success("マッチングが完了しました！結果を見てみましょう");
+      await utils.auth.me.invalidate();
+      navigate("/matching");
+    } catch (error: any) {
+      toast.error(error?.message || "マッチングの作成に失敗しました");
+      setQuickMatching(false);
+    }
+  };
+
+  const handleGoToDashboard = async () => {
+    await utils.auth.me.invalidate();
+    navigate("/dashboard");
+  };
+
+  const handleGoToMatching = async () => {
+    await utils.auth.me.invalidate();
+    navigate("/matching");
+  };
+
   const npcFriends = friends?.filter((f) => f.friend.isNpc) || [];
 
   if (meLoading) {
@@ -171,10 +205,12 @@ export default function Onboarding() {
             </div>
             <span className="font-semibold text-gradient">分身AI セットアップ</span>
           </div>
-          <Button variant="ghost" size="sm" onClick={handleSkip} className="text-muted-foreground">
-            <SkipForward className="h-4 w-4 mr-1" />
-            スキップ
-          </Button>
+          {step < 5 && (
+            <Button variant="ghost" size="sm" onClick={handleSkip} className="text-muted-foreground">
+              <SkipForward className="h-4 w-4 mr-1" />
+              スキップ
+            </Button>
+          )}
         </div>
       </header>
 
@@ -342,7 +378,7 @@ export default function Onboarding() {
             <h2 className="text-2xl font-bold">ガイドキャラクター紹介</h2>
             <p className="text-muted-foreground text-sm leading-relaxed">
               2人のガイドが友達として追加されました。<br />
-              チュートリアルとしてマッチング練習ができます。
+              次のステップではガイド太郎がプロフィール入力をサポートします。
             </p>
 
             <div className="grid gap-3 text-left">
@@ -370,20 +406,24 @@ export default function Onboarding() {
               )}
             </div>
 
-            <p className="text-xs text-muted-foreground">
-              チャットページにガイドからのメッセージが届いています。<br />
-              次のステップであなた自身の情報を入力しましょう。
-            </p>
+            <Card className="border-cyan-500/20 bg-cyan-500/5 text-left">
+              <CardContent className="p-4">
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  ガイド太郎があなたの<strong>名前・年齢・仕事・趣味</strong>などを聞きます。
+                  答えるだけで分身AIプロフィールが自動で完成します！
+                </p>
+              </CardContent>
+            </Card>
 
             <Button size="lg" onClick={() => setStep(4)} className="w-full max-w-xs mx-auto">
-              自己紹介へ進む
+              プロフィール入力へ進む
               <ArrowRight className="h-4 w-4 ml-2" />
             </Button>
           </div>
         </div>
       )}
 
-      {/* Step 4: Profile chat */}
+      {/* Step 4: Profile chat (guided by ガイド太郎) */}
       {step === 4 && (
         <>
           <div className="flex-1 overflow-hidden max-w-3xl mx-auto w-full">
@@ -410,8 +450,10 @@ export default function Onboarding() {
                   >
                     {msg.role === "assistant" && (
                       <div className="flex items-center gap-2 mb-1">
-                        <Bot className="h-3 w-3" />
-                        <span className="text-xs font-medium">分身AI</span>
+                        <div className="w-5 h-5 rounded-full bg-gradient-to-br from-cyan-500 to-blue-500 flex items-center justify-center shrink-0">
+                          <span className="text-white text-[10px] font-bold">太</span>
+                        </div>
+                        <span className="text-xs font-medium">ガイド太郎</span>
                       </div>
                     )}
                     <p className="text-sm whitespace-pre-wrap">
@@ -425,7 +467,7 @@ export default function Onboarding() {
                   <div className="bg-muted rounded-2xl px-4 py-3">
                     <div className="flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      <span className="text-sm text-muted-foreground">考え中...</span>
+                      <span className="text-sm text-muted-foreground">ガイド太郎が考え中...</span>
                     </div>
                   </div>
                 </div>
@@ -459,6 +501,94 @@ export default function Onboarding() {
             </div>
           </div>
         </>
+      )}
+
+      {/* Step 5: マッチング候補 (NEW) */}
+      {step === 5 && (
+        <div className="flex-1 flex items-center justify-center px-4 py-8">
+          <div className="max-w-lg w-full space-y-6 text-center">
+            <div className="relative mx-auto w-20 h-20">
+              <div className="w-20 h-20 rounded-full bg-green-500/20 flex items-center justify-center">
+                <CheckCircle className="h-10 w-10 text-green-500" />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h2 className="text-2xl font-bold">
+                プロフィール<span className="text-gradient">完成！</span>
+              </h2>
+              <p className="text-muted-foreground text-sm leading-relaxed">
+                分身AIの作成が完了しました！<br />
+                早速マッチング候補と対話を試してみましょう。
+              </p>
+            </div>
+
+            <div className="space-y-3 text-left">
+              <p className="font-medium text-sm flex items-center gap-2">
+                <UserPlus className="h-4 w-4 text-primary" />
+                マッチング候補
+              </p>
+              {npcFriends.map((f) => (
+                <Card key={f.friend.id} className="border-primary/20 hover:border-primary/40 transition-colors">
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-full bg-gradient-to-br from-cyan-500 to-purple-500 flex items-center justify-center shrink-0">
+                        <span className="text-white font-bold text-lg">{f.friend.name?.charAt(0)}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm">{f.friend.name}</p>
+                        <p className="text-xs text-muted-foreground line-clamp-2">
+                          {f.twin?.description || "ガイドキャラクター"}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => handleQuickMatch(f.friend.id)}
+                        disabled={quickMatching}
+                      >
+                        {quickMatching ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <>
+                            <Play className="h-3 w-3 mr-1" />
+                            マッチング
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+              {npcFriends.length === 0 && (
+                <Card className="border-muted">
+                  <CardContent className="p-4 text-center text-sm text-muted-foreground">
+                    マッチング候補を読み込み中...
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+
+            <Card className="border-muted bg-muted/30 text-left">
+              <CardContent className="p-4">
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  マッチングでは分身AI同士が自動で対話し、ビジネスの相性を分析します。
+                  まずはガイドキャラクターとの練習マッチングを試してみましょう！
+                </p>
+              </CardContent>
+            </Card>
+
+            <div className="space-y-3 pt-2">
+              <Button size="lg" onClick={handleGoToMatching} variant="outline" className="w-full max-w-xs mx-auto">
+                マッチングページへ
+                <ArrowRight className="h-4 w-4 ml-2" />
+              </Button>
+              <Button size="lg" onClick={handleGoToDashboard} variant="ghost" className="w-full max-w-xs mx-auto text-muted-foreground">
+                ダッシュボードへ進む
+                <ArrowRight className="h-4 w-4 ml-2" />
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
