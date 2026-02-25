@@ -36,6 +36,7 @@ const Growth = lazy(() => import("./pages/Growth"));
 const Cards = lazy(() => import("./pages/Cards"));
 const Onboarding = lazy(() => import("./pages/Onboarding"));
 const TrustScore = lazy(() => import("./pages/TrustScore"));
+const Intimacy = lazy(() => import("./pages/Intimacy"));
 
 function PageLoader() {
   return (
@@ -74,6 +75,7 @@ function Router() {
         <Route path="/growth" component={Growth} />
         <Route path="/cards" component={Cards} />
         <Route path="/trust" component={TrustScore} />
+        <Route path="/intimacy" component={Intimacy} />
         <Route path="/admin/ai-provider" component={AdminAIProvider} />
 
         <Route path="/404" component={NotFound} />
