@@ -124,14 +124,37 @@ export default function Onboarding() {
     }
   };
 
+  const handleManualComplete = async () => {
+    setCompleting(true);
+    try {
+      await completeMutation.mutateAsync({
+        description: "プロフィール設定中",
+        personality: "",
+        rawInput: messages.filter(m => m.role === "user").map(m => m.content).join("\n"),
+      });
+      sessionStorage.removeItem("onboardingSessionId");
+      toast.success("分身AIのプロフィールが完成しました！");
+      setShowingCandidates(true);
+      setCompleting(false);
+      setStep(5);
+    } catch {
+      toast.error("プロフィールの保存に失敗しました");
+      setCompleting(false);
+    }
+  };
+
   const handleSkip = async () => {
+    setCompleting(true);
     try {
       await completeMutation.mutateAsync({});
       sessionStorage.removeItem("onboardingSessionId");
-      await utils.auth.me.invalidate();
-      navigate("/dashboard");
+      toast.success("セットアップをスキップしました");
+      setShowingCandidates(true);
+      setCompleting(false);
+      setStep(5);
     } catch {
       toast.error("スキップに失敗しました");
+      setCompleting(false);
     }
   };
 
@@ -142,21 +165,29 @@ export default function Onboarding() {
     }
   };
 
+  const [matchProgress, setMatchProgress] = useState("");
+
   const handleQuickMatch = async (friendId: number) => {
     setQuickMatching(true);
+    setMatchProgress("分身AI同士の対話を準備中...");
+    const progressTimer = setTimeout(() => setMatchProgress("対話を生成中...（少々お待ちください）"), 8000);
+    const progressTimer2 = setTimeout(() => setMatchProgress("分析レポートを作成中..."), 25000);
+    const progressTimer3 = setTimeout(() => setMatchProgress("もう少しで完了します..."), 50000);
     try {
-      toast.info("分身AI同士の対話を開始しています...");
       await createMatching.mutateAsync({
         friendId,
         theme: "ビジネスの可能性を探る初回マッチング",
         turns: 3,
       });
-      toast.success("マッチングが完了しました！結果を見てみましょう");
+      clearTimeout(progressTimer); clearTimeout(progressTimer2); clearTimeout(progressTimer3);
+      toast.success("マッチングが完了しました！");
       await utils.auth.me.invalidate();
       navigate("/matching");
     } catch (error: any) {
+      clearTimeout(progressTimer); clearTimeout(progressTimer2); clearTimeout(progressTimer3);
       toast.error(error?.message || "マッチングの作成に失敗しました");
       setQuickMatching(false);
+      setMatchProgress("");
     }
   };
 
@@ -476,7 +507,19 @@ export default function Onboarding() {
           </div>
 
           <div className="border-t bg-background/95 backdrop-blur sticky bottom-0">
-            <div className="max-w-3xl mx-auto px-4 py-3">
+            <div className="max-w-3xl mx-auto px-4 py-3 space-y-2">
+              {messages.filter(m => m.role === "user").length >= 2 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleManualComplete}
+                  className="w-full text-xs text-muted-foreground"
+                  disabled={completeMutation.isPending}
+                >
+                  {completeMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <CheckCircle className="h-3 w-3 mr-1" />}
+                  ここまでの内容でプロフィールを完成する
+                </Button>
+              )}
               <div className="flex gap-2">
                 <Input
                   value={message}
@@ -504,7 +547,22 @@ export default function Onboarding() {
       )}
 
       {/* Step 5: マッチング候補 (NEW) */}
-      {step === 5 && (
+      {step === 5 && quickMatching && (
+        <div className="flex-1 flex flex-col items-center justify-center px-4 gap-4">
+          <div className="relative">
+            <div className="w-20 h-20 rounded-full bg-primary/20 flex items-center justify-center animate-pulse">
+              <Bot className="h-10 w-10 text-primary" />
+            </div>
+          </div>
+          <p className="text-lg font-medium">マッチング中...</p>
+          <p className="text-sm text-muted-foreground">{matchProgress}</p>
+          <p className="text-xs text-muted-foreground mt-4">分身AI同士が対話し、相性を分析しています</p>
+          <Button variant="ghost" size="sm" className="mt-8 text-muted-foreground" onClick={handleGoToDashboard}>
+            バックグラウンドで実行してダッシュボードへ
+          </Button>
+        </div>
+      )}
+      {step === 5 && !quickMatching && (
         <div className="flex-1 flex items-center justify-center px-4 py-8">
           <div className="max-w-lg w-full space-y-6 text-center">
             <div className="relative mx-auto w-20 h-20">

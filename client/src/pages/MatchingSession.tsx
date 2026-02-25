@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
 import { useParams, Link } from "wouter";
-import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, Users, Calendar, DollarSign, Target, Rocket, Share2, Link, ExternalLink } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, Users, Calendar, DollarSign, Target, Rocket, Share2, Link as LinkIcon, ExternalLink } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Streamdown } from "streamdown";
 import { toast } from "sonner";
@@ -159,7 +159,7 @@ export default function MatchingSession() {
                   Xで共有
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={handleCopyLink}>
-                  <Link className="h-4 w-4 mr-2" />
+                  <LinkIcon className="h-4 w-4 mr-2" />
                   リンクをコピー
                 </DropdownMenuItem>
               </DropdownMenuContent>

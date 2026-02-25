@@ -251,7 +251,7 @@ export default function Matching() {
         )}
 
         {/* Tabs */}
-        <Tabs defaultValue="discover" className="w-full">
+        <Tabs defaultValue={!tutorialDone && npcSessions.length > 0 ? "history" : "discover"} className="w-full">
           <TabsList className="w-full">
             <TabsTrigger value="discover" className="gap-1.5"><Search className="h-4 w-4" />おすすめ候補</TabsTrigger>
             <TabsTrigger value="received" className="gap-1.5">

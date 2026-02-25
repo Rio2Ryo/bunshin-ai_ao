@@ -8,7 +8,7 @@ import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import {
   Bot, MessageSquare, Users, FileText, UserPlus,
-  Clock, CheckCircle, Crown, Globe, ArrowRight, Shield
+  Clock, CheckCircle, Crown, Globe, ArrowRight, Shield, Sparkles
 } from "lucide-react";
 
 export default function Dashboard() {
@@ -23,6 +23,9 @@ export default function Dashboard() {
 
   const completedMatchings = matchingSessions?.filter(s => s.status === "completed").length || 0;
   const recentMatchings = matchingSessions?.slice(0, 3) || [];
+  const me = user as any;
+  const tutorialDone = me?.tutorialCompleted === 1;
+  const hasNpcSessions = matchingSessions?.some((s: any) => s.isNpcSession);
 
   // Determine action cards based on user state
   const actionCards: Array<{ title: string; description: string; href: string; icon: React.ElementType; primary?: boolean }> = [];
@@ -70,6 +73,42 @@ export default function Dashboard() {
             </Link>
           )}
         </div>
+
+        {/* First-time user guide */}
+        {!tutorialDone && myTwin && (
+          <Card className="border-primary/50 bg-primary/5">
+            <CardContent className="p-5">
+              <div className="flex items-start gap-4">
+                <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center shrink-0 mt-0.5">
+                  <Sparkles className="h-5 w-5 text-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm mb-1">次のステップ</p>
+                  <div className="space-y-2 text-sm text-muted-foreground">
+                    <div className="flex items-center gap-2">
+                      {hasNpcSessions ? <CheckCircle className="h-4 w-4 text-green-500 shrink-0" /> : <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30 shrink-0" />}
+                      <span className={hasNpcSessions ? "line-through" : ""}>ガイドキャラクターとの練習マッチング</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30 shrink-0" />
+                      <span>マッチング結果を確認してチュートリアル完了</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30 shrink-0" />
+                      <span>実ユーザーとのマッチングを開始</span>
+                    </div>
+                  </div>
+                  <Link href="/matching">
+                    <Button size="sm" className="mt-3 gap-1">
+                      マッチングページへ
+                      <ArrowRight className="h-3 w-3" />
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Twin Status Card (compact) */}
         {myTwin && (
