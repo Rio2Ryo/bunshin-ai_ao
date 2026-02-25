@@ -1,21 +1,17 @@
 import { useEffect } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { 
-  Trophy, 
-  Target, 
-  Zap, 
+import {
+  Trophy,
+  Target,
+  Zap,
   Star,
   CheckCircle2,
   Circle,
-  Repeat,
   Flame,
-  Calendar,
   MessageSquare,
   Users,
   Brain,
@@ -54,18 +50,6 @@ const categoryColors: Record<string, string> = {
   "特別": "bg-violet-500",
 };
 
-const difficultyBadge = (difficulty: string) => {
-  switch (difficulty) {
-    case "easy":
-      return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">簡単</Badge>;
-    case "medium":
-      return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">普通</Badge>;
-    case "hard":
-      return <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">難しい</Badge>;
-    default:
-      return <Badge variant="outline">{difficulty}</Badge>;
-  }
-};
 
 export default function Quests() {
   const { data: quests, isLoading } = trpc.points.getQuests.useQuery();
@@ -201,58 +185,40 @@ export default function Quests() {
             <TabsContent key={category.name} value={category.name} className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
                 {category.quests.map((quest) => (
-                  <Card 
-                    key={quest.actionType} 
-                    className={`relative overflow-hidden ${quest.isCompleted && !quest.isRepeatable ? 'bg-muted/50' : ''}`}
+                  <Card
+                    key={quest.id}
+                    className={`relative overflow-hidden ${quest.completed ? 'bg-muted/50' : ''}`}
                   >
                     {/* Category color bar */}
                     <div className={`absolute top-0 left-0 w-1 h-full ${categoryColors[category.name] ?? 'bg-gray-500'}`} />
-                    
+
                     <CardHeader className="pb-2">
                       <div className="flex items-start justify-between">
                         <div className="flex items-center gap-2">
-                          {quest.isCompleted && !quest.isRepeatable ? (
+                          {quest.completed ? (
                             <CheckCircle2 className="h-5 w-5 text-green-500" />
-                          ) : quest.completedCount > 0 ? (
-                            <CheckCircle2 className="h-5 w-5 text-blue-500" />
                           ) : (
                             <Circle className="h-5 w-5 text-muted-foreground" />
                           )}
                           <CardTitle className="text-base">{quest.name}</CardTitle>
                         </div>
-                        <div className="flex items-center gap-2">
-                          {quest.isRepeatable && (
-                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                              <Repeat className="h-3 w-3 mr-1" />
-                              繰り返し
-                            </Badge>
-                          )}
-                          {difficultyBadge(quest.difficulty)}
-                        </div>
                       </div>
                     </CardHeader>
                     <CardContent>
                       <p className="text-sm text-muted-foreground mb-3">{quest.description}</p>
-                      
+
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <Gift className="h-4 w-4 text-amber-500" />
                           <span className="font-bold text-amber-600">{quest.points} pt</span>
                         </div>
-                        
-                        {quest.completedCount > 0 && (
+
+                        {quest.completed && (
                           <div className="text-sm text-muted-foreground">
-                            {quest.isRepeatable ? (
-                              <span className="flex items-center gap-1">
-                                <CheckCircle2 className="h-4 w-4 text-green-500" />
-                                {quest.completedCount}回完了
-                              </span>
-                            ) : (
-                              <span className="flex items-center gap-1 text-green-600">
-                                <CheckCircle2 className="h-4 w-4" />
-                                達成済み
-                              </span>
-                            )}
+                            <span className="flex items-center gap-1 text-green-600">
+                              <CheckCircle2 className="h-4 w-4" />
+                              達成済み
+                            </span>
                           </div>
                         )}
                       </div>

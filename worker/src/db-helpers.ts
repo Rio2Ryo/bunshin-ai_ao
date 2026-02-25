@@ -339,8 +339,8 @@ CREATE TABLE IF NOT EXISTS point_settings (
 
 CREATE TABLE IF NOT EXISTS line_connections (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  userId INTEGER NOT NULL UNIQUE,
-  twinId INTEGER NOT NULL,
+  userId INTEGER,
+  twinId INTEGER,
   lineUserId TEXT NOT NULL UNIQUE,
   lineDisplayName TEXT,
   linePictureUrl TEXT,
@@ -518,6 +518,31 @@ ALTER TABLE users ADD COLUMN onboardingStep INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN tutorialCompleted INTEGER NOT NULL DEFAULT 0;
 `;
 
+// Separate migration for line_connections: make userId/twinId nullable
+const LINE_CONNECTIONS_MIGRATION = `
+CREATE TABLE IF NOT EXISTS line_connections_new (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER,
+  twinId INTEGER,
+  lineUserId TEXT NOT NULL UNIQUE,
+  lineDisplayName TEXT,
+  linePictureUrl TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  settings TEXT,
+  clawdbotAgentId TEXT,
+  clawdbotAgentCreatedAt TEXT,
+  totalMessages INTEGER NOT NULL DEFAULT 0,
+  lastMessageAt TEXT,
+  connectedAt TEXT,
+  disconnectedAt TEXT,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+  updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+INSERT OR IGNORE INTO line_connections_new SELECT * FROM line_connections;
+DROP TABLE IF EXISTS line_connections;
+ALTER TABLE line_connections_new RENAME TO line_connections;
+`;
+
 let schemaReady = false;
 
 /**
@@ -547,6 +572,22 @@ export async function ensureSchema(db: D1Database) {
       // Column already exists or migration already applied
     }
   }
+
+  // Migrate line_connections to allow nullable userId/twinId
+  try {
+    const hasNewTable = await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='line_connections_new'`).first<any>();
+    if (!hasNewTable) {
+      // Only run if not already migrated — check if userId is nullable
+      const tableInfo = await db.prepare(`PRAGMA table_info(line_connections)`).all<any>();
+      const userIdCol = (tableInfo.results || []).find((c: any) => c.name === "userId");
+      if (userIdCol && userIdCol.notnull === 1) {
+        const migStmts = splitStatements(LINE_CONNECTIONS_MIGRATION);
+        for (const s of migStmts) {
+          try { await db.prepare(s).run(); } catch { /* ignore */ }
+        }
+      }
+    }
+  } catch { /* migration already done or table doesn't exist yet */ }
 
   // Seed default redeemable products
   try {

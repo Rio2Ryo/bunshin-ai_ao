@@ -9,12 +9,15 @@ import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { Loader2, Save, Plus, X } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
+import { Loader2, Save, Plus, X, Eye, Shield } from "lucide-react";
 
 export default function Profile() {
   const { user } = useAuth();
   usePageMeta({ title: "プロフィール", description: "あなたのプロフィール情報を管理しましょう。スキル、経歴、自己紹介を設定できます。", path: "/profile" });
   const { data: profile, isLoading, isError } = trpc.profile.get.useQuery();
+  const { data: trustData } = trpc.trust.getScore.useQuery();
   const updateProfile = trpc.profile.update.useMutation();
 
   const [formData, setFormData] = useState({
@@ -110,6 +113,73 @@ export default function Profile() {
             あなたの情報を入力して、分身AIの基盤を作成しましょう。
           </p>
         </div>
+
+        {/* Completion & Preview */}
+        {(() => {
+          const fields = [
+            { filled: !!formData.displayName, label: "表示名" },
+            { filled: !!formData.bio, label: "自己紹介" },
+            { filled: !!formData.company, label: "会社名" },
+            { filled: !!formData.industry, label: "業種" },
+            { filled: !!formData.position, label: "役職" },
+            { filled: formData.skills.length > 0, label: "スキル" },
+            { filled: formData.expertise.length > 0, label: "専門分野" },
+            { filled: !!formData.experience, label: "経歴" },
+          ];
+          const filledCount = fields.filter(f => f.filled).length;
+          const pct = Math.round((filledCount / fields.length) * 100);
+          return (
+            <Card className={pct === 100 ? "border-green-500/50 bg-green-500/5" : ""}>
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Shield className="h-4 w-4 text-primary" />
+                    <span className="text-sm font-medium">プロフィール完成度</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-muted-foreground">信頼度: {trustData?.score ?? 0}pt</span>
+                    <span className="text-sm font-bold text-primary">{pct}%</span>
+                  </div>
+                </div>
+                <Progress value={pct} className="h-2 mb-2" />
+                {pct < 100 && (
+                  <div className="flex flex-wrap gap-1">
+                    {fields.filter(f => !f.filled).map(f => (
+                      <Badge key={f.label} variant="outline" className="text-[10px] text-muted-foreground">{f.label}</Badge>
+                    ))}
+                  </div>
+                )}
+                {pct === 100 && <p className="text-xs text-green-600">すべての項目が入力済みです</p>}
+              </CardContent>
+            </Card>
+          );
+        })()}
+
+        {/* Preview Card */}
+        {(formData.displayName || formData.bio) && (
+          <Card className="bg-muted/30">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Eye className="h-4 w-4" />
+                プレビュー（他のユーザーに見える情報）
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                <p className="font-medium">{formData.displayName || user?.name || "名前未設定"}</p>
+                {formData.company && <p className="text-sm text-muted-foreground">{formData.company}{formData.position ? ` / ${formData.position}` : ""}</p>}
+                {formData.industry && <p className="text-xs text-muted-foreground">{formData.industry}</p>}
+                {formData.bio && <p className="text-sm mt-2">{formData.bio.slice(0, 100)}{formData.bio.length > 100 ? "..." : ""}</p>}
+                {formData.skills.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {formData.skills.slice(0, 5).map(s => <Badge key={s} variant="secondary" className="text-xs">{s}</Badge>)}
+                    {formData.skills.length > 5 && <Badge variant="outline" className="text-xs">+{formData.skills.length - 5}</Badge>}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Basic Info */}

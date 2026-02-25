@@ -221,9 +221,9 @@ export default function LearnedPersonalityPage() {
     setEditedTraits({
       ...editedTraits,
       emotionalTriggers: {
-        positive: [],
-        negative: [],
         ...editedTraits.emotionalTriggers,
+        positive: editedTraits.emotionalTriggers?.positive ?? [],
+        negative: editedTraits.emotionalTriggers?.negative ?? [],
         [type]: items,
       },
     });

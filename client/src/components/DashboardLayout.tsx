@@ -36,6 +36,7 @@ const menuGroups: MenuGroup[] = [
     label: "メイン",
     items: [
       { icon: LayoutDashboard, label: "ダッシュボード", path: "/dashboard" },
+      { icon: User, label: "プロフィール", path: "/profile" },
       { icon: Shield, label: "信頼度", path: "/trust" },
       { icon: Bot, label: "分身AI", path: "/twins" },
       { icon: MessageSquare, label: "チャット", path: "/chat" },
@@ -69,7 +70,6 @@ const adminMenuItems: MenuItem[] = [
   { icon: Settings2, label: "AI API設定", path: "/ai-config" },
   { icon: Zap, label: "オーケストレーション", path: "/orchestration" },
   { icon: Link2, label: "Clawdbot連携", path: "/clawdbot" },
-  { icon: User, label: "プロフィール", path: "/profile" },
   { icon: Brain, label: "学習した人格", path: "/learned-personality" },
 ];
 
@@ -135,6 +135,8 @@ function DashboardLayoutContent({
   const activeMenuItem = menuItems.find(item => item.path === location);
   const isMobile = useIsMobile();
   const { data: trustData } = trpc.trust.getScore.useQuery();
+  const { data: receivedRequests } = trpc.matching.receivedRequests.useQuery();
+  const pendingRequestCount = receivedRequests?.length ?? 0;
 
   useEffect(() => {
     if (isCollapsed) {
@@ -216,12 +218,13 @@ function DashboardLayoutContent({
                   {group.items.map(item => {
                     const isActive = location === item.path || (item.path === "/chat" && location.startsWith("/chat/"));
                     const isTrustItem = item.path === "/trust";
+                    const isMatchingItem = item.path === "/matching";
                     return (
                       <SidebarMenuItem key={item.path}>
                         <SidebarMenuButton
                           isActive={isActive}
                           onClick={() => setLocation(item.path)}
-                          tooltip={isTrustItem && trustData ? `${item.label}: ${trustData.score}pt` : item.label}
+                          tooltip={isTrustItem && trustData ? `${item.label}: ${trustData.score}pt` : isMatchingItem && pendingRequestCount > 0 ? `${item.label} (${pendingRequestCount}件)` : item.label}
                           className={`h-10 transition-all font-normal`}
                         >
                           <item.icon
@@ -232,6 +235,14 @@ function DashboardLayoutContent({
                             <Badge variant="secondary" className="ml-auto text-[10px] px-1.5 py-0 h-5">
                               {trustData.score}
                             </Badge>
+                          )}
+                          {isMatchingItem && pendingRequestCount > 0 && !isCollapsed && (
+                            <Badge variant="destructive" className="ml-auto text-[10px] px-1.5 py-0 h-5">
+                              {pendingRequestCount}
+                            </Badge>
+                          )}
+                          {isMatchingItem && pendingRequestCount > 0 && isCollapsed && (
+                            <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-destructive" />
                           )}
                         </SidebarMenuButton>
                       </SidebarMenuItem>

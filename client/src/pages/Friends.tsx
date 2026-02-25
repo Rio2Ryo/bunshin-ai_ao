@@ -45,6 +45,7 @@ export default function Friends() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [friendCode, setFriendCode] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
   // ユーザーの友達コード
   const myFriendCode = friendCodeData?.friendCode || "";
@@ -284,8 +285,24 @@ export default function Friends() {
                 <Loader2 className="h-8 w-8 animate-spin" />
               </div>
             ) : friends && friends.length > 0 ? (
+              <>
+                {friends.length > 5 && (
+                  <div className="mb-4">
+                    <Input
+                      placeholder="友達を検索..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="max-w-sm"
+                    />
+                  </div>
+                )}
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {friends.map((friend) => {
+                {friends.filter(f => {
+                  if (!searchQuery.trim()) return true;
+                  const q = searchQuery.toLowerCase();
+                  return (f.friend.name || "").toLowerCase().includes(q) ||
+                         (f.twin?.name || "").toLowerCase().includes(q);
+                }).map((friend) => {
                   const compatibility = getCompatibility(friend.friend.id);
                   const hasCompatibility = compatibility && 'overallCompatibility' in compatibility;
                   
@@ -297,7 +314,10 @@ export default function Friends() {
                             <Users className="h-6 w-6 text-primary" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="font-medium truncate">{friend.friend.name || "名前未設定"}</p>
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium truncate">{friend.friend.name || "名前未設定"}</p>
+                              {friend.friend.isNpc && <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">NPC</Badge>}
+                            </div>
                             {friend.twin ? (
                               <div className="flex items-center gap-1 text-sm text-muted-foreground">
                                 <Bot className="h-3 w-3" />
@@ -371,6 +391,7 @@ export default function Friends() {
                   );
                 })}
               </div>
+              </>
             ) : (
               <Card>
                 <CardContent className="py-12 text-center">

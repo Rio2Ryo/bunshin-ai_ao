@@ -3,23 +3,27 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import {
   Bot, MessageSquare, Users, FileText, UserPlus,
-  Clock, CheckCircle, Crown, Globe, ArrowRight, Shield, Sparkles
+  Clock, CheckCircle, Crown, Globe, ArrowRight, Shield, Sparkles, Bell, Loader2
 } from "lucide-react";
 
 export default function Dashboard() {
   const { user } = useAuth();
   usePageMeta({ title: "ダッシュボード", description: "分身AIの管理、チャット、マッチングの概要を確認しましょう。", path: "/dashboard" });
-  const { data: myTwin } = trpc.myTwin.get.useQuery();
+  const { data: myTwin, isLoading: twinLoading } = trpc.myTwin.get.useQuery();
   const { data: friends } = trpc.friends.list.useQuery();
   const { data: chatSessions } = trpc.chat.sessions.useQuery();
   const { data: matchingSessions } = trpc.matching.sessions.useQuery();
   const { data: planInfo } = trpc.plan.getInfo.useQuery();
-  const { data: trustData } = trpc.trust.getScore.useQuery();
+  const { data: trustData, isLoading: trustLoading } = trpc.trust.getScore.useQuery();
+  const { data: receivedRequests } = trpc.matching.receivedRequests.useQuery();
+  const { data: profile } = trpc.profile.get.useQuery();
+  const pendingRequestCount = receivedRequests?.length ?? 0;
 
   const completedMatchings = matchingSessions?.filter(s => s.status === "completed").length || 0;
   const recentMatchings = matchingSessions?.slice(0, 3) || [];
@@ -48,6 +52,30 @@ export default function Dashboard() {
     actionCards.push(
       { title: "チャット", description: "分身AIと会話する", href: "/chat", icon: MessageSquare },
       { title: "マッチング", description: "新しいマッチングを作成", href: "/matching", icon: Users },
+    );
+  }
+
+  // Profile completion
+  const profileFields = [
+    { key: "displayName", label: "表示名", filled: !!profile?.displayName },
+    { key: "bio", label: "自己紹介", filled: !!profile?.bio },
+    { key: "company", label: "会社名", filled: !!profile?.company },
+    { key: "industry", label: "業種", filled: !!profile?.industry },
+    { key: "position", label: "役職", filled: !!profile?.position },
+    { key: "skills", label: "スキル", filled: !!(profile?.skills && profile.skills.length > 0) },
+    { key: "expertise", label: "専門分野", filled: !!(profile?.expertise && profile.expertise.length > 0) },
+    { key: "experience", label: "経歴", filled: !!profile?.experience },
+  ];
+  const filledCount = profileFields.filter(f => f.filled).length;
+  const completionPct = Math.round((filledCount / profileFields.length) * 100);
+
+  if (twinLoading && trustLoading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
     );
   }
 
@@ -110,6 +138,29 @@ export default function Dashboard() {
           </Card>
         )}
 
+        {/* Pending Requests Notification */}
+        {pendingRequestCount > 0 && (
+          <Card className="border-orange-500/50 bg-orange-500/5">
+            <CardContent className="p-5">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-full bg-orange-500/20 flex items-center justify-center shrink-0">
+                  <Bell className="h-5 w-5 text-orange-500" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm">マッチングリクエストが{pendingRequestCount}件届いています</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">リクエストを確認して承認しましょう</p>
+                </div>
+                <Link href="/matching">
+                  <Button size="sm" variant="outline" className="gap-1 shrink-0">
+                    確認する
+                    <ArrowRight className="h-3 w-3" />
+                  </Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Twin Status Card (compact) */}
         {myTwin && (
           <Card className="bg-muted/30">
@@ -158,6 +209,32 @@ export default function Dashboard() {
           ))}
         </div>
 
+        {/* Profile Completion */}
+        {profile && completionPct < 100 && (
+          <Card className="bg-muted/30">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium">プロフィール完成度</span>
+                <span className="text-sm font-bold text-primary">{completionPct}%</span>
+              </div>
+              <Progress value={completionPct} className="h-2 mb-3" />
+              <div className="flex flex-wrap gap-1.5">
+                {profileFields.filter(f => !f.filled).slice(0, 4).map(f => (
+                  <Badge key={f.key} variant="outline" className="text-xs text-muted-foreground">{f.label}</Badge>
+                ))}
+                {profileFields.filter(f => !f.filled).length > 4 && (
+                  <Badge variant="outline" className="text-xs text-muted-foreground">+{profileFields.filter(f => !f.filled).length - 4}</Badge>
+                )}
+              </div>
+              <Link href="/profile">
+                <Button variant="ghost" size="sm" className="mt-2 text-xs gap-1 p-0 h-auto">
+                  プロフィールを編集 <ArrowRight className="h-3 w-3" />
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Quick Stats */}
         <div className="grid gap-3 grid-cols-2 lg:grid-cols-5">
           <MiniStat icon={Shield} label="信頼度" value={`${trustData?.score ?? 0}pt`} href="/trust" />
@@ -166,6 +243,15 @@ export default function Dashboard() {
           <MiniStat icon={MessageSquare} label="チャット" value={`${chatSessions?.length || 0}件`} href="/chat" />
           <MiniStat icon={FileText} label="マッチング" value={`${completedMatchings}件完了`} href="/matching" />
         </div>
+
+        {/* Login Streak */}
+        {(me?.loginStreak ?? 0) > 1 && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/30 rounded-lg px-4 py-2">
+            <Sparkles className="h-4 w-4 text-amber-500" />
+            <span>{me.loginStreak}日連続ログイン中</span>
+            {me.loginStreak >= 7 && <Badge variant="default" className="text-[10px]">ストリーク</Badge>}
+          </div>
+        )}
 
         {/* Recent Matchings */}
         {recentMatchings.length > 0 && (
@@ -186,13 +272,7 @@ export default function Dashboard() {
             <CardContent className="pt-0">
               <div className="space-y-2">
                 {recentMatchings.map((session) => {
-                  let score = 0;
-                  try {
-                    const analysis = typeof session.analysisResult === 'string'
-                      ? JSON.parse(session.analysisResult)
-                      : session.analysisResult;
-                    score = analysis?.compatibilityScore || 0;
-                  } catch {}
+                  const score = (session as any).compatibilityScore || 0;
 
                   return (
                     <Link key={session.id} href={`/matching/${session.id}`}>

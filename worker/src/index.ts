@@ -29,6 +29,12 @@ type Env = {
   AZURE_FOUNDRY_API_KEY?: string;
   AZURE_FOUNDRY_RESOURCE?: string;
   STRIPE_SECRET_KEY?: string;
+  LINE_CHANNEL_SECRET?: string;
+  LINE_CHANNEL_ACCESS_TOKEN?: string;
+  CLAWDBOT_GATEWAY_URL?: string;
+  CLAWDBOT_AUTH_TOKEN?: string;
+  CLAWDBOT_AGENT_ID?: string;
+  LINE_DEBUG_MODE?: string;
 };
 
 type Context = {
@@ -243,7 +249,24 @@ Step 5完了時に以下を出力:
           }
         }
 
-        return { ...ctx.user, onboardingCompleted: row?.onboardingCompleted ?? 0, tutorialCompleted: row?.tutorialCompleted ?? 0, trustScore, trustRank };
+        // Compute login streak
+        const streakRows = await ctx.env.DB.prepare(
+          `SELECT DISTINCT date(createdAt) as d FROM trust_score_history WHERE userId=? AND action='daily_login' ORDER BY d DESC LIMIT 30`
+        ).bind(ctx.user.id).all<any>();
+        let loginStreak = 0;
+        const dates = (streakRows.results ?? []).map((r: any) => r.d);
+        for (let i = 0; i < dates.length; i++) {
+          const expected = new Date();
+          expected.setDate(expected.getDate() - i);
+          const expectedStr = expected.toISOString().slice(0, 10);
+          if (dates[i] === expectedStr) {
+            loginStreak++;
+          } else {
+            break;
+          }
+        }
+
+        return { ...ctx.user, onboardingCompleted: row?.onboardingCompleted ?? 0, tutorialCompleted: row?.tutorialCompleted ?? 0, trustScore, trustRank, loginStreak };
       }
       // Not logged in
       return null;
@@ -305,13 +328,16 @@ Step 5完了時に以下を出力:
               input.position ?? null
             ).run();
         }
-        // Award trust points per profile field filled (+5 each, max +25)
-        const profileFields = [
-          { key: "displayName", value: input.displayName, action: "profile_field_displayName", label: "表示名" },
-          { key: "bio", value: input.bio, action: "profile_field_bio", label: "自己紹介" },
-          { key: "company", value: input.company, action: "profile_field_company", label: "会社名" },
-          { key: "position", value: input.position, action: "profile_field_position", label: "役職" },
-          { key: "industry", value: input.industry, action: "profile_field_industry", label: "業種" },
+        // Award trust points per profile field filled (max ~20pts total)
+        const profileFields: { value: unknown; action: string; label: string; points: number }[] = [
+          { value: input.displayName, action: "profile_field_displayName", label: "表示名", points: 2 },
+          { value: input.bio, action: "profile_field_bio", label: "自己紹介", points: 3 },
+          { value: input.company, action: "profile_field_company", label: "会社名", points: 2 },
+          { value: input.industry, action: "profile_field_industry", label: "業種", points: 2 },
+          { value: input.position, action: "profile_field_position", label: "役職", points: 2 },
+          { value: input.skills?.length ? input.skills : null, action: "profile_field_skills", label: "スキル", points: 3 },
+          { value: input.expertise?.length ? input.expertise : null, action: "profile_field_expertise", label: "専門分野", points: 3 },
+          { value: input.experience, action: "profile_field_experience", label: "経験", points: 3 },
         ];
         for (const field of profileFields) {
           if (field.value) {
@@ -319,11 +345,31 @@ Step 5完了時に以下を出力:
               `SELECT id FROM trust_score_history WHERE userId=? AND action=?`
             ).bind(ctx.userId, field.action).first<any>();
             if (!alreadyAwarded) {
-              await addTrustAction(ctx.env.DB, ctx.userId, field.action, 5, `${field.label}を設定しました`);
+              await addTrustAction(ctx.env.DB, ctx.userId, field.action, field.points, `${field.label}を設定しました`);
             }
           }
         }
         return { success: true };
+      }),
+    getPublic: protectedProcedure
+      .input(z.object({ userId: z.number() }))
+      .query(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const profile = await ctx.env.DB.prepare(`SELECT displayName, bio, industry, company, position, skills, expertise FROM user_profiles WHERE userId=?`).bind(input.userId).first<any>();
+        if (!profile) return null;
+        const twin = await ctx.env.DB.prepare(`SELECT name, description, personality, tags FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.userId).first<any>();
+        const trust = await ctx.env.DB.prepare(`SELECT score FROM trust_scores WHERE userId=?`).bind(input.userId).first<any>();
+        return {
+          displayName: profile.displayName,
+          bio: profile.bio,
+          industry: profile.industry,
+          company: profile.company,
+          position: profile.position,
+          skills: parseJson<string[]>(profile.skills) ?? [],
+          expertise: parseJson<string[]>(profile.expertise) ?? [],
+          trustScore: trust?.score ?? 0,
+          twin: twin ? { name: twin.name, description: twin.description, tags: parseJson<string[]>(twin.tags) ?? [] } : null,
+        };
       }),
   }),
 
@@ -1437,17 +1483,23 @@ ${isLastQuestion ? `
   chat: router({
     sessions: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
-      const rows = await ctx.env.DB.prepare(`SELECT * FROM chat_sessions WHERE userId=? ORDER BY updatedAt DESC`).bind(ctx.userId).all<any>();
+      const rows = await ctx.env.DB.prepare(
+        `SELECT cs.*, (SELECT COUNT(*) FROM chat_messages cm WHERE cm.sessionId = cs.id) as messageCount
+         FROM chat_sessions cs WHERE cs.userId=? ORDER BY cs.updatedAt DESC LIMIT 50`
+      ).bind(ctx.userId).all<any>();
       return rows.results ?? [];
     }),
     getSession: protectedProcedure
-      .input(z.object({ id: z.number() }))
+      .input(z.object({ id: z.number(), limit: z.number().optional(), offset: z.number().optional() }))
       .query(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         const session = await ctx.env.DB.prepare(`SELECT * FROM chat_sessions WHERE id=? AND userId=?`).bind(input.id, ctx.userId).first<any>();
         if (!session) throw new TRPCError({ code: "NOT_FOUND" });
-        const msgs = await ctx.env.DB.prepare(`SELECT * FROM chat_messages WHERE sessionId=? ORDER BY createdAt ASC`).bind(input.id).all<any>();
-        return { session, messages: (msgs.results ?? []).map(m => ({ ...m, metadata: parseJson<any>(m.metadata) })) };
+        const msgLimit = input.limit ?? 100;
+        const msgOffset = input.offset ?? 0;
+        const msgs = await ctx.env.DB.prepare(`SELECT * FROM chat_messages WHERE sessionId=? ORDER BY createdAt ASC LIMIT ? OFFSET ?`).bind(input.id, msgLimit, msgOffset).all<any>();
+        const totalCount = (await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM chat_messages WHERE sessionId=?`).bind(input.id).first<any>())?.c ?? 0;
+        return { session, messages: (msgs.results ?? []).map(m => ({ ...m, metadata: parseJson<any>(m.metadata) })), totalMessages: totalCount };
       }),
     createSession: protectedProcedure
       .input(z.object({ title: z.string().optional() }))
@@ -1556,6 +1608,12 @@ ${isLastQuestion ? `
         const res = await ctx.env.DB.prepare(`INSERT INTO chat_messages (sessionId, role, content) VALUES (?,?,?)`).bind(input.sessionId, "assistant", response).run();
         await ctx.env.DB.prepare(`UPDATE chat_sessions SET updatedAt=datetime('now') WHERE id=?`).bind(input.sessionId).run();
 
+        // Auto-title: if session still has default title, set it from first user message
+        if (session.title === "New Chat" || session.title?.endsWith("とのチャット")) {
+          const autoTitle = input.content.slice(0, 30) + (input.content.length > 30 ? "..." : "");
+          await ctx.env.DB.prepare(`UPDATE chat_sessions SET title=? WHERE id=?`).bind(autoTitle, input.sessionId).run();
+        }
+
         // Award trust score for conversation (max 1 per 5 messages to avoid spam)
         const totalUserMsgs = (await ctx.env.DB.prepare(
           `SELECT COUNT(*) as c FROM chat_messages WHERE sessionId=? AND role='user'`
@@ -1566,39 +1624,61 @@ ${isLastQuestion ? `
 
         return { messageId: Number(res.meta.last_row_id), response };
       }),
+    deleteSession: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const session = await ctx.env.DB.prepare(`SELECT id FROM chat_sessions WHERE id=? AND userId=?`).bind(input.id, ctx.userId).first<any>();
+        if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
+        await ctx.env.DB.prepare(`DELETE FROM chat_messages WHERE sessionId=?`).bind(input.id).run();
+        await ctx.env.DB.prepare(`DELETE FROM chat_sessions WHERE id=? AND userId=?`).bind(input.id, ctx.userId).run();
+        return { success: true };
+      }),
+    renameSession: protectedProcedure
+      .input(z.object({ id: z.number(), title: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const session = await ctx.env.DB.prepare(`SELECT id FROM chat_sessions WHERE id=? AND userId=?`).bind(input.id, ctx.userId).first<any>();
+        if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
+        await ctx.env.DB.prepare(`UPDATE chat_sessions SET title=?, updatedAt=datetime('now') WHERE id=? AND userId=?`).bind(input.title, input.id, ctx.userId).run();
+        return { success: true };
+      }),
   }),
 
   // ============ Matching ============
   matching: router({
     sessions: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
-      const rows = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE initiatorUserId=? ORDER BY createdAt DESC`).bind(ctx.userId).all<any>();
-      const results = [];
-      for (const session of rows.results ?? []) {
-        const twin1 = await ctx.env.DB.prepare(`SELECT id, name, userId FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
-        const twin2 = await ctx.env.DB.prepare(`SELECT id, name, userId FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
-        // Check if either twin belongs to an NPC user
-        let isNpcSession = false;
-        if (twin1?.userId) {
-          const u1 = await ctx.env.DB.prepare(`SELECT isNpc FROM users WHERE id=?`).bind(twin1.userId).first<any>();
-          if (u1?.isNpc === 1) isNpcSession = true;
-        }
-        if (twin2?.userId) {
-          const u2 = await ctx.env.DB.prepare(`SELECT isNpc FROM users WHERE id=?`).bind(twin2.userId).first<any>();
-          if (u2?.isNpc === 1) isNpcSession = true;
-        }
-        // Fetch compatibility score from matching_results
-        const resultRow = await ctx.env.DB.prepare(`SELECT compatibilityScore, summary FROM matching_results WHERE sessionId=?`).bind(session.id).first<any>();
-        results.push({
-          ...session,
-          twin1: twin1 ?? { id: session.twin1Id, name: `Twin #${session.twin1Id}` },
-          twin2: twin2 ?? { id: session.twin2Id, name: `Twin #${session.twin2Id}` },
-          isNpcSession,
-          compatibilityScore: resultRow?.compatibilityScore ?? null,
-          resultSummary: resultRow?.summary ?? null,
-        });
-      }
-      return results;
+      const rows = await ctx.env.DB.prepare(
+        `SELECT ms.*,
+          t1.id as t1Id, t1.name as t1Name, t1.userId as t1UserId,
+          t2.id as t2Id, t2.name as t2Name, t2.userId as t2UserId,
+          u1.isNpc as u1IsNpc, u2.isNpc as u2IsNpc,
+          mr.compatibilityScore, mr.summary as resultSummary
+        FROM matching_sessions ms
+        LEFT JOIN digital_twins t1 ON t1.id = ms.twin1Id
+        LEFT JOIN digital_twins t2 ON t2.id = ms.twin2Id
+        LEFT JOIN users u1 ON u1.id = t1.userId
+        LEFT JOIN users u2 ON u2.id = t2.userId
+        LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+        WHERE ms.initiatorUserId = ?
+        ORDER BY ms.createdAt DESC`
+      ).bind(ctx.userId).all<any>();
+      return (rows.results ?? []).map((r: any) => ({
+        id: r.id,
+        initiatorUserId: r.initiatorUserId,
+        twin1Id: r.twin1Id,
+        twin2Id: r.twin2Id,
+        theme: r.theme,
+        status: r.status,
+        createdAt: r.createdAt,
+        completedAt: r.completedAt,
+        twin1: r.t1Id ? { id: r.t1Id, name: r.t1Name, userId: r.t1UserId } : { id: r.twin1Id, name: `Twin #${r.twin1Id}` },
+        twin2: r.t2Id ? { id: r.t2Id, name: r.t2Name, userId: r.t2UserId } : { id: r.twin2Id, name: `Twin #${r.twin2Id}` },
+        isNpcSession: r.u1IsNpc === 1 || r.u2IsNpc === 1,
+        compatibilityScore: r.compatibilityScore ?? null,
+        resultSummary: r.resultSummary ?? null,
+      }));
     }),
     getSession: protectedProcedure
       .input(z.object({ id: z.number() }))
@@ -1677,15 +1757,20 @@ ${isLastQuestion ? `
           score = bestResult.compatibilityScore;
           scoreSource = "actual";
         } else {
-          // Heuristic score based on profile completeness and tag overlap
-          score = 50;
-          if (twin.description) score += 8;
-          if (twin.personality) score += 5;
-          if (twinTags.length > 0) score += Math.min(twinTags.length * 3, 12);
-          const overlap = myTags.filter((t: string) => twinTags.includes(t)).length;
-          score += Math.min(overlap * 5, 15);
+          // Heuristic score: profile completeness + tag overlap + industry match
+          score = 45;
+          if (twin.description) score += 6;
+          if (twin.personality) score += 4;
+          if (twinTags.length > 0) score += Math.min(twinTags.length * 2, 8);
+          // Tag overlap (high weight — indicates real compatibility)
+          const overlap = myTags.filter((t: string) => twinTags.map((s: string) => s.toLowerCase()).includes(t.toLowerCase())).length;
+          score += Math.min(overlap * 7, 21);
+          // Industry match bonus
+          const friendProfile = await ctx.env.DB.prepare(`SELECT industry FROM user_profiles WHERE userId=?`).bind(r.fId).first<any>();
+          const myProfile = await ctx.env.DB.prepare(`SELECT industry FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+          if (friendProfile?.industry && myProfile?.industry && friendProfile.industry.toLowerCase() === myProfile.industry.toLowerCase()) score += 8;
           if (r.fIsNpc === 1) score += 5;
-          if (twin.bigFiveTraits) score += 5;
+          if (twin.bigFiveTraits) score += 3;
           score = Math.min(score, 95);
           scoreSource = "estimated";
         }
@@ -1745,10 +1830,14 @@ ${isLastQuestion ? `
           return { id: sessionId, dialogues: [] };
         }
 
+        // Fetch profiles for richer dialogue context
+        const myProfile = await ctx.env.DB.prepare(`SELECT company, industry, position, skills, expertise, bio FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+        const friendProfile = await ctx.env.DB.prepare(`SELECT company, industry, position, skills, expertise, bio FROM user_profiles WHERE userId=?`).bind(input.friendId).first<any>();
+
         // Generate real dialogue between twins
         const twins = [
-          { id: myTwin.id, name: myTwin.name, desc: myTwin.description || "", personality: myTwin.personality || "" },
-          { id: friendTwin.id, name: normalizeTwin(friendTwin)?.name || "Twin", desc: friendTwin.description || "", personality: friendTwin.personality || "" },
+          { id: myTwin.id, name: myTwin.name, desc: myTwin.description || "", personality: myTwin.personality || "", profile: myProfile },
+          { id: friendTwin.id, name: normalizeTwin(friendTwin)?.name || "Twin", desc: friendTwin.description || "", personality: friendTwin.personality || "", profile: friendProfile },
         ];
         const dialogueHistory: { speaker: string; content: string }[] = [];
         const turnsToRun = Math.min(input.turns, 10);
@@ -1758,7 +1847,16 @@ ${isLastQuestion ? `
           const speaker = twins[speakerIdx];
           const other = twins[1 - speakerIdx];
 
-          const systemPrompt = `あなたは「${speaker.name}」というデジタル分身AIです。${speaker.desc ? `説明: ${speaker.desc}。` : ""}${speaker.personality ? `性格: ${speaker.personality}。` : ""}
+          let profileContext = "";
+          if (speaker.profile) {
+            const p = speaker.profile;
+            if (p.company) profileContext += `所属: ${p.company}。`;
+            if (p.industry) profileContext += `業界: ${p.industry}。`;
+            if (p.position) profileContext += `役職: ${p.position}。`;
+            if (p.skills || p.expertise) profileContext += `得意分野: ${p.skills || p.expertise}。`;
+          }
+
+          const systemPrompt = `あなたは「${speaker.name}」というデジタル分身AIです。${speaker.desc ? `説明: ${speaker.desc}。` : ""}${speaker.personality ? `性格: ${speaker.personality}。` : ""}${profileContext}
 テーマ「${input.theme}」について「${other.name}」と建設的なビジネス対話をしています。
 相手の意見を尊重しつつ、自分の専門性や経験に基づいた具体的な提案や考えを述べてください。
 簡潔で具体的な発言（150〜300文字程度）をしてください。`;
@@ -1815,7 +1913,22 @@ ${isLastQuestion ? `
 
         // Run analysis after dialogue
         try {
+          // Build profile summaries for analysis context
+          const profileSummaries = twins.map(t => {
+            const parts = [t.name];
+            if (t.profile?.company) parts.push(`所属: ${t.profile.company}`);
+            if (t.profile?.industry) parts.push(`業界: ${t.profile.industry}`);
+            if (t.profile?.position) parts.push(`役職: ${t.profile.position}`);
+            if (t.profile?.skills || t.profile?.expertise) parts.push(`得意分野: ${t.profile.skills || t.profile.expertise}`);
+            if (t.desc) parts.push(`説明: ${t.desc}`);
+            return parts.join("、");
+          });
+
           const analysisPrompt = `以下は「${twins[0].name}」と「${twins[1].name}」のビジネスマッチング対話です。テーマ: ${input.theme}
+
+参加者情報:
+- ${profileSummaries[0]}
+- ${profileSummaries[1]}
 
 ${dialogueHistory.map(d => `${d.speaker}: ${d.content}`).join("\n\n")}
 
@@ -1921,7 +2034,7 @@ JSONのみ出力し、他の説明は不要です。`;
         const turns = input.turns ?? 5;
         const dialogues: any[] = [];
 
-        const apiConfig = await ctx.env.DB.prepare(`SELECT * FROM ai_api_configs WHERE userId=? AND isActive=1 ORDER BY id LIMIT 1`).bind(ctx.userId).first<any>();
+        const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
         for (let i = 0; i < turns; i++) {
           const turnNumber = startTurn + i;
           const isTwin1 = turnNumber % 2 === 1;
@@ -1931,12 +2044,14 @@ JSONのみ出力し、他の説明は不要です。`;
 
           let content = `${speakerName}として、「${session.theme}」について${isTwin1 ? "議論を始めます" : "応答します"}。`;
           try {
-            const msgs = [
-              { role: "system" as const, content: `あなたは「${speakerName}」です。性格: ${speaker.personality || "プロフェッショナル"}。テーマ「${session.theme}」について対話してください。` },
-              ...(context ? [{ role: "user" as const, content: `これまでの対話:\n${context}\n\n${speakerName}として次の発言をしてください。` }] : [{ role: "user" as const, content: `テーマ「${session.theme}」について最初の発言をしてください。` }]),
-            ];
-            const result = await invokeLLM(msgs, apiConfig, ctx.env);
-            if (result) content = result;
+            if (llmConfig) {
+              const msgs = [
+                { role: "system" as const, content: `あなたは「${speakerName}」です。性格: ${speaker.personality || "プロフェッショナル"}。テーマ「${session.theme}」について対話してください。` },
+                ...(context ? [{ role: "user" as const, content: `これまでの対話:\n${context}\n\n${speakerName}として次の発言をしてください。` }] : [{ role: "user" as const, content: `テーマ「${session.theme}」について最初の発言をしてください。` }]),
+              ];
+              const result = await invokeLLM(llmConfig, msgs, { maxTokens: 512, temperature: 0.8 });
+              if (result.content) content = result.content;
+            }
           } catch { /* use fallback */ }
 
           await ctx.env.DB.prepare(
@@ -1963,15 +2078,17 @@ JSONのみ出力し、他の説明は不要です。`;
         const twin2Name = twin2?.name || `Twin #${session.twin2Id}`;
         const transcript = dialogues.results.map((d: any) => `Turn ${d.turnNumber} (Twin ${d.speakerTwinId}): ${d.content}`).join("\n");
 
-        const apiConfig = await ctx.env.DB.prepare(`SELECT * FROM ai_api_configs WHERE userId=? AND isActive=1 ORDER BY id LIMIT 1`).bind(ctx.userId).first<any>();
+        const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
         const analysisPrompt = `以下のビジネスマッチング対話を分析してください。\nテーマ: ${session.theme}\n参加者: ${twin1Name} vs ${twin2Name}\n\n対話:\n${transcript}\n\n以下のJSON形式で出力してください:\n{"compatibilityScore":0-100,"summary":"","strengths":[""],"challenges":[""],"recommendations":[""],"scoreBreakdown":{"skillMatch":{"score":0,"reason":""},"valueAlignment":{"score":0,"reason":""},"communicationStyle":{"score":0,"reason":""},"businessGoalFit":{"score":0,"reason":""},"complementaryStrengths":{"score":0,"reason":""}}}`;
         let analysis: any = { compatibilityScore: 65, summary: "対話分析の結果、一定の協業可能性があります。", strengths: ["共通の関心分野がある"], challenges: ["具体的な連携方法の検討が必要"], recommendations: ["定期的な情報交換の場を設ける"] };
 
         try {
-          const result = await invokeLLM([{ role: "system", content: "あなたはビジネスマッチング分析の専門家です。JSON形式で回答してください。" }, { role: "user", content: analysisPrompt }], apiConfig, ctx.env);
-          if (result) {
-            const jsonMatch = result.match(/\{[\s\S]*\}/);
-            if (jsonMatch) analysis = JSON.parse(jsonMatch[0]);
+          if (llmConfig) {
+            const result = await invokeLLM(llmConfig, [{ role: "system", content: "あなたはビジネスマッチング分析の専門家です。JSON形式で回答してください。" }, { role: "user", content: analysisPrompt }], { maxTokens: 2048 });
+            if (result.content) {
+              const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+              if (jsonMatch) analysis = JSON.parse(jsonMatch[0]);
+            }
           }
         } catch { /* use fallback */ }
 
@@ -2098,56 +2215,77 @@ ${dialogueHtml || "<p>対話がまだ行われていません</p>"}
       const myTwin = await getMyTwin(ctx.env.DB, ctx.userId);
       const myTags: string[] = myTwin?.tags || [];
 
-      // Find users within ±20 trust score, excluding self and NPCs
+      // Bulk fetch friend IDs
+      const friendRows = await ctx.env.DB.prepare(
+        `SELECT CASE WHEN userId=? THEN friendId ELSE userId END as fId
+         FROM friendships WHERE (userId=? OR friendId=?) AND status='accepted'`
+      ).bind(ctx.userId, ctx.userId, ctx.userId).all<any>();
+      const friendIdSet = new Set((friendRows.results ?? []).map((r: any) => r.fId));
+
+      // Bulk fetch active matching requests
+      const reqRows = await ctx.env.DB.prepare(
+        `SELECT id, status, senderUserId, receiverUserId FROM matching_requests
+         WHERE (senderUserId=? OR receiverUserId=?) AND status != 'rejected'
+         ORDER BY createdAt DESC`
+      ).bind(ctx.userId, ctx.userId).all<any>();
+      const reqByUser = new Map<number, any>();
+      for (const r of reqRows.results ?? []) {
+        const otherId = r.senderUserId === ctx.userId ? r.receiverUserId : r.senderUserId;
+        if (!reqByUser.has(otherId)) reqByUser.set(otherId, r);
+      }
+
+      // Single enriched query with JOINs
       const rows = await ctx.env.DB.prepare(
-        `SELECT u.id, u.name, u.friendCode, ts.score as trustScore
+        `SELECT u.id, u.name, u.friendCode, ts.score as trustScore,
+          dt.id as twinId, dt.name as twinName, dt.description as twinDesc, dt.tags as twinTags,
+          up.displayName, up.bio, up.company, up.industry, up.position
          FROM users u
          LEFT JOIN trust_scores ts ON ts.userId = u.id
+         LEFT JOIN digital_twins dt ON dt.userId = u.id
+         LEFT JOIN user_profiles up ON up.userId = u.id
          WHERE u.id != ? AND u.isNpc = 0
            AND ABS(COALESCE(ts.score, 0) - ?) <= 20
          ORDER BY ABS(COALESCE(ts.score, 0) - ?) ASC
          LIMIT 30`
       ).bind(ctx.userId, myScore, myScore).all<any>();
 
-      const candidates = [];
-      for (const r of rows.results ?? []) {
-        // Check if already friends
-        const friendship = await ctx.env.DB.prepare(
-          `SELECT id FROM friendships WHERE ((userId=? AND friendId=?) OR (userId=? AND friendId=?)) AND status='accepted'`
-        ).bind(ctx.userId, r.id, r.id, ctx.userId).first<any>();
+      // Get my profile for industry matching
+      const myProfile = await ctx.env.DB.prepare(`SELECT industry FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
 
-        // Check existing matching request between the two users
-        const existingReq = await ctx.env.DB.prepare(
-          `SELECT id, status, senderUserId FROM matching_requests
-           WHERE ((senderUserId=? AND receiverUserId=?) OR (senderUserId=? AND receiverUserId=?))
-             AND status != 'rejected'
-           ORDER BY createdAt DESC LIMIT 1`
-        ).bind(ctx.userId, r.id, r.id, ctx.userId).first<any>();
+      const candidates = (rows.results ?? []).map((r: any) => {
+        const twinTags: string[] = parseJson<string[]>(r.twinTags) ?? [];
+        const commonTags = myTags.filter((t: string) => twinTags.map((s: string) => s.toLowerCase()).includes(t.toLowerCase()));
+        const req = reqByUser.get(r.id);
 
-        const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(r.id).first<any>();
-        const profile = await ctx.env.DB.prepare(`SELECT displayName, bio, company, industry, position FROM user_profiles WHERE userId=?`).bind(r.id).first<any>();
+        // Compute relevance score for sorting
+        let relevance = 0;
+        relevance += commonTags.length * 10;  // tag overlap is strongest signal
+        if (r.industry && myProfile?.industry && r.industry.toLowerCase() === myProfile.industry.toLowerCase()) relevance += 15;
+        if (r.twinId) relevance += 5;  // has a twin
+        if (r.bio) relevance += 3;
+        if (r.company) relevance += 2;
+        relevance -= Math.abs((r.trustScore ?? 0) - myScore);  // closer trust score = better
 
-        const normalized = normalizeTwin(twin);
-        const twinTags: string[] = normalized?.tags || [];
-        const commonTags = myTags.filter((t: string) => twinTags.includes(t));
-
-        candidates.push({
+        return {
           userId: r.id,
-          name: profile?.displayName || r.name,
-          company: profile?.company || null,
-          industry: profile?.industry || null,
-          bio: profile?.bio || null,
+          name: r.displayName || r.name,
+          company: r.company || null,
+          industry: r.industry || null,
+          bio: r.bio || null,
           trustScore: r.trustScore ?? 0,
           scoreDiff: (r.trustScore ?? 0) - myScore,
-          isFriend: !!friendship,
-          twin: normalized ? { id: normalized.id, name: normalized.name, description: normalized.description, tags: twinTags } : null,
+          isFriend: friendIdSet.has(r.id),
+          twin: r.twinId ? { id: r.twinId, name: r.twinName, description: r.twinDesc, tags: twinTags } : null,
           commonTags,
-          requestStatus: existingReq?.status ?? null,
-          requestDirection: existingReq ? (existingReq.senderUserId === ctx.userId ? "sent" : "received") : null,
-          requestId: existingReq?.id ?? null,
-        });
-      }
+          requestStatus: req?.status ?? null,
+          requestDirection: req ? (req.senderUserId === ctx.userId ? "sent" : "received") : null,
+          requestId: req?.id ?? null,
+          relevance,
+        };
+      });
 
+      // Sort by relevance (best matches first)
+      candidates.sort((a, b) => b.relevance - a.relevance);
       return candidates;
     }),
 
@@ -2179,65 +2317,62 @@ ${dialogueHtml || "<p>対話がまだ行われていません</p>"}
 
     receivedRequests: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
+      const myTrust = await ctx.env.DB.prepare(`SELECT score FROM trust_scores WHERE userId=?`).bind(ctx.userId).first<any>();
+      const myScore = myTrust?.score ?? 0;
+
       const rows = await ctx.env.DB.prepare(
-        `SELECT mr.*, u.name as senderName, ts.score as senderTrustScore
+        `SELECT mr.id, mr.senderUserId, mr.message, mr.createdAt,
+          u.name as senderName, ts.score as senderTrustScore,
+          up.displayName, up.bio, up.company, up.industry,
+          dt.name as twinName, dt.description as twinDesc, dt.tags as twinTags
          FROM matching_requests mr
          JOIN users u ON u.id = mr.senderUserId
          LEFT JOIN trust_scores ts ON ts.userId = mr.senderUserId
+         LEFT JOIN user_profiles up ON up.userId = mr.senderUserId
+         LEFT JOIN digital_twins dt ON dt.userId = mr.senderUserId
          WHERE mr.receiverUserId = ? AND mr.status = 'pending'
          ORDER BY mr.createdAt DESC`
       ).bind(ctx.userId).all<any>();
 
-      const results = [];
-      for (const r of rows.results ?? []) {
-        const profile = await ctx.env.DB.prepare(`SELECT displayName, bio, company, industry FROM user_profiles WHERE userId=?`).bind(r.senderUserId).first<any>();
-        const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(r.senderUserId).first<any>();
-        const normalized = normalizeTwin(twin);
-
-        const myTrust = await ctx.env.DB.prepare(`SELECT score FROM trust_scores WHERE userId=?`).bind(ctx.userId).first<any>();
-        results.push({
-          id: r.id,
-          senderUserId: r.senderUserId,
-          senderName: profile?.displayName || r.senderName,
-          senderCompany: profile?.company || null,
-          senderIndustry: profile?.industry || null,
-          senderBio: profile?.bio || null,
-          senderTrustScore: r.senderTrustScore ?? 0,
-          scoreDiff: (r.senderTrustScore ?? 0) - (myTrust?.score ?? 0),
-          message: r.message,
-          twin: normalized ? { name: normalized.name, description: normalized.description, tags: normalized.tags || [] } : null,
-          createdAt: r.createdAt,
-        });
-      }
-      return results;
+      return (rows.results ?? []).map((r: any) => ({
+        id: r.id,
+        senderUserId: r.senderUserId,
+        senderName: r.displayName || r.senderName,
+        senderCompany: r.company || null,
+        senderIndustry: r.industry || null,
+        senderBio: r.bio || null,
+        senderTrustScore: r.senderTrustScore ?? 0,
+        scoreDiff: (r.senderTrustScore ?? 0) - myScore,
+        message: r.message,
+        twin: r.twinName ? { name: r.twinName, description: r.twinDesc, tags: parseJson<string[]>(r.twinTags) ?? [] } : null,
+        createdAt: r.createdAt,
+      }));
     }),
 
     sentRequests: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB.prepare(
-        `SELECT mr.*, u.name as receiverName, ts.score as receiverTrustScore
+        `SELECT mr.id, mr.receiverUserId, mr.status, mr.message, mr.createdAt,
+          u.name as receiverName, ts.score as receiverTrustScore,
+          up.displayName, up.company
          FROM matching_requests mr
          JOIN users u ON u.id = mr.receiverUserId
          LEFT JOIN trust_scores ts ON ts.userId = mr.receiverUserId
+         LEFT JOIN user_profiles up ON up.userId = mr.receiverUserId
          WHERE mr.senderUserId = ?
          ORDER BY mr.createdAt DESC`
       ).bind(ctx.userId).all<any>();
 
-      const results = [];
-      for (const r of rows.results ?? []) {
-        const profile = await ctx.env.DB.prepare(`SELECT displayName, company, industry FROM user_profiles WHERE userId=?`).bind(r.receiverUserId).first<any>();
-        results.push({
-          id: r.id,
-          receiverUserId: r.receiverUserId,
-          receiverName: profile?.displayName || r.receiverName,
-          receiverCompany: profile?.company || null,
-          receiverTrustScore: r.receiverTrustScore ?? 0,
-          status: r.status,
-          message: r.message,
-          createdAt: r.createdAt,
-        });
-      }
-      return results;
+      return (rows.results ?? []).map((r: any) => ({
+        id: r.id,
+        receiverUserId: r.receiverUserId,
+        receiverName: r.displayName || r.receiverName,
+        receiverCompany: r.company || null,
+        receiverTrustScore: r.receiverTrustScore ?? 0,
+        status: r.status,
+        message: r.message,
+        createdAt: r.createdAt,
+      }));
     }),
 
     acceptRequest: protectedProcedure
@@ -2795,7 +2930,7 @@ ${dialogueHtml || "<p>対話がまだ行われていません</p>"}
             const obj = await r2.get(key);
             if (obj) {
               const buf = await obj.arrayBuffer();
-              imageBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+              imageBase64 = btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(buf))));
               imageMimeType = obj.httpMetadata?.contentType || "image/jpeg";
             }
           }
@@ -3595,12 +3730,61 @@ JSON形式で出力:
           // Clear onboarding system prompt and set a normal one
           sets.push("systemPrompt=?");
           binds.push(null);
+
+          // Auto-generate tags from description + personality keywords
+          if (input.description || input.personality) {
+            const tagSource = `${input.description || ""} ${input.personality || ""}`;
+            const tagWords = tagSource
+              .replace(/[、。！？\s,.\n]/g, " ")
+              .split(" ")
+              .map(w => w.trim())
+              .filter(w => w.length >= 2 && w.length <= 20)
+              .filter((w, i, arr) => arr.indexOf(w) === i)
+              .slice(0, 5);
+            if (tagWords.length > 0) {
+              sets.push("tags=?");
+              binds.push(toJson(tagWords));
+            }
+          }
+
           if (sets.length > 0) {
             sets.push("updatedAt=datetime('now')");
             binds.push(twin.id);
             await ctx.env.DB.prepare(`UPDATE digital_twins SET ${sets.join(",")} WHERE id=?`).bind(...binds).run();
           }
         }
+
+        // Auto-populate user_profiles from onboarding data
+        const user = await ctx.env.DB.prepare(`SELECT name FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+        const displayName = user?.name || null;
+        const bio = input.description || null;
+        // Parse rawInput for company/industry keywords
+        let company: string | null = null;
+        let industry: string | null = null;
+        let position: string | null = null;
+        if (input.rawInput) {
+          const raw = input.rawInput;
+          // Try to extract company (会社/企業/所属)
+          const companyMatch = raw.match(/(?:会社|企業|所属|勤務先)[はにで：:]\s*(.+?)(?:[。、\n]|$)/);
+          if (companyMatch) company = companyMatch[1].trim().slice(0, 100);
+          // Try to extract industry (業界/業種/分野)
+          const industryMatch = raw.match(/(?:業界|業種|分野)[はにで：:]\s*(.+?)(?:[。、\n]|$)/);
+          if (industryMatch) industry = industryMatch[1].trim().slice(0, 100);
+          // Try to extract position (役職/職種/ポジション)
+          const positionMatch = raw.match(/(?:役職|職種|ポジション|職業)[はにで：:]\s*(.+?)(?:[。、\n]|$)/);
+          if (positionMatch) position = positionMatch[1].trim().slice(0, 100);
+        }
+        const existingProfile = await ctx.env.DB.prepare(`SELECT id FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+        if (existingProfile) {
+          await ctx.env.DB.prepare(
+            `UPDATE user_profiles SET displayName=COALESCE(?,displayName), bio=COALESCE(?,bio), company=COALESCE(?,company), industry=COALESCE(?,industry), position=COALESCE(?,position), updatedAt=datetime('now') WHERE userId=?`
+          ).bind(displayName, bio, company, industry, position, ctx.userId).run();
+        } else {
+          await ctx.env.DB.prepare(
+            `INSERT INTO user_profiles (userId, displayName, bio, company, industry, position) VALUES (?,?,?,?,?,?)`
+          ).bind(ctx.userId, displayName, bio, company, industry, position).run();
+        }
+
         // Award trust score for completing onboarding
         await addTrustAction(ctx.env.DB, ctx.userId, "onboarding_complete", 10, "オンボーディングを完了しました");
         return { success: true };
@@ -3890,6 +4074,287 @@ api.post("/api/stripe/webhook", async (c) => {
   }
 
   return c.json({ received: true });
+});
+
+// ============ LINE Webhook ============
+
+/** Verify LINE signature using HMAC-SHA256 */
+async function verifyLineSignature(body: string, signature: string, channelSecret: string): Promise<boolean> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", enc.encode(channelSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(body));
+  const expected = btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(sig))));
+  return expected === signature;
+}
+
+/** Reply to LINE via Messaging API */
+async function replyToLine(replyToken: string, messages: any[], accessToken: string) {
+  await fetch("https://api.line.me/v2/bot/message/reply", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ replyToken, messages }),
+  });
+}
+
+/** Send message to Clawdbot gateway (DB settings > ENV fallback) */
+async function sendToClawdbotGateway(
+  messages: { role: string; content: string }[],
+  opts: { gatewayUrl: string; authToken: string; agentId?: string; sessionKey?: string }
+): Promise<{ success: boolean; response?: string; model?: string; error?: string }> {
+  try {
+    const res = await fetch(`${opts.gatewayUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${opts.authToken}`,
+        "x-clawdbot-agent-id": opts.agentId || "main",
+        "ngrok-skip-browser-warning": "true",
+        ...(opts.sessionKey ? { "x-clawdbot-session-key": opts.sessionKey } : {}),
+      },
+      body: JSON.stringify({ model: "clawdbot", messages, stream: false }),
+    });
+    if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
+    const data = await res.json() as any;
+    return { success: true, response: data.choices?.[0]?.message?.content || "", model: data.model || "clawdbot" };
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+}
+
+/** Detect image generation requests in Japanese/English */
+function detectImageRequest(msg: string): boolean {
+  return /(画像|絵|イラスト|写真|アート)を?(作って|描いて|生成して|作成して|見せて)/i.test(msg)
+    || /(generate|create|draw|make).*(image|picture|illustration|art|photo)/i.test(msg);
+}
+
+/** Parse Clawdbot response: extract text and image URLs */
+function parseClawdbotResp(raw: string): { text: string; images: string[] } {
+  const images: string[] = [];
+  // Extract markdown images: ![alt](url)
+  const imgRegex = /!\[.*?\]\((https?:\/\/[^\s)]+)\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = imgRegex.exec(raw)) !== null) images.push(m[1]);
+  // Remove markdown image syntax from text
+  const text = raw.replace(/!\[.*?\]\(https?:\/\/[^\s)]+\)/g, "").replace(/\n{3,}/g, "\n\n").trim();
+  return { text, images };
+}
+
+api.post("/api/line/webhook", async (c) => {
+  const env = c.env as Env;
+  const channelSecret = env.LINE_CHANNEL_SECRET;
+  const accessToken = env.LINE_CHANNEL_ACCESS_TOKEN;
+  if (!channelSecret || !accessToken) return c.json({ error: "LINE not configured" }, 500);
+
+  const body = await c.req.text();
+
+  // Verify signature
+  const sig = c.req.header("x-line-signature") || "";
+  const valid = await verifyLineSignature(body, sig, channelSecret);
+  if (!valid) return c.json({ error: "Invalid signature" }, 403);
+
+  let webhook: any;
+  try { webhook = JSON.parse(body); } catch { return c.json({ error: "Invalid JSON" }, 400); }
+
+  // Process events asynchronously (return 200 immediately to LINE)
+  const db = env.DB;
+  await ensureSchema(db);
+
+  for (const event of (webhook.events || [])) {
+    try {
+      if (event.type === "follow" && event.replyToken) {
+        // Generate link code for new followers
+        const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+        const lineUserId = event.source?.userId;
+        if (lineUserId) {
+          // Create or update line_connections with link code
+          const existing = await db.prepare(`SELECT id FROM line_connections WHERE lineUserId=?`).bind(lineUserId).first<any>();
+          if (existing) {
+            await db.prepare(`UPDATE line_connections SET settings=json_set(COALESCE(settings,'{}'),'$.linkCode',?), updatedAt=datetime('now') WHERE id=?`).bind(code, existing.id).run();
+          } else {
+            await db.prepare(`INSERT INTO line_connections (lineUserId, lineDisplayName, status, settings) VALUES (?,?,?,?)`).bind(lineUserId, "", "pending", toJson({ linkCode: code })).run();
+          }
+          await replyToLine(event.replyToken, [{ type: "text", text: `友だち追加ありがとうございます！\n\n分身AIとLINEを連携するには、以下の連携コードをWebアプリで入力してください。\n\n連携コード: ${code}\n\n※有効期限: 10分\n※Webアプリ: https://bunshin-ai.pages.dev/line-link` }], accessToken);
+        }
+        continue;
+      }
+
+      if (event.type === "unfollow") {
+        const lineUserId = event.source?.userId;
+        if (lineUserId) {
+          await db.prepare(`UPDATE line_connections SET status='disconnected', disconnectedAt=datetime('now'), updatedAt=datetime('now') WHERE lineUserId=?`).bind(lineUserId).run();
+        }
+        continue;
+      }
+
+      if (event.type !== "message" || event.message?.type !== "text" || !event.replyToken) continue;
+
+      const lineUserId = event.source?.userId;
+      if (!lineUserId) continue;
+
+      const userMessage = event.message.text || "";
+
+      // Find connected user
+      const conn = await db.prepare(
+        `SELECT lc.id as connId, lc.userId, lc.status, dt.id as twinId, dt.name as twinName, dt.personality, dt.description, dt.systemPrompt
+         FROM line_connections lc
+         LEFT JOIN digital_twins dt ON dt.userId = lc.userId
+         WHERE lc.lineUserId=? AND lc.status='active' AND lc.userId IS NOT NULL`
+      ).bind(lineUserId).first<any>();
+
+      if (!conn) {
+        // Not linked yet
+        const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+        const existing = await db.prepare(`SELECT id FROM line_connections WHERE lineUserId=?`).bind(lineUserId).first<any>();
+        if (existing) {
+          await db.prepare(`UPDATE line_connections SET settings=json_set(COALESCE(settings,'{}'),'$.linkCode',?), updatedAt=datetime('now') WHERE id=?`).bind(code, existing.id).run();
+        } else {
+          await db.prepare(`INSERT INTO line_connections (lineUserId, status, settings) VALUES (?,?,?)`).bind(lineUserId, "pending", toJson({ linkCode: code })).run();
+        }
+        await replyToLine(event.replyToken, [{ type: "text", text: `まだLINE連携が完了していません。\n\nWebアプリで以下の連携コードを入力してください。\n\n連携コード: ${code}\n\n※有効期限: 10分` }], accessToken);
+        continue;
+      }
+
+      if (!conn.twinId) {
+        await replyToLine(event.replyToken, [{ type: "text", text: "分身AIが見つかりません。Webアプリで分身AIを作成してください。" }], accessToken);
+        continue;
+      }
+
+      // Build system prompt from twin data
+      const sysParts: string[] = [
+        `あなたは「${conn.twinName || "分身AI"}」という名前の分身AIです。`,
+        "ユーザーの代わりに会話し、ユーザーの人格・価値観・話し方を再現してください。",
+      ];
+      if (conn.personality) sysParts.push(`\n【性格・人格】\n${conn.personality}`);
+      if (conn.description) sysParts.push(`\n【説明】\n${conn.description}`);
+      sysParts.push("\nLINEでの会話なので、簡潔で親しみやすい返答を心がけてください。1-3文程度で返答してください。");
+      if (detectImageRequest(userMessage)) {
+        sysParts.push("\n【画像生成の指示】\n画像生成を求められたら、execツールで画像生成スクリプトを実行し、アップロード後にMarkdown形式 ![image](url) で出力してください。");
+      }
+      const systemPrompt = sysParts.join("\n");
+
+      // Get recent conversation history
+      const lineSessionRow = await db.prepare(
+        `SELECT id FROM chat_sessions WHERE userId=? AND twinId=? AND title='LINE会話' LIMIT 1`
+      ).bind(conn.userId, conn.twinId).first<any>();
+
+      let conversationHistory: { role: "user" | "assistant" | "system"; content: string }[] = [];
+      if (lineSessionRow) {
+        const msgs = await db.prepare(
+          `SELECT role, content FROM chat_messages WHERE sessionId=? ORDER BY id DESC LIMIT 10`
+        ).bind(lineSessionRow.id).all<any>();
+        conversationHistory = (msgs.results || []).reverse().map((m: any) => ({ role: m.role as "user" | "assistant" | "system", content: m.content }));
+      }
+
+      const allMessages: { role: "user" | "assistant" | "system"; content: string }[] = [
+        { role: "system" as const, content: systemPrompt },
+        ...conversationHistory,
+        { role: "user" as const, content: userMessage },
+      ];
+
+      // === Clawdbot: DB settings first, then ENV fallback ===
+      const clawdbotConn = await db.prepare(
+        `SELECT gatewayUrl, authToken, agentId FROM clawdbot_connections WHERE userId=?`
+      ).bind(conn.userId).first<any>();
+
+      const gatewayUrl = clawdbotConn?.gatewayUrl || env.CLAWDBOT_GATEWAY_URL || "";
+      const authToken = clawdbotConn?.authToken || env.CLAWDBOT_AUTH_TOKEN || "";
+      const agentId = clawdbotConn?.agentId || env.CLAWDBOT_AGENT_ID || "main";
+      const clawdbotSource = clawdbotConn?.gatewayUrl ? "db" : (env.CLAWDBOT_GATEWAY_URL ? "env" : "none");
+
+      let responseText = "";
+      let responseModel = "unknown";
+      let apiSource = "none";
+      let responseImages: string[] = [];
+      const startTime = Date.now();
+
+      if (gatewayUrl && authToken) {
+        // Try Clawdbot
+        const result = await sendToClawdbotGateway(allMessages, {
+          gatewayUrl, authToken, agentId, sessionKey: `line_${lineUserId}`,
+        });
+        if (result.success && result.response) {
+          const parsed = parseClawdbotResp(result.response);
+          responseText = parsed.text;
+          responseImages = parsed.images;
+          responseModel = result.model || "clawdbot";
+          apiSource = `clawdbot(${clawdbotSource})`;
+        }
+      }
+
+      // Fallback to LLM if Clawdbot failed
+      if (!responseText) {
+        const llmConfig = await getUserLLMConfig(env.DB, conn.userId, "chat", env);
+        if (llmConfig) {
+          try {
+            const result = await invokeLLM(llmConfig, allMessages, { maxTokens: 512, temperature: 0.8 });
+            if (result.content) {
+              responseText = result.content;
+              responseModel = result.model || "llm-fallback";
+              apiSource = "llm-fallback";
+            }
+          } catch { /* ignore */ }
+        }
+      }
+
+      if (!responseText) responseText = "申し訳ありません、応答を生成できませんでした。";
+
+      const elapsed = Date.now() - startTime;
+
+      // Save conversation to DB
+      let sessionId = lineSessionRow?.id;
+      if (!sessionId) {
+        await db.prepare(
+          `INSERT INTO chat_sessions (userId, twinId, title, mode) VALUES (?,?,?,?)`
+        ).bind(conn.userId, conn.twinId, "LINE会話", "casual").run();
+        const newSession = await db.prepare(
+          `SELECT id FROM chat_sessions WHERE userId=? AND twinId=? AND title='LINE会話' ORDER BY id DESC LIMIT 1`
+        ).bind(conn.userId, conn.twinId).first<any>();
+        sessionId = newSession?.id;
+      }
+      if (sessionId) {
+        await db.prepare(
+          `INSERT INTO chat_messages (sessionId, userId, twinId, role, content) VALUES (?,?,?,?,?)`
+        ).bind(sessionId, conn.userId, conn.twinId, "user", userMessage).run();
+        await db.prepare(
+          `INSERT INTO chat_messages (sessionId, userId, twinId, role, content) VALUES (?,?,?,?,?)`
+        ).bind(sessionId, conn.userId, conn.twinId, "assistant", responseText).run();
+      }
+
+      // Build LINE reply messages
+      const lineMessages: any[] = [];
+      if (responseText) lineMessages.push({ type: "text", text: responseText });
+      for (const imgUrl of responseImages.slice(0, 3)) {
+        if (/^https:\/\/.+\.(png|jpg|jpeg|gif|webp)/i.test(imgUrl)) {
+          lineMessages.push({ type: "image", originalContentUrl: imgUrl, previewImageUrl: imgUrl });
+        }
+      }
+      if (lineMessages.length === 0) lineMessages.push({ type: "text", text: "応答を生成できませんでした。" });
+
+      // Debug mode
+      if (env.LINE_DEBUG_MODE === "true") {
+        lineMessages.push({
+          type: "text",
+          text: `🔧 Debug:\n• AI: ${responseModel}\n• ソース: ${apiSource}\n• Clawdbot設定: ${clawdbotSource}\n• 応答時間: ${elapsed}ms\n• 画像: ${responseImages.length}件`,
+        });
+      }
+
+      await replyToLine(event.replyToken, lineMessages.slice(0, 5), accessToken);
+    } catch (eventError: any) {
+      console.error("[LINE] Event error:", eventError?.message || eventError);
+    }
+  }
+
+  return c.json({ success: true });
+});
+
+// LINE webhook verification (GET)
+api.get("/api/line/webhook", (c) => {
+  return c.json({
+    status: "active",
+    version: "1.0.0",
+    supportedEvents: ["follow", "unfollow", "message"],
+    supportedMessageTypes: ["text"],
+  });
 });
 
 export default api;
