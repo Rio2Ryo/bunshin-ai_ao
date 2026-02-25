@@ -516,6 +516,8 @@ ALTER TABLE cumulative_waveforms ADD COLUMN waveformData TEXT;
 ALTER TABLE users ADD COLUMN isNpc INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN onboardingStep INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN tutorialCompleted INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE matching_sessions ADD COLUMN settings TEXT;
+ALTER TABLE matching_results ADD COLUMN webSearchData TEXT;
 `;
 
 // Separate migration for line_connections: make userId/twinId nullable

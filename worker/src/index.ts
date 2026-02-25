@@ -35,6 +35,7 @@ type Env = {
   CLAWDBOT_AUTH_TOKEN?: string;
   CLAWDBOT_AGENT_ID?: string;
   LINE_DEBUG_MODE?: string;
+  TAVILY_API_KEY?: string;
 };
 
 type Context = {
@@ -1988,11 +1989,23 @@ JSON形式で出力:
         const dialogues = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.id).all<any>();
         const result = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(input.id).first<any>();
         return {
-          session,
+          session: { ...session, settings: parseJson<any>(session.settings) },
           twin1: normalizeTwin(twin1),
           twin2: normalizeTwin(twin2),
           dialogues: dialogues.results ?? [],
-          result: result ? { ...result, scoreBreakdown: parseJson<any>(result.scoreBreakdown), strengths: parseJson<string[]>(result.strengths), challenges: parseJson<string[]>(result.challenges), recommendations: parseJson<string[]>(result.recommendations) } : null,
+          result: result ? { ...result, scoreBreakdown: parseJson<any>(result.scoreBreakdown), strengths: parseJson<string[]>(result.strengths), challenges: parseJson<string[]>(result.challenges), recommendations: parseJson<string[]>(result.recommendations), webSearchData: parseJson<any>(result.webSearchData) } : null,
+        };
+      }),
+    webSearch: protectedProcedure
+      .input(z.object({ query: z.string().min(1), sessionId: z.number().optional() }))
+      .mutation(async ({ ctx, input }) => {
+        const tavilyKey = ctx.env.TAVILY_API_KEY;
+        if (!tavilyKey) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Web検索APIキーが設定されていません（TAVILY_API_KEY）" });
+        const result = await searchWithTavily(input.query, tavilyKey, { maxResults: 5, searchDepth: "advanced" });
+        return {
+          query: result.query,
+          answer: result.answer || null,
+          results: (result.results || []).map(r => ({ title: r.title, url: r.url, content: r.content.slice(0, 300), score: r.score })),
         };
       }),
     availableFriends: protectedProcedure.query(async ({ ctx }) => {
@@ -2138,6 +2151,20 @@ JSON形式で出力:
         ];
         const dialogueHistory: { speaker: string; content: string }[] = [];
         const turnsToRun = Math.min(input.turns, 10);
+        let webSearchContext = "";
+        let webSearchResults: TavilyResponse[] = [];
+
+        // Run Tavily web search for the theme (if API key configured)
+        if (ctx.env.TAVILY_API_KEY) {
+          try {
+            const queries = await generateSearchQueries(llmConfig, input.theme, "");
+            for (const q of queries.slice(0, 2)) {
+              const sr = await searchWithTavily(q, ctx.env.TAVILY_API_KEY, { maxResults: 3 });
+              webSearchResults.push(sr);
+            }
+            webSearchContext = formatSearchContext(webSearchResults);
+          } catch { /* search failed — continue without it */ }
+        }
 
         for (let turn = 0; turn < turnsToRun; turn++) {
           const speakerIdx = turn % 2;
@@ -2153,10 +2180,14 @@ JSON形式で出力:
             if (p.skills || p.expertise) profileContext += `得意分野: ${p.skills || p.expertise}。`;
           }
 
+          const searchSuffix = webSearchContext
+            ? `\n\n${webSearchContext}`
+            : "";
+
           const systemPrompt = `あなたは「${speaker.name}」というデジタル分身AIです。${speaker.desc ? `説明: ${speaker.desc}。` : ""}${speaker.personality ? `性格: ${speaker.personality}。` : ""}${profileContext}
 テーマ「${input.theme}」について「${other.name}」と建設的なビジネス対話をしています。
 相手の意見を尊重しつつ、自分の専門性や経験に基づいた具体的な提案や考えを述べてください。
-簡潔で具体的な発言（150〜300文字程度）をしてください。`;
+簡潔で具体的な発言（150〜300文字程度）をしてください。${searchSuffix}`;
 
           const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
             { role: "system", content: systemPrompt },
@@ -2170,6 +2201,19 @@ JSON形式で出力:
           }
           if (turn === 0) {
             messages.push({ role: "user", content: `テーマ「${input.theme}」について話し始めてください。` });
+          }
+
+          // Mid-dialogue search: after turn 2, search again with dialogue context for deeper insights
+          if (turn === 2 && ctx.env.TAVILY_API_KEY && dialogueHistory.length >= 2) {
+            try {
+              const contextText = dialogueHistory.map(d => `${d.speaker}: ${d.content}`).join("\n");
+              const midQueries = await generateSearchQueries(llmConfig, input.theme, contextText);
+              for (const q of midQueries.slice(0, 2)) {
+                const sr = await searchWithTavily(q, ctx.env.TAVILY_API_KEY, { maxResults: 3, searchDepth: "advanced" });
+                webSearchResults.push(sr);
+              }
+              webSearchContext = formatSearchContext(webSearchResults);
+            } catch { /* continue */ }
           }
 
           let content = "";
@@ -2208,6 +2252,15 @@ JSON形式で出力:
           ).bind(sessionId, speaker.id, content, turn, provider, model).run();
         }
 
+        // Save web search results metadata in session
+        if (webSearchResults.length > 0) {
+          try {
+            await ctx.env.DB.prepare(
+              `UPDATE matching_sessions SET settings=? WHERE id=?`
+            ).bind(toJson({ webSearchResults: webSearchResults.map(r => ({ query: r.query, answer: r.answer, resultCount: r.results?.length || 0, sources: (r.results || []).slice(0, 5).map(s => ({ title: s.title, url: s.url })) })) }), sessionId).run();
+          } catch { /* column might not exist yet */ }
+        }
+
         // Run analysis after dialogue
         try {
           // Build profile summaries for analysis context
@@ -2221,11 +2274,16 @@ JSON形式で出力:
             return parts.join("、");
           });
 
+          const webSearchSummary = webSearchResults.length > 0
+            ? `\n\n【Web検索で得られた市場情報】\n${webSearchResults.map(r => r.answer ? `• ${r.query}: ${r.answer}` : "").filter(Boolean).join("\n")}`
+            : "";
+
           const analysisPrompt = `以下は「${twins[0].name}」と「${twins[1].name}」のビジネスマッチング対話です。テーマ: ${input.theme}
 
 参加者情報:
 - ${profileSummaries[0]}
 - ${profileSummaries[1]}
+${webSearchSummary}
 
 ${dialogueHistory.map(d => `${d.speaker}: ${d.content}`).join("\n\n")}
 
@@ -2332,6 +2390,21 @@ JSONのみ出力し、他の説明は不要です。`;
         const dialogues: any[] = [];
 
         const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+
+        // Web search for context enrichment
+        let searchContext = "";
+        if (ctx.env.TAVILY_API_KEY && llmConfig) {
+          try {
+            const existingContext = (existingDialogues.results || []).map((d: any) => d.content).join("\n");
+            const queries = await generateSearchQueries(llmConfig, session.theme, existingContext);
+            const results: TavilyResponse[] = [];
+            for (const q of queries.slice(0, 2)) {
+              results.push(await searchWithTavily(q, ctx.env.TAVILY_API_KEY, { maxResults: 3 }));
+            }
+            searchContext = formatSearchContext(results);
+          } catch { /* continue without search */ }
+        }
+
         for (let i = 0; i < turns; i++) {
           const turnNumber = startTurn + i;
           const isTwin1 = turnNumber % 2 === 1;
@@ -2342,8 +2415,9 @@ JSONのみ出力し、他の説明は不要です。`;
           let content = `${speakerName}として、「${session.theme}」について${isTwin1 ? "議論を始めます" : "応答します"}。`;
           try {
             if (llmConfig) {
+              const searchSuffix = searchContext ? `\n\n${searchContext}` : "";
               const msgs = [
-                { role: "system" as const, content: `あなたは「${speakerName}」です。性格: ${speaker.personality || "プロフェッショナル"}。テーマ「${session.theme}」について対話してください。` },
+                { role: "system" as const, content: `あなたは「${speakerName}」です。性格: ${speaker.personality || "プロフェッショナル"}。テーマ「${session.theme}」について対話してください。${searchSuffix}` },
                 ...(context ? [{ role: "user" as const, content: `これまでの対話:\n${context}\n\n${speakerName}として次の発言をしてください。` }] : [{ role: "user" as const, content: `テーマ「${session.theme}」について最初の発言をしてください。` }]),
               ];
               const result = await invokeLLM(llmConfig, msgs, { maxTokens: 512, temperature: 0.8 });
@@ -4372,6 +4446,89 @@ api.post("/api/stripe/webhook", async (c) => {
 
   return c.json({ received: true });
 });
+
+// ============ Web Search (Tavily) ============
+
+type TavilySearchResult = {
+  title: string;
+  url: string;
+  content: string;
+  score: number;
+};
+
+type TavilyResponse = {
+  answer?: string;
+  query: string;
+  results: TavilySearchResult[];
+};
+
+/** Search the web using Tavily API */
+async function searchWithTavily(
+  query: string,
+  apiKey: string,
+  options?: { maxResults?: number; searchDepth?: "basic" | "advanced" }
+): Promise<TavilyResponse> {
+  const res = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      api_key: apiKey,
+      query,
+      search_depth: options?.searchDepth || "basic",
+      max_results: options?.maxResults || 5,
+      include_answer: true,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Tavily API error ${res.status}: ${err}`);
+  }
+  return res.json() as Promise<TavilyResponse>;
+}
+
+/** Generate search queries from dialogue context using LLM */
+async function generateSearchQueries(
+  llmConfig: any,
+  theme: string,
+  dialogueContext: string,
+): Promise<string[]> {
+  const result = await invokeLLM(llmConfig, [
+    {
+      role: "system",
+      content: `あなたはビジネスマッチングの対話を分析し、有用な情報を検索するためのクエリを生成する専門家です。
+対話の文脈から、具体的なビジネス提案や協業に役立つ情報を検索するためのクエリを2つ生成してください。
+JSON形式で出力: {"queries":["クエリ1","クエリ2"]}`,
+    },
+    {
+      role: "user",
+      content: `テーマ: ${theme}\n\n対話内容:\n${dialogueContext}\n\nJSONのみ出力してください。`,
+    },
+  ], { maxTokens: 256, temperature: 0.3 });
+
+  try {
+    const match = result.content.match(/\{[\s\S]*\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      return (parsed.queries || []).slice(0, 2);
+    }
+  } catch { /* ignore parse errors */ }
+  // Fallback: just use the theme
+  return [theme];
+}
+
+/** Format search results into context for LLM dialogue */
+function formatSearchContext(results: TavilyResponse[]): string {
+  if (!results.length) return "";
+  const lines: string[] = ["【Web検索結果（リアルタイム情報）】"];
+  for (const r of results) {
+    if (r.answer) lines.push(`■ ${r.query}: ${r.answer}`);
+    for (const item of (r.results || []).slice(0, 3)) {
+      lines.push(`・${item.title}: ${item.content.slice(0, 200)}`);
+    }
+  }
+  lines.push("\n上記の検索結果を参考に、具体的な数字や事例を含めて発言してください。");
+  return lines.join("\n");
+}
 
 // ============ LINE Webhook ============
 

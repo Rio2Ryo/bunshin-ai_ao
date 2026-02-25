@@ -4,10 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
 import { useParams, Link } from "wouter";
-import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, Users, Calendar, DollarSign, Target, Rocket, Share2, Link as LinkIcon, ExternalLink } from "lucide-react";
+import { useState } from "react";
+import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, Users, Calendar, DollarSign, Target, Rocket, Share2, Link as LinkIcon, ExternalLink, Search, Globe } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Streamdown } from "streamdown";
 import { toast } from "sonner";
@@ -26,6 +28,21 @@ export default function MatchingSession() {
     { sessionId },
     { enabled: false }
   );
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const webSearchMutation = trpc.matching.webSearch.useMutation();
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+
+  const handleWebSearch = async () => {
+    if (!searchQuery.trim()) return;
+    try {
+      const result = await webSearchMutation.mutateAsync({ query: searchQuery, sessionId });
+      setSearchResults(prev => [result, ...prev]);
+      setSearchQuery("");
+    } catch (e: any) {
+      toast.error(e.message || "検索に失敗しました");
+    }
+  };
 
   const handleExportPdf = async () => {
     try {
@@ -299,6 +316,10 @@ export default function MatchingSession() {
               <BarChart3 className="h-4 w-4 mr-2" />
               詳細分析
             </TabsTrigger>
+            <TabsTrigger value="websearch">
+              <Search className="h-4 w-4 mr-2" />
+              Web検索
+            </TabsTrigger>
           </TabsList>
 
           {/* Dialogue Tab */}
@@ -357,6 +378,89 @@ export default function MatchingSession() {
                 </ScrollArea>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Web Search Tab */}
+          <TabsContent value="websearch">
+            <div className="space-y-4">
+              {/* Auto search results from dialogue */}
+              {data?.session?.settings?.webSearchResults && data.session.settings.webSearchResults.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Globe className="h-5 w-5 text-blue-500" />
+                      対話中のリアルタイム検索結果
+                    </CardTitle>
+                    <CardDescription>マッチング対話中に自動で検索された情報</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      {data.session.settings.webSearchResults.map((sr: any, i: number) => (
+                        <div key={i} className="border rounded-lg p-3 space-y-2">
+                          <p className="text-sm font-medium text-primary">"{sr.query}"</p>
+                          {sr.answer && <p className="text-sm text-muted-foreground">{sr.answer}</p>}
+                          {sr.sources?.map((s: any, j: number) => (
+                            <a key={j} href={s.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-xs text-blue-500 hover:underline">
+                              <ExternalLink className="h-3 w-3" />
+                              {s.title}
+                            </a>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Manual search */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Search className="h-5 w-5 text-primary" />
+                    追加検索
+                  </CardTitle>
+                  <CardDescription>テーマに関連する情報を検索</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex gap-2">
+                    <Input
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="検索キーワードを入力..."
+                      onKeyDown={(e) => e.key === "Enter" && handleWebSearch()}
+                    />
+                    <Button onClick={handleWebSearch} disabled={webSearchMutation.isPending || !searchQuery.trim()}>
+                      {webSearchMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                    </Button>
+                  </div>
+
+                  {searchResults.length > 0 && (
+                    <div className="mt-4 space-y-4">
+                      {searchResults.map((sr, i) => (
+                        <div key={i} className="border rounded-lg p-4 space-y-3">
+                          <p className="text-sm font-medium">"{sr.query}"</p>
+                          {sr.answer && (
+                            <div className="bg-primary/5 rounded-lg p-3">
+                              <p className="text-sm">{sr.answer}</p>
+                            </div>
+                          )}
+                          <div className="space-y-2">
+                            {sr.results?.map((r: any, j: number) => (
+                              <div key={j} className="border-l-2 border-primary/30 pl-3">
+                                <a href={r.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-500 hover:underline">
+                                  {r.title}
+                                </a>
+                                <p className="text-xs text-muted-foreground mt-1">{r.content}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           {/* Analysis Tab */}
