@@ -36,6 +36,7 @@ type Env = {
   CLAWDBOT_AGENT_ID?: string;
   LINE_DEBUG_MODE?: string;
   TAVILY_API_KEY?: string;
+  SLACK_WEBHOOK_URL?: string;
 };
 
 type Context = {
@@ -2372,6 +2373,13 @@ JSONのみ出力し、他の説明は不要です。`;
         // Award trust points for matching completion
         await addTrustAction(ctx.env.DB, ctx.userId, "matching_complete", 5, `マッチング完了: ${input.theme}`);
 
+        // Send matching completion notification
+        try {
+          const result = await ctx.env.DB.prepare(`SELECT compatibilityScore FROM matching_results WHERE sessionId=?`).bind(sessionId).first<any>();
+          const score = result?.compatibilityScore ? parseFloat(result.compatibilityScore) : 0;
+          await notifyMatchingComplete(ctx.env.DB, ctx.userId, input.theme, score, ctx.env);
+        } catch { /* notification failure is non-critical */ }
+
         return { id: sessionId, dialogues: dialogueHistory };
       }),
     runDialogue: protectedProcedure
@@ -4188,9 +4196,172 @@ JSON形式で出力:
         return { success: true };
       }),
   }),
+
+  // ============ Auto Matching Scheduler ============
+  scheduler: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT s.*, u.name as friendName FROM auto_matching_schedules s LEFT JOIN users u ON u.id=s.friendId WHERE s.userId=? ORDER BY s.createdAt DESC`
+      ).bind(ctx.userId).all<any>();
+      return rows.results ?? [];
+    }),
+    create: protectedProcedure
+      .input(z.object({
+        friendId: z.number(),
+        frequency: z.enum(["daily", "weekly", "biweekly"]).default("weekly"),
+        theme: z.string().min(1).default("協業の可能性"),
+        turns: z.number().min(1).max(10).default(5),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        // Check if schedule already exists for this pair
+        const existing = await ctx.env.DB.prepare(
+          `SELECT id FROM auto_matching_schedules WHERE userId=? AND friendId=? AND isActive=1`
+        ).bind(ctx.userId, input.friendId).first<any>();
+        if (existing) throw new TRPCError({ code: "CONFLICT", message: "この友達とのスケジュールは既に存在します" });
+
+        const nextRun = input.frequency === "daily"
+          ? "datetime('now', '+1 day')"
+          : input.frequency === "biweekly"
+            ? "datetime('now', '+14 days')"
+            : "datetime('now', '+7 days')";
+
+        await ctx.env.DB.prepare(
+          `INSERT INTO auto_matching_schedules (userId, friendId, frequency, theme, turns, nextRunAt) VALUES (?,?,?,?,?,${nextRun})`
+        ).bind(ctx.userId, input.friendId, input.frequency, input.theme, input.turns).run();
+        return { success: true };
+      }),
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        frequency: z.enum(["daily", "weekly", "biweekly"]).optional(),
+        theme: z.string().min(1).optional(),
+        turns: z.number().min(1).max(10).optional(),
+        isActive: z.number().min(0).max(1).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const schedule = await ctx.env.DB.prepare(
+          `SELECT * FROM auto_matching_schedules WHERE id=? AND userId=?`
+        ).bind(input.id, ctx.userId).first<any>();
+        if (!schedule) throw new TRPCError({ code: "NOT_FOUND" });
+        const sets: string[] = ["updatedAt=datetime('now')"];
+        const vals: any[] = [];
+        if (input.frequency !== undefined) { sets.push("frequency=?"); vals.push(input.frequency); }
+        if (input.theme !== undefined) { sets.push("theme=?"); vals.push(input.theme); }
+        if (input.turns !== undefined) { sets.push("turns=?"); vals.push(input.turns); }
+        if (input.isActive !== undefined) { sets.push("isActive=?"); vals.push(input.isActive); }
+        vals.push(input.id);
+        await ctx.env.DB.prepare(`UPDATE auto_matching_schedules SET ${sets.join(",")} WHERE id=?`).bind(...vals).run();
+        return { success: true };
+      }),
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        await ctx.env.DB.prepare(`DELETE FROM auto_matching_schedules WHERE id=? AND userId=?`).bind(input.id, ctx.userId).run();
+        return { success: true };
+      }),
+  }),
+
+  // ============ Notification Settings ============
+  notifications: router({
+    getSettings: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(`SELECT * FROM notification_settings WHERE userId=?`).bind(ctx.userId).first<any>();
+      return row || { slackWebhookUrl: null, lineNotify: 1, emailNotify: 0, matchingComplete: 1, scheduledMatching: 1 };
+    }),
+    updateSettings: protectedProcedure
+      .input(z.object({
+        slackWebhookUrl: z.string().nullable().optional(),
+        lineNotify: z.number().min(0).max(1).optional(),
+        emailNotify: z.number().min(0).max(1).optional(),
+        matchingComplete: z.number().min(0).max(1).optional(),
+        scheduledMatching: z.number().min(0).max(1).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const existing = await ctx.env.DB.prepare(`SELECT id FROM notification_settings WHERE userId=?`).bind(ctx.userId).first<any>();
+        if (existing) {
+          const sets: string[] = ["updatedAt=datetime('now')"];
+          const vals: any[] = [];
+          if (input.slackWebhookUrl !== undefined) { sets.push("slackWebhookUrl=?"); vals.push(input.slackWebhookUrl); }
+          if (input.lineNotify !== undefined) { sets.push("lineNotify=?"); vals.push(input.lineNotify); }
+          if (input.emailNotify !== undefined) { sets.push("emailNotify=?"); vals.push(input.emailNotify); }
+          if (input.matchingComplete !== undefined) { sets.push("matchingComplete=?"); vals.push(input.matchingComplete); }
+          if (input.scheduledMatching !== undefined) { sets.push("scheduledMatching=?"); vals.push(input.scheduledMatching); }
+          vals.push(existing.id);
+          await ctx.env.DB.prepare(`UPDATE notification_settings SET ${sets.join(",")} WHERE id=?`).bind(...vals).run();
+        } else {
+          await ctx.env.DB.prepare(
+            `INSERT INTO notification_settings (userId, slackWebhookUrl, lineNotify, emailNotify, matchingComplete, scheduledMatching) VALUES (?,?,?,?,?,?)`
+          ).bind(ctx.userId, input.slackWebhookUrl ?? null, input.lineNotify ?? 1, input.emailNotify ?? 0, input.matchingComplete ?? 1, input.scheduledMatching ?? 1).run();
+        }
+        return { success: true };
+      }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;
+
+// ============ Notification Helpers ============
+
+/** Send Slack webhook notification */
+async function sendSlackNotification(webhookUrl: string, text: string): Promise<boolean> {
+  try {
+    const res = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
+/** Send LINE notification to connected user */
+async function sendLineNotification(db: D1Database, userId: number, message: string, accessToken: string): Promise<boolean> {
+  try {
+    const conn = await db.prepare(
+      `SELECT lineUserId FROM line_connections WHERE userId=? AND status='active'`
+    ).bind(userId).first<any>();
+    if (!conn?.lineUserId) return false;
+
+    const res = await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        to: conn.lineUserId,
+        messages: [{ type: "text", text: message }],
+      }),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
+/** Notify user about matching completion */
+async function notifyMatchingComplete(
+  db: D1Database,
+  userId: number,
+  sessionTheme: string,
+  score: number,
+  env: Env,
+): Promise<void> {
+  const settings = await db.prepare(`SELECT * FROM notification_settings WHERE userId=?`).bind(userId).first<any>();
+  if (!settings || !settings.matchingComplete) return;
+
+  const message = `【分身AI】マッチング対話が完了しました\nテーマ: ${sessionTheme}\n相性スコア: ${score}%\nhttps://bunshin-ai.pages.dev/matching`;
+
+  if (settings.slackWebhookUrl) {
+    await sendSlackNotification(settings.slackWebhookUrl, message);
+  }
+  if (settings.lineNotify && env.LINE_CHANNEL_ACCESS_TOKEN) {
+    await sendLineNotification(db, userId, message, env.LINE_CHANNEL_ACCESS_TOKEN);
+  }
+}
 
 // ============ Hono App ============
 
@@ -4811,4 +4982,109 @@ api.get("/api/line/webhook", (c) => {
   });
 });
 
-export default api;
+// ============ Scheduled (Cron) Handler ============
+
+async function handleScheduled(env: Env): Promise<void> {
+  const db = env.DB;
+  await ensureSchema(db);
+
+  // Find all active schedules that are due
+  const dueSchedules = await db.prepare(
+    `SELECT s.*, u.name as userName FROM auto_matching_schedules s JOIN users u ON u.id=s.userId WHERE s.isActive=1 AND (s.nextRunAt IS NULL OR s.nextRunAt <= datetime('now'))`
+  ).all<any>();
+
+  for (const schedule of dueSchedules.results ?? []) {
+    try {
+      // Get twins for both users
+      const myTwin = await db.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(schedule.userId).first<any>();
+      const friendTwin = await db.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(schedule.friendId).first<any>();
+      if (!myTwin || !friendTwin) continue;
+
+      // Create matching session
+      const sessionRes = await db.prepare(
+        `INSERT INTO matching_sessions (initiatorUserId, twin1Id, twin2Id, theme, status, settings) VALUES (?,?,?,?,'running',?)`
+      ).bind(schedule.userId, myTwin.id, friendTwin.id, schedule.theme, toJson({ autoScheduled: true, scheduleId: schedule.id })).run();
+      const sessionId = Number(sessionRes.meta.last_row_id);
+
+      // Get LLM config
+      const llmConfig = await getUserLLMConfig(db, schedule.userId, "matching", env);
+      if (!llmConfig) {
+        await db.prepare(`UPDATE matching_sessions SET status='completed', completedAt=datetime('now') WHERE id=?`).bind(sessionId).run();
+        continue;
+      }
+
+      // Generate dialogue
+      const twins = [
+        { id: myTwin.id, name: myTwin.name || "Twin A", personality: myTwin.personality || "" },
+        { id: friendTwin.id, name: friendTwin.name || "Twin B", personality: friendTwin.personality || "" },
+      ];
+      const dialogueHistory: { speaker: string; content: string }[] = [];
+
+      for (let turn = 0; turn < schedule.turns; turn++) {
+        const speakerIdx = turn % 2;
+        const speaker = twins[speakerIdx];
+        const other = twins[1 - speakerIdx];
+
+        const msgs: { role: "system" | "user" | "assistant"; content: string }[] = [
+          { role: "system", content: `あなたは「${speaker.name}」です。性格: ${speaker.personality || "プロフェッショナル"}。テーマ「${schedule.theme}」について「${other.name}」と対話してください。150〜300文字程度で発言してください。` },
+        ];
+        for (const d of dialogueHistory) {
+          msgs.push({ role: d.speaker === speaker.name ? "assistant" : "user", content: `${d.speaker}: ${d.content}` });
+        }
+        if (turn === 0) {
+          msgs.push({ role: "user", content: `テーマ「${schedule.theme}」について話し始めてください。` });
+        }
+
+        let content = `${speaker.name}として${schedule.theme}について議論します。`;
+        try {
+          const result = await invokeLLM(llmConfig, msgs, { maxTokens: 512, temperature: 0.8 });
+          if (result.content) content = result.content.replace(new RegExp(`^${speaker.name}:\\s*`, "i"), "").trim();
+        } catch { /* fallback */ }
+
+        dialogueHistory.push({ speaker: speaker.name, content });
+        await db.prepare(
+          `INSERT INTO matching_dialogues (sessionId, speakerTwinId, content, turnNumber, aiProvider, aiModel) VALUES (?,?,?,?,?,?)`
+        ).bind(sessionId, speaker.id, content, turn, "scheduled", "auto").run();
+      }
+
+      // Run analysis
+      try {
+        const transcript = dialogueHistory.map(d => `${d.speaker}: ${d.content}`).join("\n\n");
+        const analysisResult = await invokeLLM(llmConfig, [
+          { role: "system", content: "あなたはビジネスマッチングの専門アナリストです。JSON形式で分析結果を返してください。" },
+          { role: "user", content: `テーマ: ${schedule.theme}\n\n${transcript}\n\nJSON: {"compatibilityScore":0-100,"summary":"","strengths":[""],"challenges":[""],"recommendations":[""]}` },
+        ], { maxTokens: 2048, temperature: 0.5 });
+
+        let analysis: any = { compatibilityScore: 65, summary: "自動マッチングの結果、協業の可能性があります。" };
+        try {
+          const m = analysisResult.content.match(/\{[\s\S]*\}/);
+          if (m) analysis = JSON.parse(m[0]);
+        } catch { /* use fallback */ }
+
+        await db.prepare(
+          `INSERT INTO matching_results (sessionId, compatibilityScore, summary, strengths, challenges, recommendations) VALUES (?,?,?,?,?,?)`
+        ).bind(sessionId, analysis.compatibilityScore ?? 65, analysis.summary || "", toJson(analysis.strengths || []), toJson(analysis.challenges || []), toJson(analysis.recommendations || [])).run();
+
+        // Notify
+        await notifyMatchingComplete(db, schedule.userId, schedule.theme, analysis.compatibilityScore ?? 65, env);
+      } catch { /* analysis failed */ }
+
+      await db.prepare(`UPDATE matching_sessions SET status='completed', completedAt=datetime('now') WHERE id=?`).bind(sessionId).run();
+
+      // Update schedule: set lastRunAt and compute nextRunAt
+      const interval = schedule.frequency === "daily" ? "+1 day" : schedule.frequency === "biweekly" ? "+14 days" : "+7 days";
+      await db.prepare(
+        `UPDATE auto_matching_schedules SET lastRunAt=datetime('now'), nextRunAt=datetime('now','${interval}'), updatedAt=datetime('now') WHERE id=?`
+      ).bind(schedule.id).run();
+    } catch (err) {
+      console.error(`[Scheduler] Failed for schedule ${schedule.id}:`, err);
+    }
+  }
+}
+
+export default {
+  fetch: api.fetch,
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(handleScheduled(env));
+  },
+};

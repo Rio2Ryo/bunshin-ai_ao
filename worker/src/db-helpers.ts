@@ -495,6 +495,33 @@ CREATE TABLE IF NOT EXISTS matching_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_matching_req_sender ON matching_requests(senderUserId);
 CREATE INDEX IF NOT EXISTS idx_matching_req_receiver ON matching_requests(receiverUserId);
+
+CREATE TABLE IF NOT EXISTS auto_matching_schedules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  friendId INTEGER NOT NULL,
+  frequency TEXT NOT NULL DEFAULT 'weekly',
+  theme TEXT NOT NULL DEFAULT '協業の可能性',
+  turns INTEGER NOT NULL DEFAULT 5,
+  isActive INTEGER NOT NULL DEFAULT 1,
+  lastRunAt TEXT,
+  nextRunAt TEXT,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+  updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_auto_matching_userId ON auto_matching_schedules(userId);
+
+CREATE TABLE IF NOT EXISTS notification_settings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL UNIQUE,
+  slackWebhookUrl TEXT,
+  lineNotify INTEGER NOT NULL DEFAULT 1,
+  emailNotify INTEGER NOT NULL DEFAULT 0,
+  matchingComplete INTEGER NOT NULL DEFAULT 1,
+  scheduledMatching INTEGER NOT NULL DEFAULT 1,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+  updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;
 
 // Migrations to run after schema creation (ALTER TABLE etc.)

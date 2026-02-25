@@ -20,13 +20,20 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { trpc } from "@/lib/trpc";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 
 type MenuItem = { icon: React.ElementType; label: string; path: string };
 type MenuGroup = { label: string; items: MenuItem[] };
@@ -64,6 +71,14 @@ const menuGroups: MenuGroup[] = [
 
 // Flat list for activeMenuItem lookup
 const menuItems = menuGroups.flatMap(g => g.items);
+
+// Bottom nav items (5 most-used items for mobile)
+const bottomNavItems: MenuItem[] = [
+  { icon: LayoutDashboard, label: "ホーム", path: "/dashboard" },
+  { icon: MessageSquare, label: "チャット", path: "/chat" },
+  { icon: Users, label: "マッチ", path: "/matching" },
+  { icon: UserPlus, label: "友達", path: "/friends" },
+];
 
 // 管理者専用メニュー (includes items hidden from regular users)
 const adminMenuItems: MenuItem[] = [
@@ -329,21 +344,133 @@ function DashboardLayoutContent({
 
       <SidebarInset>
         {isMobile && (
-          <div className="flex border-b h-14 items-center justify-between bg-background/95 px-2 backdrop-blur supports-[backdrop-filter]:backdrop-blur sticky top-0 z-40">
-            <div className="flex items-center gap-2">
-              <SidebarTrigger className="h-9 w-9 rounded-lg bg-background" />
-              <div className="flex items-center gap-3">
-                <div className="flex flex-col gap-1">
-                  <span className="tracking-tight text-foreground">
-                    {activeMenuItem?.label ?? "Menu"}
-                  </span>
-                </div>
-              </div>
-            </div>
+          <div className="flex border-b h-12 items-center justify-between bg-background/95 px-3 backdrop-blur supports-[backdrop-filter]:backdrop-blur sticky top-0 z-40">
+            <span className="text-sm font-medium tracking-tight text-foreground">
+              {activeMenuItem?.label ?? "分身AI"}
+            </span>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-accent">
+                  <Avatar className="h-7 w-7 border">
+                    <AvatarFallback className="text-[10px] font-medium">
+                      {user?.name?.charAt(0).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem onClick={() => setLocation("/profile")} className="cursor-pointer">
+                  <User className="mr-2 h-4 w-4" />
+                  <span>プロフィール</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLocation("/plan")} className="cursor-pointer">
+                  <Crown className="mr-2 h-4 w-4" />
+                  <span>プラン</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={logout}
+                  className="cursor-pointer text-destructive focus:text-destructive"
+                >
+                  <LogOut className="mr-2 h-4 w-4" />
+                  <span>ログアウト</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         )}
-        <main id="main-content" className="flex-1 p-4">{children}</main>
+        <main id="main-content" className={`flex-1 p-4 ${isMobile ? "pb-20" : ""}`}>{children}</main>
+        {/* Mobile Bottom Navigation */}
+        {isMobile && (
+          <MobileBottomNav
+            location={location}
+            setLocation={setLocation}
+            pendingRequestCount={pendingRequestCount}
+            user={user}
+          />
+        )}
       </SidebarInset>
     </>
+  );
+}
+
+/** Mobile bottom navigation bar */
+function MobileBottomNav({
+  location,
+  setLocation,
+  pendingRequestCount,
+  user,
+}: {
+  location: string;
+  setLocation: (path: string) => void;
+  pendingRequestCount: number;
+  user: any;
+}) {
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  const isActive = (path: string) =>
+    location === path || (path === "/chat" && location.startsWith("/chat/"));
+
+  // Items NOT in bottom nav (shown in the "more" sheet)
+  const moreItems = menuItems.filter(
+    (item) => !bottomNavItems.some((b) => b.path === item.path)
+  );
+
+  return (
+    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-background/95 backdrop-blur border-t safe-area-bottom">
+      <div className="flex items-center justify-around h-14 max-w-lg mx-auto">
+        {bottomNavItems.map((item) => {
+          const active = isActive(item.path);
+          return (
+            <button
+              key={item.path}
+              onClick={() => setLocation(item.path)}
+              className={`flex flex-col items-center justify-center gap-0.5 flex-1 h-full relative active:scale-95 transition-transform ${
+                active ? "text-primary" : "text-muted-foreground"
+              }`}
+            >
+              <item.icon className="h-5 w-5" />
+              <span className="text-[10px] leading-tight">{item.label}</span>
+              {item.path === "/matching" && pendingRequestCount > 0 && (
+                <span className="absolute top-1.5 right-1/4 h-2 w-2 rounded-full bg-destructive" />
+              )}
+            </button>
+          );
+        })}
+        {/* More button */}
+        <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
+          <SheetTrigger asChild>
+            <button className="flex flex-col items-center justify-center gap-0.5 flex-1 h-full text-muted-foreground active:scale-95 transition-transform">
+              <MoreHorizontal className="h-5 w-5" />
+              <span className="text-[10px] leading-tight">その他</span>
+            </button>
+          </SheetTrigger>
+          <SheetContent side="bottom" className="rounded-t-2xl max-h-[70vh]">
+            <SheetHeader>
+              <SheetTitle>メニュー</SheetTitle>
+            </SheetHeader>
+            <div className="grid grid-cols-4 gap-3 py-4 overflow-y-auto">
+              {moreItems.map((item) => {
+                const active = isActive(item.path);
+                return (
+                  <button
+                    key={item.path}
+                    onClick={() => {
+                      setLocation(item.path);
+                      setMoreOpen(false);
+                    }}
+                    className={`flex flex-col items-center gap-1.5 p-3 rounded-xl transition-colors active:scale-95 ${
+                      active ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    <item.icon className="h-5 w-5" />
+                    <span className="text-[11px] leading-tight text-center">{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </SheetContent>
+        </Sheet>
+      </div>
+    </nav>
   );
 }

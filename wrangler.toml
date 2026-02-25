@@ -17,3 +17,8 @@ database_id = "2d1ebbfb-5c34-48be-a48e-bb0fac6c676d"
 [[r2_buckets]]
 binding = "ASSETS"
 bucket_name = "bunshin-ai-assets"
+
+# Cron triggers for auto matching scheduler
+[triggers]
+crons = ["0 9 * * *", "0 9 * * 1"]
+# Daily at 09:00 UTC (18:00 JST), Weekly Monday 09:00 UTC

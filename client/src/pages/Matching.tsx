@@ -14,11 +14,13 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { Switch } from "@/components/ui/switch";
 import {
   Users, Plus, Loader2, Play, CheckCircle, XCircle, Clock,
   UserPlus, Bot, MessageSquare, Shield, Star, TrendingUp,
   ArrowRight, Sparkles, Search, Send, Inbox, History,
   ArrowUpRight, ArrowDownRight, Minus, Check, X,
+  CalendarClock, Trash2, Bell,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -260,6 +262,7 @@ export default function Matching() {
             </TabsTrigger>
             <TabsTrigger value="sent" className="gap-1.5"><Send className="h-4 w-4" />送信済み</TabsTrigger>
             <TabsTrigger value="history" className="gap-1.5"><History className="h-4 w-4" />履歴</TabsTrigger>
+            <TabsTrigger value="scheduler" className="gap-1.5"><CalendarClock className="h-4 w-4" />自動</TabsTrigger>
           </TabsList>
 
           {/* ===== Tab: Discover ===== */}
@@ -553,8 +556,189 @@ export default function Matching() {
               </div>
             </div>
           </TabsContent>
+
+          {/* ===== Tab: Scheduler ===== */}
+          <TabsContent value="scheduler">
+            <SchedulerTab />
+          </TabsContent>
         </Tabs>
       </div>
     </DashboardLayout>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Auto Matching Scheduler Tab
+// ---------------------------------------------------------------------------
+
+function SchedulerTab() {
+  const { data: schedules, isLoading, refetch } = trpc.scheduler.list.useQuery();
+  const { data: friends } = trpc.matching.availableFriends.useQuery();
+  const createSchedule = trpc.scheduler.create.useMutation({ onSuccess: () => { refetch(); toast.success("スケジュールを作成しました"); } });
+  const updateSchedule = trpc.scheduler.update.useMutation({ onSuccess: () => refetch() });
+  const deleteSchedule = trpc.scheduler.delete.useMutation({ onSuccess: () => { refetch(); toast.success("スケジュールを削除しました"); } });
+
+  const { data: notifSettings, refetch: refetchNotif } = trpc.notifications.getSettings.useQuery();
+  const updateNotif = trpc.notifications.updateSettings.useMutation({ onSuccess: () => { refetchNotif(); toast.success("通知設定を更新しました"); } });
+
+  const [newFriendId, setNewFriendId] = useState("");
+  const [newTheme, setNewTheme] = useState("協業の可能性");
+  const [newFreq, setNewFreq] = useState<"daily" | "weekly" | "biweekly">("weekly");
+
+  const freqLabel: Record<string, string> = { daily: "毎日", weekly: "毎週", biweekly: "隔週" };
+
+  return (
+    <div className="space-y-6 mt-4">
+      {/* Create new schedule */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <CalendarClock className="h-5 w-5 text-primary" />
+            自動対話スケジュール
+          </CardTitle>
+          <CardDescription>分身AI同士が自動で定期的に対話を行います</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div>
+              <Label>友達</Label>
+              <Select value={newFriendId} onValueChange={setNewFriendId}>
+                <SelectTrigger><SelectValue placeholder="選択..." /></SelectTrigger>
+                <SelectContent>
+                  {(friends ?? []).map((f: any) => (
+                    <SelectItem key={f.friend.id} value={String(f.friend.id)}>
+                      {f.friend.name} ({f.twin?.name})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>頻度</Label>
+              <Select value={newFreq} onValueChange={(v) => setNewFreq(v as any)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="daily">毎日</SelectItem>
+                  <SelectItem value="weekly">毎週</SelectItem>
+                  <SelectItem value="biweekly">隔週</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>テーマ</Label>
+              <Input value={newTheme} onChange={(e) => setNewTheme(e.target.value)} placeholder="協業の可能性" />
+            </div>
+          </div>
+          <Button
+            onClick={() => {
+              if (!newFriendId) { toast.error("友達を選択してください"); return; }
+              createSchedule.mutate({ friendId: Number(newFriendId), frequency: newFreq, theme: newTheme });
+            }}
+            disabled={createSchedule.isPending}
+          >
+            {createSchedule.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
+            スケジュール追加
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Existing schedules */}
+      {isLoading ? (
+        <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+      ) : schedules && schedules.length > 0 ? (
+        <div className="space-y-3">
+          {schedules.map((s: any) => (
+            <Card key={s.id}>
+              <CardContent className="flex items-center justify-between p-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium truncate">{s.friendName || `ID:${s.friendId}`}</span>
+                    <Badge variant={s.isActive ? "default" : "secondary"}>
+                      {s.isActive ? freqLabel[s.frequency] || s.frequency : "停止中"}
+                    </Badge>
+                  </div>
+                  <p className="text-sm text-muted-foreground truncate mt-0.5">{s.theme}</p>
+                  {s.lastRunAt && <p className="text-xs text-muted-foreground">最終実行: {s.lastRunAt.slice(0, 16)}</p>}
+                </div>
+                <div className="flex items-center gap-2 ml-2">
+                  <Switch
+                    checked={!!s.isActive}
+                    onCheckedChange={(checked) => updateSchedule.mutate({ id: s.id, isActive: checked ? 1 : 0 })}
+                  />
+                  <Button variant="ghost" size="icon" onClick={() => deleteSchedule.mutate({ id: s.id })}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <Card>
+          <CardContent className="flex flex-col items-center py-8">
+            <CalendarClock className="h-10 w-10 text-muted-foreground mb-2" />
+            <p className="text-muted-foreground text-sm">自動対話スケジュールがありません</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Notification settings */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Bell className="h-5 w-5 text-primary" />
+            通知設定
+          </CardTitle>
+          <CardDescription>マッチング完了時の通知方法</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">LINE通知</p>
+              <p className="text-xs text-muted-foreground">LINE連携済みの場合に通知</p>
+            </div>
+            <Switch
+              checked={!!notifSettings?.lineNotify}
+              onCheckedChange={(checked) => updateNotif.mutate({ lineNotify: checked ? 1 : 0 })}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">マッチング完了通知</p>
+              <p className="text-xs text-muted-foreground">対話が完了した時に通知</p>
+            </div>
+            <Switch
+              checked={!!notifSettings?.matchingComplete}
+              onCheckedChange={(checked) => updateNotif.mutate({ matchingComplete: checked ? 1 : 0 })}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">自動対話通知</p>
+              <p className="text-xs text-muted-foreground">スケジュール実行時に通知</p>
+            </div>
+            <Switch
+              checked={!!notifSettings?.scheduledMatching}
+              onCheckedChange={(checked) => updateNotif.mutate({ scheduledMatching: checked ? 1 : 0 })}
+            />
+          </div>
+          <div>
+            <Label>Slack Webhook URL</Label>
+            <div className="flex gap-2 mt-1">
+              <Input
+                placeholder="https://hooks.slack.com/services/..."
+                defaultValue={notifSettings?.slackWebhookUrl || ""}
+                onBlur={(e) => {
+                  const val = e.target.value.trim();
+                  if (val !== (notifSettings?.slackWebhookUrl || "")) {
+                    updateNotif.mutate({ slackWebhookUrl: val || null });
+                  }
+                }}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

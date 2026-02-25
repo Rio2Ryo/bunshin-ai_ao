@@ -208,4 +208,17 @@
                 linear-gradient(135deg, oklch(0.7 0.18 200), oklch(0.65 0.2 320)) border-box;
     border: 1px solid transparent;
   }
+
+  /* Safe area for mobile bottom nav (iOS notch) */
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Touch-friendly tap targets */
+  @media (pointer: coarse) {
+    button, a, [role="button"] {
+      min-height: 44px;
+      min-width: 44px;
+    }
+  }
 }
