@@ -15,14 +15,14 @@ import {
 export default function Dashboard() {
   const { user } = useAuth();
   usePageMeta({ title: "ダッシュボード", description: "分身AIの管理、チャット、マッチングの概要を確認しましょう。", path: "/dashboard" });
-  const { data: myTwin, isLoading: twinLoading } = trpc.myTwin.get.useQuery();
-  const { data: friends } = trpc.friends.list.useQuery();
-  const { data: chatSessions } = trpc.chat.sessions.useQuery();
-  const { data: matchingSessions } = trpc.matching.sessions.useQuery();
+  const { data: myTwin, isLoading: twinLoading } = trpc.myTwin.get.useQuery(undefined, { staleTime: 30_000 });
+  const { data: friends } = trpc.friends.list.useQuery(undefined, { staleTime: 30_000 });
+  const { data: chatSessions } = trpc.chat.sessions.useQuery(undefined, { staleTime: 30_000 });
+  const { data: matchingSessions } = trpc.matching.sessions.useQuery(undefined, { staleTime: 30_000 });
   const { data: planInfo } = trpc.plan.getInfo.useQuery();
-  const { data: trustData, isLoading: trustLoading } = trpc.trust.getScore.useQuery();
-  const { data: receivedRequests } = trpc.matching.receivedRequests.useQuery();
-  const { data: profile } = trpc.profile.get.useQuery();
+  const { data: trustData, isLoading: trustLoading } = trpc.trust.getScore.useQuery(undefined, { staleTime: 60_000 });
+  const { data: receivedRequests } = trpc.matching.receivedRequests.useQuery(undefined, { staleTime: 15_000 });
+  const { data: profile } = trpc.profile.get.useQuery(undefined, { staleTime: 60_000 });
   const pendingRequestCount = receivedRequests?.length ?? 0;
 
   const completedMatchings = matchingSessions?.filter(s => s.status === "completed").length || 0;

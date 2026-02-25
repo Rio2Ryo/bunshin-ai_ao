@@ -20,13 +20,14 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal } from "lucide-react";
-import { CSSProperties, useEffect, useRef, useState } from "react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages } from "lucide-react";
+import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { trpc } from "@/lib/trpc";
+import { useTranslation } from "@/contexts/LanguageContext";
 import {
   Sheet,
   SheetContent,
@@ -38,48 +39,6 @@ import {
 type MenuItem = { icon: React.ElementType; label: string; path: string };
 type MenuGroup = { label: string; items: MenuItem[] };
 
-const menuGroups: MenuGroup[] = [
-  {
-    label: "メイン",
-    items: [
-      { icon: LayoutDashboard, label: "ダッシュボード", path: "/dashboard" },
-      { icon: User, label: "プロフィール", path: "/profile" },
-      { icon: Shield, label: "信頼度", path: "/trust" },
-      { icon: Bot, label: "分身AI", path: "/twins" },
-      { icon: MessageSquare, label: "チャット", path: "/chat" },
-    ],
-  },
-  {
-    label: "つながる",
-    items: [
-      { icon: Globe, label: "発見", path: "/discover" },
-      { icon: UserPlus, label: "友達", path: "/friends" },
-      { icon: Users, label: "マッチング", path: "/matching" },
-      { icon: Heart, label: "親密度", path: "/intimacy" },
-    ],
-  },
-  {
-    label: "もっと",
-    items: [
-      { icon: Sparkles, label: "育成", path: "/growth" },
-      { icon: MessageCircle, label: "LINE連携", path: "/line-link" },
-      { icon: CreditCard, label: "カード管理", path: "/cards" },
-      { icon: Crown, label: "プラン", path: "/plan" },
-    ],
-  },
-];
-
-// Flat list for activeMenuItem lookup
-const menuItems = menuGroups.flatMap(g => g.items);
-
-// Bottom nav items (5 most-used items for mobile)
-const bottomNavItems: MenuItem[] = [
-  { icon: LayoutDashboard, label: "ホーム", path: "/dashboard" },
-  { icon: MessageSquare, label: "チャット", path: "/chat" },
-  { icon: Users, label: "マッチ", path: "/matching" },
-  { icon: UserPlus, label: "友達", path: "/friends" },
-];
-
 // 管理者専用メニュー (includes items hidden from regular users)
 const adminMenuItems: MenuItem[] = [
   { icon: Cpu, label: "AIプロバイダー", path: "/admin/ai-provider" },
@@ -87,6 +46,7 @@ const adminMenuItems: MenuItem[] = [
   { icon: Zap, label: "オーケストレーション", path: "/orchestration" },
   { icon: Link2, label: "Clawdbot連携", path: "/clawdbot" },
   { icon: Brain, label: "学習した人格", path: "/learned-personality" },
+  { icon: BookOpen, label: "API Docs", path: "/api-docs" },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
@@ -148,11 +108,54 @@ function DashboardLayoutContent({
   const isCollapsed = state === "collapsed";
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const activeMenuItem = menuItems.find(item => item.path === location);
   const isMobile = useIsMobile();
-  const { data: trustData } = trpc.trust.getScore.useQuery();
-  const { data: receivedRequests } = trpc.matching.receivedRequests.useQuery();
+  const { data: trustData } = trpc.trust.getScore.useQuery(undefined, { staleTime: 60_000 });
+  const { data: receivedRequests } = trpc.matching.receivedRequests.useQuery(undefined, { staleTime: 15_000 });
   const pendingRequestCount = receivedRequests?.length ?? 0;
+  const { t, language, setLanguage } = useTranslation();
+
+  const translatedMenuGroups: MenuGroup[] = useMemo(() => [
+    {
+      label: language === "en" ? "Main" : "メイン",
+      items: [
+        { icon: LayoutDashboard, label: t("nav.dashboard"), path: "/dashboard" },
+        { icon: User, label: t("nav.profile"), path: "/profile" },
+        { icon: Shield, label: t("nav.trust"), path: "/trust" },
+        { icon: Bot, label: t("nav.twins"), path: "/twins" },
+        { icon: MessageSquare, label: t("nav.chat"), path: "/chat" },
+        { icon: BarChart3, label: t("nav.analytics"), path: "/analytics" },
+      ],
+    },
+    {
+      label: language === "en" ? "Connect" : "つながる",
+      items: [
+        { icon: Globe, label: t("nav.discover"), path: "/discover" },
+        { icon: UserPlus, label: t("nav.friends"), path: "/friends" },
+        { icon: Users, label: t("nav.matching"), path: "/matching" },
+        { icon: Heart, label: t("nav.intimacy"), path: "/intimacy" },
+      ],
+    },
+    {
+      label: language === "en" ? "More" : "もっと",
+      items: [
+        { icon: Sparkles, label: t("nav.growth"), path: "/growth" },
+        { icon: MessageCircle, label: t("nav.line"), path: "/line-link" },
+        { icon: CreditCard, label: t("nav.cards"), path: "/cards" },
+        { icon: Crown, label: t("nav.plan"), path: "/plan" },
+      ],
+    },
+  ], [t, language]);
+
+  const translatedMenuItems = useMemo(() => translatedMenuGroups.flatMap(g => g.items), [translatedMenuGroups]);
+
+  const translatedBottomNavItems: MenuItem[] = useMemo(() => [
+    { icon: LayoutDashboard, label: t("nav.home"), path: "/dashboard" },
+    { icon: MessageSquare, label: t("nav.chat"), path: "/chat" },
+    { icon: Users, label: t("nav.match"), path: "/matching" },
+    { icon: UserPlus, label: t("nav.friends"), path: "/friends" },
+  ], [t]);
+
+  const activeMenuItem = translatedMenuItems.find(item => item.path === location);
 
   useEffect(() => {
     if (isCollapsed) {
@@ -219,7 +222,7 @@ function DashboardLayoutContent({
 
           <SidebarContent className="gap-0">
             <SidebarMenu className="px-2 py-1">
-              {menuGroups.map((group, gi) => (
+              {translatedMenuGroups.map((group, gi) => (
                 <div key={group.label}>
                   {gi > 0 && (
                     <div className="my-2 px-2">
@@ -275,7 +278,7 @@ function DashboardLayoutContent({
                   </div>
                   {!isCollapsed && (
                     <div className="px-3 py-1.5">
-                      <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">管理者</span>
+                      <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{t("nav.admin")}</span>
                     </div>
                   )}
                   {adminMenuItems.map(item => {
@@ -302,6 +305,16 @@ function DashboardLayoutContent({
           </SidebarContent>
 
           <SidebarFooter className="p-3">
+            {/* Language toggle */}
+            <div className="px-1 mb-2">
+              <button
+                onClick={() => setLanguage(language === "ja" ? "en" : "ja")}
+                className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent transition-colors w-full group-data-[collapsible=icon]:justify-center"
+              >
+                <Languages className="h-4 w-4 shrink-0" />
+                {!isCollapsed && <span>{language === "ja" ? "English" : "日本語"}</span>}
+              </button>
+            </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-3 rounded-lg px-1 py-1 hover:bg-accent/50 transition-colors w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -326,7 +339,7 @@ function DashboardLayoutContent({
                   className="cursor-pointer text-destructive focus:text-destructive"
                 >
                   <LogOut className="mr-2 h-4 w-4" />
-                  <span>ログアウト</span>
+                  <span>{t("common.logout")}</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -361,18 +374,22 @@ function DashboardLayoutContent({
               <DropdownMenuContent align="end" className="w-48">
                 <DropdownMenuItem onClick={() => setLocation("/profile")} className="cursor-pointer">
                   <User className="mr-2 h-4 w-4" />
-                  <span>プロフィール</span>
+                  <span>{t("nav.profile")}</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setLocation("/plan")} className="cursor-pointer">
                   <Crown className="mr-2 h-4 w-4" />
-                  <span>プラン</span>
+                  <span>{t("nav.plan")}</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLanguage(language === "ja" ? "en" : "ja")} className="cursor-pointer">
+                  <Languages className="mr-2 h-4 w-4" />
+                  <span>{language === "ja" ? "English" : "日本語"}</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={logout}
                   className="cursor-pointer text-destructive focus:text-destructive"
                 >
                   <LogOut className="mr-2 h-4 w-4" />
-                  <span>ログアウト</span>
+                  <span>{t("common.logout")}</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -386,6 +403,8 @@ function DashboardLayoutContent({
             setLocation={setLocation}
             pendingRequestCount={pendingRequestCount}
             user={user}
+            bottomNavItems={translatedBottomNavItems}
+            menuItems={translatedMenuItems}
           />
         )}
       </SidebarInset>
@@ -399,13 +418,18 @@ function MobileBottomNav({
   setLocation,
   pendingRequestCount,
   user,
+  bottomNavItems,
+  menuItems,
 }: {
   location: string;
   setLocation: (path: string) => void;
   pendingRequestCount: number;
   user: any;
+  bottomNavItems: MenuItem[];
+  menuItems: MenuItem[];
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
+  const { t } = useTranslation();
 
   const isActive = (path: string) =>
     location === path || (path === "/chat" && location.startsWith("/chat/"));
@@ -441,12 +465,12 @@ function MobileBottomNav({
           <SheetTrigger asChild>
             <button className="flex flex-col items-center justify-center gap-0.5 flex-1 h-full text-muted-foreground active:scale-95 transition-transform">
               <MoreHorizontal className="h-5 w-5" />
-              <span className="text-[10px] leading-tight">その他</span>
+              <span className="text-[10px] leading-tight">{t("nav.more")}</span>
             </button>
           </SheetTrigger>
           <SheetContent side="bottom" className="rounded-t-2xl max-h-[70vh]">
             <SheetHeader>
-              <SheetTitle>メニュー</SheetTitle>
+              <SheetTitle>{t("nav.menu")}</SheetTitle>
             </SheetHeader>
             <div className="grid grid-cols-4 gap-3 py-4 overflow-y-auto">
               {moreItems.map((item) => {

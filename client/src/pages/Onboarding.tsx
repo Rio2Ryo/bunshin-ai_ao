@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
-import { Bot, Send, Loader2, SkipForward, ArrowRight, MessageSquare, Users, Shield, Sparkles, Zap, Target, UserPlus, CheckCircle, Play } from "lucide-react";
+import { Bot, Send, Loader2, SkipForward, ArrowRight, MessageSquare, Users, Shield, Sparkles, Zap, Target, UserPlus, CheckCircle, Play, HelpCircle } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -16,6 +16,43 @@ const ONBOARDING_STEPS = [
   { label: "マッチング候補", icon: UserPlus },
 ];
 
+function useTypingEffect(text: string, speed: number = 20) {
+  const [displayed, setDisplayed] = useState("");
+  const [isTyping, setIsTyping] = useState(true);
+
+  useEffect(() => {
+    setDisplayed("");
+    setIsTyping(true);
+    let i = 0;
+    const timer = setInterval(() => {
+      i++;
+      setDisplayed(text.slice(0, i));
+      if (i >= text.length) {
+        clearInterval(timer);
+        setIsTyping(false);
+      }
+    }, speed);
+    return () => clearInterval(timer);
+  }, [text, speed]);
+
+  return { displayed, isTyping };
+}
+
+function TypingMessage({ content }: { content: string }) {
+  const { displayed } = useTypingEffect(content, 15);
+  const cleaned = displayed.replace(/---PROFILE_DATA---[\s\S]*?---END_PROFILE_DATA---/, "").trim();
+  return <p className="text-sm whitespace-pre-wrap">{cleaned}</p>;
+}
+
+const STEP_HELP: Record<number, string> = {
+  0: "分身AIの概要を確認しましょう。「次へ」を押して進めます。",
+  1: "主な機能を確認できます。いつでもスキップ可能です。",
+  2: "マッチングの流れを3ステップで説明します。",
+  3: "練習用のガイドキャラクターが紹介されます。",
+  4: "ガイド太郎に自己紹介してください。2回以上メッセージを送ると完了ボタンが表示されます。",
+  5: "ガイドキャラクターとのマッチングを試せます。スキップしてダッシュボードに進むこともできます。",
+};
+
 export default function Onboarding() {
   const [, navigate] = useLocation();
   const [message, setMessage] = useState("");
@@ -25,7 +62,16 @@ export default function Onboarding() {
   const [completing, setCompleting] = useState(false);
   const [showingCandidates, setShowingCandidates] = useState(false);
   const [quickMatching, setQuickMatching] = useState(false);
+  const [fadeIn, setFadeIn] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const goToStep = (nextStep: number) => {
+    setFadeIn(false);
+    setTimeout(() => {
+      setStep(nextStep);
+      setFadeIn(true);
+    }, 150);
+  };
 
   const { data: me, isLoading: meLoading } = trpc.auth.me.useQuery();
   const { data: onboardingSession } = trpc.onboarding.getSession.useQuery(undefined, {
@@ -68,7 +114,7 @@ export default function Onboarding() {
       setMessages(sessionData.messages.map((m) => ({ role: m.role, content: m.content })));
       const userMsgCount = sessionData.messages.filter((m) => m.role === "user").length;
       if (userMsgCount > 0 && step < 4) {
-        setStep(4);
+        goToStep(4);
       }
     }
   }, [sessionData]);
@@ -96,7 +142,7 @@ export default function Onboarding() {
       // Transition to matching candidates (step 5) instead of navigating away
       setShowingCandidates(true);
       setCompleting(false);
-      setStep(5);
+      goToStep(5);
       return true;
     } catch {
       toast.error("プロフィールの保存に失敗しました");
@@ -136,7 +182,7 @@ export default function Onboarding() {
       toast.success("分身AIのプロフィールが完成しました！");
       setShowingCandidates(true);
       setCompleting(false);
-      setStep(5);
+      goToStep(5);
     } catch {
       toast.error("プロフィールの保存に失敗しました");
       setCompleting(false);
@@ -151,7 +197,7 @@ export default function Onboarding() {
       toast.success("セットアップをスキップしました");
       setShowingCandidates(true);
       setCompleting(false);
-      setStep(5);
+      goToStep(5);
     } catch {
       toast.error("スキップに失敗しました");
       setCompleting(false);
@@ -236,12 +282,22 @@ export default function Onboarding() {
             </div>
             <span className="font-semibold text-gradient">分身AI セットアップ</span>
           </div>
-          {step < 5 && (
-            <Button variant="ghost" size="sm" onClick={handleSkip} className="text-muted-foreground">
-              <SkipForward className="h-4 w-4 mr-1" />
-              スキップ
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {STEP_HELP[step] && (
+              <div className="group relative">
+                <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
+                <div className="absolute right-0 top-6 w-64 p-2 bg-popover border rounded-lg shadow-lg text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                  {STEP_HELP[step]}
+                </div>
+              </div>
+            )}
+            {step < 5 && (
+              <Button variant="ghost" size="sm" onClick={handleSkip} className="text-muted-foreground">
+                <SkipForward className="h-4 w-4 mr-1" />
+                スキップ
+              </Button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -261,14 +317,23 @@ export default function Onboarding() {
             </div>
           ))}
         </div>
+        <div className="flex justify-between items-center mt-1">
+          <span className="text-xs text-muted-foreground">
+            ステップ {step + 1} / {ONBOARDING_STEPS.length}
+          </span>
+          <span className="text-xs font-medium text-primary">
+            {Math.round(((step + 1) / ONBOARDING_STEPS.length) * 100)}%
+          </span>
+        </div>
       </div>
 
       {/* Step 0: サービス概要 */}
       {step === 0 && (
-        <div className="flex-1 flex items-center justify-center px-4">
+        <div className={`flex-1 flex items-center justify-center px-4 transition-opacity duration-300 ${fadeIn ? "opacity-100" : "opacity-0"}`}>
           <div className="max-w-lg w-full space-y-8 text-center">
             <div className="relative mx-auto w-24 h-24">
-              <div className="w-24 h-24 rounded-full bg-primary/20 flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full bg-primary/10 animate-ping" style={{ animationDuration: "3s" }} />
+              <div className="relative w-24 h-24 rounded-full bg-primary/20 flex items-center justify-center">
                 <Bot className="h-12 w-12 text-primary" />
               </div>
               <div className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center border-2 border-background">
@@ -296,7 +361,7 @@ export default function Onboarding() {
               </CardContent>
             </Card>
 
-            <Button size="lg" onClick={() => setStep(1)} className="w-full max-w-xs mx-auto">
+            <Button size="lg" onClick={() => goToStep(1)} className="w-full max-w-xs mx-auto">
               次へ
               <ArrowRight className="h-4 w-4 ml-2" />
             </Button>
@@ -306,7 +371,7 @@ export default function Onboarding() {
 
       {/* Step 1: 機能説明 */}
       {step === 1 && (
-        <div className="flex-1 flex items-center justify-center px-4">
+        <div className={`flex-1 flex items-center justify-center px-4 transition-opacity duration-300 ${fadeIn ? "opacity-100" : "opacity-0"}`}>
           <div className="max-w-lg w-full space-y-6 text-center">
             <Zap className="h-10 w-10 text-primary mx-auto" />
             <h2 className="text-2xl font-bold">主な機能</h2>
@@ -341,7 +406,7 @@ export default function Onboarding() {
               </Card>
             </div>
 
-            <Button size="lg" onClick={() => setStep(2)} className="w-full max-w-xs mx-auto">
+            <Button size="lg" onClick={() => goToStep(2)} className="w-full max-w-xs mx-auto">
               次へ
               <ArrowRight className="h-4 w-4 ml-2" />
             </Button>
@@ -351,7 +416,7 @@ export default function Onboarding() {
 
       {/* Step 2: マッチング説明 */}
       {step === 2 && (
-        <div className="flex-1 flex items-center justify-center px-4">
+        <div className={`flex-1 flex items-center justify-center px-4 transition-opacity duration-300 ${fadeIn ? "opacity-100" : "opacity-0"}`}>
           <div className="max-w-lg w-full space-y-6 text-center">
             <Target className="h-10 w-10 text-primary mx-auto" />
             <h2 className="text-2xl font-bold">ビジネスマッチング</h2>
@@ -393,7 +458,7 @@ export default function Onboarding() {
               信頼度スコア30以上で実ユーザーとのマッチングが解放されます
             </p>
 
-            <Button size="lg" onClick={() => setStep(3)} className="w-full max-w-xs mx-auto">
+            <Button size="lg" onClick={() => goToStep(3)} className="w-full max-w-xs mx-auto">
               次へ
               <ArrowRight className="h-4 w-4 ml-2" />
             </Button>
@@ -403,7 +468,7 @@ export default function Onboarding() {
 
       {/* Step 3: NPC紹介 */}
       {step === 3 && (
-        <div className="flex-1 flex items-center justify-center px-4">
+        <div className={`flex-1 flex items-center justify-center px-4 transition-opacity duration-300 ${fadeIn ? "opacity-100" : "opacity-0"}`}>
           <div className="max-w-lg w-full space-y-6 text-center">
             <Users className="h-10 w-10 text-primary mx-auto" />
             <h2 className="text-2xl font-bold">ガイドキャラクター紹介</h2>
@@ -446,7 +511,7 @@ export default function Onboarding() {
               </CardContent>
             </Card>
 
-            <Button size="lg" onClick={() => setStep(4)} className="w-full max-w-xs mx-auto">
+            <Button size="lg" onClick={() => goToStep(4)} className="w-full max-w-xs mx-auto">
               プロフィール入力へ進む
               <ArrowRight className="h-4 w-4 ml-2" />
             </Button>
@@ -456,7 +521,7 @@ export default function Onboarding() {
 
       {/* Step 4: Profile chat (guided by ガイド太郎) */}
       {step === 4 && (
-        <>
+        <div className={`flex-1 flex flex-col transition-opacity duration-300 ${fadeIn ? "opacity-100" : "opacity-0"}`}>
           <div className="flex-1 overflow-hidden max-w-3xl mx-auto w-full">
             <div ref={scrollRef} className="h-full overflow-y-auto px-4 pb-4 space-y-4">
               {messages.length === 0 && !sessionId && (
@@ -467,32 +532,39 @@ export default function Onboarding() {
                   </div>
                 </div>
               )}
-              {messages.map((msg, i) => (
-                <div
-                  key={i}
-                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                >
+              {messages.map((msg, i) => {
+                const isLastAssistant = msg.role === "assistant" && i === messages.length - 1;
+                return (
                   <div
-                    className={`max-w-[85%] rounded-2xl px-4 py-3 ${
-                      msg.role === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted"
-                    }`}
+                    key={i}
+                    className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                   >
-                    {msg.role === "assistant" && (
-                      <div className="flex items-center gap-2 mb-1">
-                        <div className="w-5 h-5 rounded-full bg-gradient-to-br from-cyan-500 to-blue-500 flex items-center justify-center shrink-0">
-                          <span className="text-white text-[10px] font-bold">太</span>
+                    <div
+                      className={`max-w-[85%] rounded-2xl px-4 py-3 ${
+                        msg.role === "user"
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted"
+                      }`}
+                    >
+                      {msg.role === "assistant" && (
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className="w-5 h-5 rounded-full bg-gradient-to-br from-cyan-500 to-blue-500 flex items-center justify-center shrink-0">
+                            <span className="text-white text-[10px] font-bold">太</span>
+                          </div>
+                          <span className="text-xs font-medium">ガイド太郎</span>
                         </div>
-                        <span className="text-xs font-medium">ガイド太郎</span>
-                      </div>
-                    )}
-                    <p className="text-sm whitespace-pre-wrap">
-                      {msg.content.replace(/---PROFILE_DATA---[\s\S]*?---END_PROFILE_DATA---/, "").trim()}
-                    </p>
+                      )}
+                      {isLastAssistant ? (
+                        <TypingMessage content={msg.content} />
+                      ) : (
+                        <p className="text-sm whitespace-pre-wrap">
+                          {msg.content.replace(/---PROFILE_DATA---[\s\S]*?---END_PROFILE_DATA---/, "").trim()}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {sendMessage.isPending && (
                 <div className="flex justify-start">
                   <div className="bg-muted rounded-2xl px-4 py-3">
@@ -543,12 +615,12 @@ export default function Onboarding() {
               </div>
             </div>
           </div>
-        </>
+        </div>
       )}
 
       {/* Step 5: マッチング候補 (NEW) */}
       {step === 5 && quickMatching && (
-        <div className="flex-1 flex flex-col items-center justify-center px-4 gap-4">
+        <div className={`flex-1 flex flex-col items-center justify-center px-4 gap-4 transition-opacity duration-300 ${fadeIn ? "opacity-100" : "opacity-0"}`}>
           <div className="relative">
             <div className="w-20 h-20 rounded-full bg-primary/20 flex items-center justify-center animate-pulse">
               <Bot className="h-10 w-10 text-primary" />
@@ -563,7 +635,7 @@ export default function Onboarding() {
         </div>
       )}
       {step === 5 && !quickMatching && (
-        <div className="flex-1 flex items-center justify-center px-4 py-8">
+        <div className={`flex-1 flex items-center justify-center px-4 py-8 transition-opacity duration-300 ${fadeIn ? "opacity-100" : "opacity-0"}`}>
           <div className="max-w-lg w-full space-y-6 text-center">
             <div className="relative mx-auto w-20 h-20">
               <div className="w-20 h-20 rounded-full bg-green-500/20 flex items-center justify-center">

@@ -1018,19 +1018,26 @@ ${isLastQuestion ? `
     list: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB
-        .prepare(`SELECT f.*, u.id as fId, u.name as fName, u.email as fEmail, u.friendCode as fFriendCode, u.isNpc as fIsNpc FROM friendships f JOIN users u ON u.id = CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END WHERE (f.userId=? OR f.friendId=?) AND f.status='accepted'`)
+        .prepare(`SELECT f.id as fshipId, f.status as fshipStatus, f.createdAt as fshipCreatedAt,
+          u.id as fId, u.name as fName, u.email as fEmail, u.friendCode as fFriendCode, u.isNpc as fIsNpc,
+          dt.id as twinId, dt.name as twinName, dt.description as twinDesc, dt.personality as twinPersonality,
+          dt.isPublic as twinIsPublic, dt.tags as twinTags, dt.systemPrompt as twinSystemPrompt,
+          dt.bigFiveTraits as twinBigFive, dt.mbtiType as twinMbti
+          FROM friendships f
+          JOIN users u ON u.id = CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END
+          LEFT JOIN digital_twins dt ON dt.userId = u.id
+          WHERE (f.userId=? OR f.friendId=?) AND f.status='accepted'`)
         .bind(ctx.userId, ctx.userId, ctx.userId)
         .all<any>();
-      const results = [];
-      for (const r of rows.results ?? []) {
-        const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(r.fId).first<any>();
-        results.push({
-          friendship: { id: r.id, status: r.status, createdAt: r.createdAt },
-          friend: { id: r.fId, name: r.fName, email: r.fEmail, friendCode: r.fFriendCode, isNpc: r.fIsNpc === 1 },
-          twin: normalizeTwin(twin),
-        });
-      }
-      return results;
+      return (rows.results ?? []).map(r => ({
+        friendship: { id: r.fshipId, status: r.fshipStatus, createdAt: r.fshipCreatedAt },
+        friend: { id: r.fId, name: r.fName, email: r.fEmail, friendCode: r.fFriendCode, isNpc: r.fIsNpc === 1 },
+        twin: r.twinId ? normalizeTwin({
+          id: r.twinId, name: r.twinName, description: r.twinDesc, personality: r.twinPersonality,
+          isPublic: r.twinIsPublic, tags: r.twinTags, systemPrompt: r.twinSystemPrompt,
+          bigFiveTraits: r.twinBigFive, mbtiType: r.twinMbti, userId: r.fId,
+        }) : null,
+      }));
     }),
     pendingRequests: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
@@ -2011,23 +2018,27 @@ JSON形式で出力:
       }),
     availableFriends: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
-      // Use friends.list logic but filter for those with twins
       const rows = await ctx.env.DB
-        .prepare(`SELECT f.*, u.id as fId, u.name as fName FROM friendships f JOIN users u ON u.id = CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END WHERE (f.userId=? OR f.friendId=?) AND f.status='accepted'`)
+        .prepare(`SELECT f.id as fshipId, f.status as fshipStatus, f.createdAt as fshipCreatedAt,
+          u.id as fId, u.name as fName,
+          dt.id as twinId, dt.name as twinName, dt.description as twinDesc, dt.personality as twinPersonality,
+          dt.isPublic as twinIsPublic, dt.tags as twinTags, dt.systemPrompt as twinSystemPrompt,
+          dt.bigFiveTraits as twinBigFive, dt.mbtiType as twinMbti
+          FROM friendships f
+          JOIN users u ON u.id = CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END
+          JOIN digital_twins dt ON dt.userId = u.id
+          WHERE (f.userId=? OR f.friendId=?) AND f.status='accepted'`)
         .bind(ctx.userId, ctx.userId, ctx.userId)
         .all<any>();
-      const results = [];
-      for (const r of rows.results ?? []) {
-        const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(r.fId).first<any>();
-        if (twin) {
-          results.push({
-            friendship: { id: r.id, status: r.status, createdAt: r.createdAt },
-            friend: { id: r.fId, name: r.fName },
-            twin: normalizeTwin(twin),
-          });
-        }
-      }
-      return results;
+      return (rows.results ?? []).map(r => ({
+        friendship: { id: r.fshipId, status: r.fshipStatus, createdAt: r.fshipCreatedAt },
+        friend: { id: r.fId, name: r.fName },
+        twin: normalizeTwin({
+          id: r.twinId, name: r.twinName, description: r.twinDesc, personality: r.twinPersonality,
+          isPublic: r.twinIsPublic, tags: r.twinTags, systemPrompt: r.twinSystemPrompt,
+          bigFiveTraits: r.twinBigFive, mbtiType: r.twinMbti, userId: r.fId,
+        }),
+      }));
     }),
     suggestedCandidates: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
@@ -2036,30 +2047,40 @@ JSON形式で出力:
 
       const myTags: string[] = myTwin.tags || [];
 
-      // Get all friends with twins
+      // Get my profile once (not in loop)
+      const myProfile = await ctx.env.DB.prepare(`SELECT industry FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+
+      // Get all friends with twins AND profiles in a single query
       const friendRows = await ctx.env.DB
-        .prepare(`SELECT f.*, u.id as fId, u.name as fName, u.isNpc as fIsNpc FROM friendships f JOIN users u ON u.id = CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END WHERE (f.userId=? OR f.friendId=?) AND f.status='accepted'`)
+        .prepare(`SELECT f.*, u.id as fId, u.name as fName, u.isNpc as fIsNpc,
+          dt.id as twinId, dt.name as twinName, dt.description as twinDesc, dt.personality as twinPersonality,
+          dt.isPublic as twinIsPublic, dt.tags as twinTags, dt.bigFiveTraits as twinBigFive, dt.mbtiType as twinMbti,
+          up.industry as fIndustry
+          FROM friendships f
+          JOIN users u ON u.id = CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END
+          LEFT JOIN digital_twins dt ON dt.userId = u.id
+          LEFT JOIN user_profiles up ON up.userId = u.id
+          WHERE (f.userId=? OR f.friendId=?) AND f.status='accepted'`)
         .bind(ctx.userId, ctx.userId, ctx.userId)
         .all<any>();
 
       const candidates = [];
 
       for (const r of friendRows.results ?? []) {
-        const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(r.fId).first<any>();
-        if (!twin) continue;
+        if (!r.twinId) continue;
 
+        const twin = { id: r.twinId, name: r.twinName, description: r.twinDesc, personality: r.twinPersonality, isPublic: r.twinIsPublic, tags: r.twinTags, bigFiveTraits: r.twinBigFive, mbtiType: r.twinMbti, userId: r.fId };
         const normalized = normalizeTwin(twin);
         const twinTags: string[] = normalized?.tags || [];
 
-        // Best past matching result with this friend's twin
+        // These still need per-friend queries (depend on twin.id)
         const bestResult = await ctx.env.DB.prepare(
           `SELECT mr.compatibilityScore, mr.summary, ms.id as sessionId, ms.theme FROM matching_sessions ms JOIN matching_results mr ON mr.sessionId = ms.id WHERE ms.initiatorUserId=? AND (ms.twin1Id=? OR ms.twin2Id=?) AND ms.status='completed' ORDER BY mr.compatibilityScore DESC LIMIT 1`
-        ).bind(ctx.userId, twin.id, twin.id).first<any>();
+        ).bind(ctx.userId, r.twinId, r.twinId).first<any>();
 
-        // Count total matchings with this friend
         const matchCount = await ctx.env.DB.prepare(
           `SELECT COUNT(*) as cnt FROM matching_sessions WHERE initiatorUserId=? AND (twin1Id=? OR twin2Id=?)`
-        ).bind(ctx.userId, twin.id, twin.id).first<any>();
+        ).bind(ctx.userId, r.twinId, r.twinId).first<any>();
 
         let score: number;
         let scoreSource: string;
@@ -2077,9 +2098,7 @@ JSON形式で出力:
           const overlap = myTags.filter((t: string) => twinTags.map((s: string) => s.toLowerCase()).includes(t.toLowerCase())).length;
           score += Math.min(overlap * 7, 21);
           // Industry match bonus
-          const friendProfile = await ctx.env.DB.prepare(`SELECT industry FROM user_profiles WHERE userId=?`).bind(r.fId).first<any>();
-          const myProfile = await ctx.env.DB.prepare(`SELECT industry FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
-          if (friendProfile?.industry && myProfile?.industry && friendProfile.industry.toLowerCase() === myProfile.industry.toLowerCase()) score += 8;
+          if (r.fIndustry && myProfile?.industry && r.fIndustry.toLowerCase() === myProfile.industry.toLowerCase()) score += 8;
           if (r.fIsNpc === 1) score += 5;
           if (twin.bigFiveTraits) score += 3;
           score = Math.min(score, 95);
@@ -4040,6 +4059,87 @@ JSON形式で出力:
         }
         return { success: true };
       }),
+  }),
+
+  // ============ Analytics ============
+  analytics: router({
+    dashboard: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const db = ctx.env.DB;
+      const uid = ctx.userId;
+
+      // Matching stats
+      const totalMatching = await db.prepare(`SELECT COUNT(*) as cnt FROM matching_sessions WHERE initiatorUserId=?`).bind(uid).first<any>();
+      const completedMatching = await db.prepare(`SELECT COUNT(*) as cnt FROM matching_sessions WHERE initiatorUserId=? AND status='completed'`).bind(uid).first<any>();
+      const avgScore = await db.prepare(
+        `SELECT AVG(CAST(mr.compatibilityScore AS REAL)) as avg FROM matching_results mr JOIN matching_sessions ms ON ms.id=mr.sessionId WHERE ms.initiatorUserId=?`
+      ).bind(uid).first<any>();
+      const highScoreCount = await db.prepare(
+        `SELECT COUNT(*) as cnt FROM matching_results mr JOIN matching_sessions ms ON ms.id=mr.sessionId WHERE ms.initiatorUserId=? AND CAST(mr.compatibilityScore AS REAL)>=70`
+      ).bind(uid).first<any>();
+
+      // Monthly matching trend (last 6 months)
+      const monthlyTrend = await db.prepare(
+        `SELECT strftime('%Y-%m', ms.createdAt) as month, COUNT(*) as count, AVG(CAST(mr.compatibilityScore AS REAL)) as avgScore
+         FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id
+         WHERE ms.initiatorUserId=? AND ms.createdAt >= datetime('now','-6 months')
+         GROUP BY month ORDER BY month`
+      ).bind(uid).all<any>();
+
+      // Chat engagement
+      const totalChats = await db.prepare(`SELECT COUNT(*) as cnt FROM chat_sessions WHERE userId=?`).bind(uid).first<any>();
+      const totalMessages = await db.prepare(
+        `SELECT COUNT(*) as cnt FROM chat_messages cm JOIN chat_sessions cs ON cs.id=cm.sessionId WHERE cs.userId=?`
+      ).bind(uid).first<any>();
+
+      // Weekly message trend (last 8 weeks)
+      const weeklyMessages = await db.prepare(
+        `SELECT strftime('%Y-W%W', cm.createdAt) as week, COUNT(*) as count
+         FROM chat_messages cm JOIN chat_sessions cs ON cs.id=cm.sessionId
+         WHERE cs.userId=? AND cm.createdAt >= datetime('now','-8 weeks')
+         GROUP BY week ORDER BY week`
+      ).bind(uid).all<any>();
+
+      // Friends + Trust
+      const friendCount = await db.prepare(
+        `SELECT COUNT(*) as cnt FROM friendships WHERE (userId=? OR friendId=?) AND status='accepted'`
+      ).bind(uid, uid).first<any>();
+      const trustRow = await db.prepare(`SELECT score FROM trust_scores WHERE userId=?`).bind(uid).first<any>();
+
+      // Score distribution
+      const scoreDist = await db.prepare(
+        `SELECT
+          SUM(CASE WHEN CAST(mr.compatibilityScore AS REAL) >= 80 THEN 1 ELSE 0 END) as excellent,
+          SUM(CASE WHEN CAST(mr.compatibilityScore AS REAL) >= 60 AND CAST(mr.compatibilityScore AS REAL) < 80 THEN 1 ELSE 0 END) as good,
+          SUM(CASE WHEN CAST(mr.compatibilityScore AS REAL) >= 40 AND CAST(mr.compatibilityScore AS REAL) < 60 THEN 1 ELSE 0 END) as fair,
+          SUM(CASE WHEN CAST(mr.compatibilityScore AS REAL) < 40 THEN 1 ELSE 0 END) as low
+         FROM matching_results mr JOIN matching_sessions ms ON ms.id=mr.sessionId WHERE ms.initiatorUserId=?`
+      ).bind(uid).first<any>();
+
+      return {
+        matching: {
+          total: totalMatching?.cnt ?? 0,
+          completed: completedMatching?.cnt ?? 0,
+          avgScore: Math.round((avgScore?.avg ?? 0) * 10) / 10,
+          highScoreCount: highScoreCount?.cnt ?? 0,
+          successRate: totalMatching?.cnt > 0 ? Math.round(((highScoreCount?.cnt ?? 0) / totalMatching.cnt) * 100) : 0,
+        },
+        scoreDist: {
+          excellent: scoreDist?.excellent ?? 0,
+          good: scoreDist?.good ?? 0,
+          fair: scoreDist?.fair ?? 0,
+          low: scoreDist?.low ?? 0,
+        },
+        monthlyTrend: (monthlyTrend.results ?? []).map((r: any) => ({ month: r.month, count: r.count, avgScore: Math.round((r.avgScore ?? 0) * 10) / 10 })),
+        engagement: {
+          totalChats: totalChats?.cnt ?? 0,
+          totalMessages: totalMessages?.cnt ?? 0,
+          friendCount: friendCount?.cnt ?? 0,
+          trustScore: trustRow?.score ?? 0,
+        },
+        weeklyMessages: (weeklyMessages.results ?? []).map((r: any) => ({ week: r.week, count: r.count })),
+      };
+    }),
   }),
 
   // ============ Trust Score ============

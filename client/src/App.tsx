@@ -3,6 +3,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { LanguageProvider } from "./contexts/LanguageContext";
 import { PWAInstallPrompt } from "./components/PWAInstallPrompt";
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
@@ -37,6 +38,8 @@ const Cards = lazy(() => import("./pages/Cards"));
 const Onboarding = lazy(() => import("./pages/Onboarding"));
 const TrustScore = lazy(() => import("./pages/TrustScore"));
 const Intimacy = lazy(() => import("./pages/Intimacy"));
+const Analytics = lazy(() => import("./pages/Analytics"));
+const ApiDocs = lazy(() => import("./pages/ApiDocs"));
 
 function PageLoader() {
   return (
@@ -76,7 +79,9 @@ function Router() {
         <Route path="/cards" component={Cards} />
         <Route path="/trust" component={TrustScore} />
         <Route path="/intimacy" component={Intimacy} />
+        <Route path="/analytics" component={Analytics} />
         <Route path="/admin/ai-provider" component={AdminAIProvider} />
+        <Route path="/api-docs" component={ApiDocs} />
 
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
@@ -89,11 +94,13 @@ function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="dark">
-        <TooltipProvider>
-          <Toaster />
-          <Router />
-          <PWAInstallPrompt />
-        </TooltipProvider>
+        <LanguageProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Router />
+            <PWAInstallPrompt />
+          </TooltipProvider>
+        </LanguageProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );
