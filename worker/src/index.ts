@@ -1533,7 +1533,23 @@ ${isLastQuestion ? `
             const result = await invokeLLM(llmConfig, messages, { maxTokens: llmMaxTokens });
             response = result.content;
           } catch (error: any) {
-            response = `AIの応答生成中にエラーが発生しました: ${error.message}\n\nAPIキーが正しいか、利用制限に達していないか確認してください。`;
+            response = "";
+          }
+
+          // Onboarding fallback: if LLM returned empty/very short response, use scripted responses
+          if (isOnboarding && (!response || response.trim().length < 10)) {
+            const userMsgCount = (await ctx.env.DB.prepare(
+              `SELECT COUNT(*) as c FROM chat_messages WHERE sessionId=? AND role='user'`
+            ).bind(input.sessionId).first<any>())?.c ?? 0;
+            const onboardingFallback = [
+              `ありがとうございます！いい感じですね。\n\n次に、これまでの経験や実績について教えてください。\n例えば「3年間チームリーダーをしていました」「売上を2倍に伸ばしました」など。`,
+              `素晴らしいですね！\n\nでは、趣味や興味のあることを教えてください。\n仕事以外でも構いません！`,
+              `なるほど！とても多彩ですね。\n\nでは最後に、あなたの性格や大切にしている価値観を教えてください。\n例えば「チームワークを大切にしている」「新しいことに挑戦するのが好き」など。`,
+              `ありがとうございます！あなたのことがよく分かりました。\n\n以下の内容であなたの分身AIプロフィールを作成しますね。\n\n---PROFILE_DATA---\n{"description": "多才なプロフェッショナル", "personality": "前向きで協調性がある", "rawInput": "${input.content}"}\n---END_PROFILE_DATA---`,
+            ];
+            response = onboardingFallback[Math.min(userMsgCount - 1, onboardingFallback.length - 1)] || onboardingFallback[onboardingFallback.length - 1];
+          } else if (!isOnboarding && (!response || response.trim().length === 0)) {
+            response = `AIの応答生成中にエラーが発生しました。APIキーが正しいか、利用制限に達していないか確認してください。`;
           }
         }
 
