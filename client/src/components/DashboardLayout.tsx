@@ -20,7 +20,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, Activity } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -43,6 +43,7 @@ type MenuGroup = { label: string; items: MenuItem[] };
 // 管理者専用メニュー (includes items hidden from regular users)
 const adminMenuItems: MenuItem[] = [
   { icon: ShieldAlert, label: "審査", path: "/admin/review" },
+  { icon: Activity, label: "ヘルスチェック", path: "/health-dashboard" },
   { icon: Cpu, label: "AIプロバイダー", path: "/admin/ai-provider" },
   { icon: Settings2, label: "AI API設定", path: "/ai-config" },
   { icon: Zap, label: "オーケストレーション", path: "/orchestration" },

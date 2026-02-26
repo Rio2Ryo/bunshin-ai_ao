@@ -2329,6 +2329,19 @@ JSON形式で出力:
       .input(z.object({ friendId: z.number(), theme: z.string().min(1), turns: z.number().min(1).max(30).default(5) }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
+
+        // Check plan limits
+        const userRow = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+        const userPlan = userRow?.plan || "free";
+        const monthlyLimits: Record<string, number> = { free: 3, premium: 30, enterprise: -1 };
+        const maxMatchings = monthlyLimits[userPlan] ?? 3;
+        if (maxMatchings !== -1) {
+          const usageRow = await ctx.env.DB.prepare(`SELECT matchingsThisMonth FROM usage_tracking WHERE userId=?`).bind(ctx.userId).first<any>();
+          if ((usageRow?.matchingsThisMonth ?? 0) >= maxMatchings) {
+            throw new TRPCError({ code: "FORBIDDEN", message: `月間マッチング上限（${maxMatchings}回）に達しました。プランをアップグレードしてください。` });
+          }
+        }
+
         const myTwin = await getMyTwin(ctx.env.DB, ctx.userId);
         if (!myTwin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIを作成してください" });
         const friendTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.friendId).first<any>();
@@ -4154,19 +4167,39 @@ JSON形式で出力:
     getInfo: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const user = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
-      return { plan: user?.plan ?? "free", limits: { maxFriends: 5, maxMatchingsPerMonth: 3 } };
+      const plan = user?.plan || "free";
+      const PLAN_LIMITS: Record<string, { maxFriends: number; maxMatchingsPerMonth: number }> = {
+        free: { maxFriends: 5, maxMatchingsPerMonth: 3 },
+        premium: { maxFriends: 50, maxMatchingsPerMonth: 30 },
+        enterprise: { maxFriends: -1, maxMatchingsPerMonth: -1 },
+      };
+      return { plan, limits: PLAN_LIMITS[plan] || PLAN_LIMITS.free };
     }),
     getStats: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
-      const friends = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM friendships WHERE (userId=? OR friendId=?) AND status='accepted'`).bind(ctx.userId, ctx.userId).first<any>();
-      const matchings = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM matching_sessions WHERE initiatorUserId=?`).bind(ctx.userId).first<any>();
       const user = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      const plan = user?.plan || "free";
+      const friends = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM friendships WHERE (userId=? OR friendId=?) AND status='accepted'`).bind(ctx.userId, ctx.userId).first<any>();
+      const usage = await ctx.env.DB.prepare(`SELECT matchingsThisMonth FROM usage_tracking WHERE userId=?`).bind(ctx.userId).first<any>();
+      const knowledge = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM knowledge_base WHERE twinId IN (SELECT id FROM digital_twins WHERE userId=?)`).bind(ctx.userId).first<any>();
+      const files = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM uploaded_files WHERE userId=?`).bind(ctx.userId).first<any>();
+
+      const PLAN_LIMITS: Record<string, { maxFriends: number; maxMatchingsPerMonth: number; maxKnowledgeEntries: number; maxFileUploads: number }> = {
+        free: { maxFriends: 5, maxMatchingsPerMonth: 3, maxKnowledgeEntries: 50, maxFileUploads: 10 },
+        premium: { maxFriends: 50, maxMatchingsPerMonth: 30, maxKnowledgeEntries: 500, maxFileUploads: 100 },
+        enterprise: { maxFriends: -1, maxMatchingsPerMonth: -1, maxKnowledgeEntries: -1, maxFileUploads: -1 },
+      };
+      const limits = PLAN_LIMITS[plan] || PLAN_LIMITS.free;
+
       return {
-        friendCount: friends?.c ?? 0,
-        matchingCount: matchings?.c ?? 0,
-        plan: user?.plan ?? "free",
-        usage: { friends: friends?.c ?? 0, matchingsThisMonth: matchings?.c ?? 0, knowledgeEntries: 0, fileUploads: 0, friendCount: friends?.c ?? 0, matchingCount: matchings?.c ?? 0 },
-        limits: { maxFriends: 5, maxMatchingsPerMonth: 3, maxKnowledge: 50, maxKnowledgeEntries: 50, maxFileUploads: 10 },
+        plan,
+        usage: {
+          friends: friends?.c ?? 0,
+          matchingsThisMonth: usage?.matchingsThisMonth ?? 0,
+          knowledgeEntries: knowledge?.c ?? 0,
+          fileUploads: files?.c ?? 0,
+        },
+        limits,
       };
     }),
     getSubscription: protectedProcedure.query(async ({ ctx }) => {
@@ -4274,6 +4307,24 @@ JSON形式で出力:
       });
       const data = await res.json() as any;
       return { url: data.url as string | undefined };
+    }),
+    cancelSubscription: protectedProcedure.mutation(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      if (!ctx.env.STRIPE_SECRET_KEY) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Stripe未設定" });
+      const user = await ctx.env.DB.prepare(`SELECT stripeSubscriptionId FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      if (!user?.stripeSubscriptionId) throw new TRPCError({ code: "NOT_FOUND", message: "アクティブなサブスクリプションがありません" });
+
+      const res = await fetch(`https://api.stripe.com/v1/subscriptions/${user.stripeSubscriptionId}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.env.STRIPE_SECRET_KEY}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: "cancel_at_period_end=true",
+      });
+      const data = await res.json() as any;
+      if (data.error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: data.error.message });
+      return { success: true, cancelAt: new Date(data.current_period_end * 1000).toISOString() };
     }),
     getFriendCode: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);

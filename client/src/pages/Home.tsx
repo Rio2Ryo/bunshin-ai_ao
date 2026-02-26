@@ -17,6 +17,9 @@ import {
   Brain,
   Target,
   TrendingUp,
+  Check,
+  Crown,
+  CreditCard,
 } from "lucide-react";
 
 export default function Home() {
@@ -45,6 +48,8 @@ export default function Home() {
             <span className="text-xl font-bold text-gradient">分身AI</span>
           </div>
           <nav className="flex items-center gap-4" aria-label="メインナビゲーション">
+            <a href="#features" className="text-sm text-muted-foreground hover:text-foreground hidden md:block">機能</a>
+            <a href="#pricing" className="text-sm text-muted-foreground hover:text-foreground hidden md:block">料金</a>
             {loading ? (
               <div className="h-9 w-20 bg-muted animate-pulse rounded-md" />
             ) : isAuthenticated ? (
@@ -278,6 +283,96 @@ export default function Home() {
       {/* Divider */}
       <div className="h-px bg-gradient-to-r from-transparent via-border to-transparent" />
 
+      {/* Pricing Section */}
+      <section id="pricing" className="py-24 relative">
+        <div className="absolute inset-0 bg-card/40" />
+        <div className="container relative">
+          <div className="text-center mb-16">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-muted/50 text-xs text-muted-foreground mb-4 uppercase tracking-wider">
+              料金プラン
+            </div>
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">シンプルな料金体系</h2>
+            <p className="text-muted-foreground max-w-xl mx-auto">
+              あなたのニーズに合わせたプランをお選びください。すべてのプランで分身AI作成が可能です。
+            </p>
+          </div>
+          <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+            <PricingCard
+              name="フリー"
+              price="¥0"
+              period="永久無料"
+              description="分身AIを試してみたい方に"
+              features={["分身AI 1体作成", "マッチング 月3回", "友達 5人まで", "AIチャット 月50回", "基本分析レポート"]}
+              cta="無料で始める"
+              ctaLink="/register"
+              popular={false}
+            />
+            <PricingCard
+              name="プロ"
+              price="¥980"
+              period="/月"
+              yearlyPrice="¥9,800/年（2ヶ月分お得）"
+              description="本格的にビジネスマッチングしたい方に"
+              features={["分身AI フル機能", "マッチング 月30回", "友達 50人まで", "AIチャット 月500回", "詳細分析レポート", "CSV/PDFエクスポート", "外部AI連携（GPT/Gemini/Claude）", "優先サポート"]}
+              cta="プロプランを始める"
+              ctaLink="/register"
+              popular={true}
+            />
+            <PricingCard
+              name="エンタープライズ"
+              price="¥4,980"
+              period="/月"
+              yearlyPrice="¥49,800/年（2ヶ月分お得）"
+              description="組織・チームでの利用に"
+              features={["すべてのプロ機能", "マッチング 無制限", "友達 無制限", "AIチャット 無制限", "APIアクセス 600req/分", "管理者ダッシュボード", "カスタムAIペルソナ", "SLA保証"]}
+              cta="エンタープライズを始める"
+              ctaLink="/register"
+              popular={false}
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* Divider */}
+      <div className="h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+
+      {/* Demo Section */}
+      <section className="py-24 relative overflow-hidden">
+        <div className="container">
+          <div className="text-center mb-12">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-muted/50 text-xs text-muted-foreground mb-4 uppercase tracking-wider">
+              デモ動画
+            </div>
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">分身AIの使い方を見る</h2>
+            <p className="text-muted-foreground max-w-xl mx-auto">
+              3分でわかる分身AIプラットフォームのデモンストレーション
+            </p>
+          </div>
+          <div className="max-w-4xl mx-auto">
+            <div className="relative aspect-video rounded-2xl border border-border/50 bg-card/60 backdrop-blur-sm overflow-hidden group cursor-pointer">
+              <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-accent/10" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-20 h-20 rounded-full bg-primary/90 flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg shadow-primary/20">
+                  <svg className="w-8 h-8 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                </div>
+              </div>
+              <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between text-sm text-muted-foreground">
+                <span>分身AI プラットフォーム紹介</span>
+                <span>3:24</span>
+              </div>
+            </div>
+            <p className="text-center text-sm text-muted-foreground mt-4">
+              デモ動画は準備中です。サービスの使い方はオンボーディングガイドをご覧ください。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Divider */}
+      <div className="h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+
       {/* CTA Section */}
       <section className="py-24 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/5" />
@@ -320,27 +415,49 @@ export default function Home() {
       </section>
 
       {/* Footer */}
-      <footer className="py-10 border-t border-border/30">
+      <footer className="py-12 border-t border-border/30">
         <div className="container">
+          <div className="grid md:grid-cols-4 gap-8 mb-8">
+            <div>
+              <div className="flex items-center gap-2.5 mb-4">
+                <Bot className="h-6 w-6 text-primary" />
+                <span className="font-semibold text-gradient">分身AI</span>
+              </div>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                AIを活用したデジタルツインで、ビジネスマッチングを自動化するSaaSプラットフォーム。
+              </p>
+            </div>
+            <div>
+              <h4 className="font-semibold mb-3 text-sm">サービス</h4>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <a href="#features" className="block hover:text-foreground transition-colors">機能一覧</a>
+                <a href="#pricing" className="block hover:text-foreground transition-colors">料金プラン</a>
+                <Link href="/api-docs" className="block hover:text-foreground transition-colors">API仕様書</Link>
+                <Link href="/blog" className="block hover:text-foreground transition-colors">ブログ</Link>
+              </div>
+            </div>
+            <div>
+              <h4 className="font-semibold mb-3 text-sm">法的情報</h4>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <Link href="/terms" className="block hover:text-foreground transition-colors">利用規約</Link>
+                <Link href="/privacy" className="block hover:text-foreground transition-colors">プライバシーポリシー</Link>
+              </div>
+            </div>
+            <div>
+              <h4 className="font-semibold mb-3 text-sm">アカウント</h4>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <Link href="/login" className="block hover:text-foreground transition-colors">ログイン</Link>
+                <Link href="/register" className="block hover:text-foreground transition-colors">新規登録</Link>
+              </div>
+            </div>
+          </div>
+          <div className="h-px bg-border/30 mb-6" />
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-2.5">
-              <Bot className="h-6 w-6 text-primary" />
-              <span className="font-semibold text-gradient">分身AI</span>
+            <p className="text-sm text-muted-foreground">&copy; 2025-2026 分身AI. All rights reserved.</p>
+            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+              <Link href="/terms" className="hover:text-foreground transition-colors">利用規約</Link>
+              <Link href="/privacy" className="hover:text-foreground transition-colors">プライバシー</Link>
             </div>
-            <div className="flex items-center gap-6 text-sm text-muted-foreground">
-              <a href="#features" className="hover:text-foreground transition-colors">
-                機能
-              </a>
-              <Link href="/login" className="hover:text-foreground transition-colors">
-                ログイン
-              </Link>
-              <Link href="/register" className="hover:text-foreground transition-colors">
-                新規登録
-              </Link>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              &copy; 2025-2026 分身AI. All rights reserved.
-            </p>
           </div>
         </div>
       </footer>
@@ -444,6 +561,61 @@ function StepCard({
           <p className="text-muted-foreground text-sm leading-relaxed">{description}</p>
         </div>
       </div>
+    </div>
+  );
+}
+
+function PricingCard({
+  name,
+  price,
+  period,
+  yearlyPrice,
+  description,
+  features,
+  cta,
+  ctaLink,
+  popular,
+}: {
+  name: string;
+  price: string;
+  period: string;
+  yearlyPrice?: string;
+  description: string;
+  features: string[];
+  cta: string;
+  ctaLink: string;
+  popular: boolean;
+}) {
+  return (
+    <div className={`relative p-6 rounded-2xl border-2 bg-card/80 backdrop-blur-sm ${popular ? 'border-primary shadow-lg shadow-primary/10' : 'border-border/50'}`}>
+      {popular && (
+        <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-primary text-primary-foreground text-xs font-semibold">
+          人気No.1
+        </div>
+      )}
+      <div className="mb-6">
+        <h3 className="text-lg font-bold mb-1">{name}</h3>
+        <p className="text-sm text-muted-foreground mb-4">{description}</p>
+        <div className="flex items-baseline gap-1">
+          <span className="text-4xl font-bold">{price}</span>
+          <span className="text-muted-foreground">{period}</span>
+        </div>
+        {yearlyPrice && <p className="text-xs text-muted-foreground mt-1">{yearlyPrice}</p>}
+      </div>
+      <ul className="space-y-3 mb-8">
+        {features.map((f, i) => (
+          <li key={i} className="flex items-center gap-2 text-sm">
+            <Check className="h-4 w-4 text-primary flex-shrink-0" />
+            {f}
+          </li>
+        ))}
+      </ul>
+      <Link href={ctaLink}>
+        <Button className={`w-full ${popular ? 'glow-primary' : ''}`} variant={popular ? 'default' : 'outline'}>
+          {cta}
+          <ArrowRight className="h-4 w-4 ml-2" />
+        </Button>
+      </Link>
     </div>
   );
 }

@@ -44,6 +44,9 @@ const Terms = lazy(() => import("./pages/Terms"));
 const Recommendations = lazy(() => import("./pages/Recommendations"));
 const AdminReview = lazy(() => import("./pages/AdminReview"));
 const Marketplace = lazy(() => import("./pages/Marketplace"));
+const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
+const Blog = lazy(() => import("./pages/Blog"));
+const HealthDashboard = lazy(() => import("./pages/HealthDashboard"));
 
 function PageLoader() {
   return (
@@ -90,6 +93,9 @@ function Router() {
         <Route path="/terms" component={Terms} />
         <Route path="/recommendations" component={Recommendations} />
         <Route path="/marketplace" component={Marketplace} />
+        <Route path="/privacy" component={PrivacyPolicy} />
+        <Route path="/blog" component={Blog} />
+        <Route path="/health-dashboard" component={HealthDashboard} />
 
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
