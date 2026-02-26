@@ -1,346 +1,202 @@
 # 分身AI (Bunshin AI)
 
-デジタルツインAIシステム - あなたの分身AIをLINEやWebで対話可能に。
+デジタルツインAIシステム — あなたの分身AIを作成し、ビジネスマッチングを自動化
 
 ## 概要
 
-分身AIは、ユーザーの性格・スキル・経験を学習し、LINE公式アカウントやWebチャットで対話できるデジタルツインAIシステムです。
+分身AIは、ユーザーの性格・スキル・経験を学習したAI分身（デジタルツイン）を作成し、
+分身AI同士の自動対話によるビジネスマッチングを実現するプラットフォームです。
 
 ### 主な機能
 
-- **分身AI作成**: ユーザーの性格・スキル・経験を設定
-- **LINE連携**: LINE公式アカウントと連携して会話
-- **Clawdbot連携**: 外部Clawdbot Gatewayと連携
-- **名刺・カード管理**: OCR解析で名刺を自動登録
-- **AI API統合**: OpenAI/Gemini/Anthropic/xAI対応
-- **画像生成**: Gemini Vision APIで画像生成
+- **AIオンボーディング**: チャット形式で自然にプロフィールを構築
+- **分身AI作成**: Big Five性格診断・MBTI・価値観シナリオから学習
+- **AIマッチング**: 分身AI同士の自動対話→相性分析→スコアリング
+- **波形互換性**: 独自の価値観波形による互換性分析
+- **親密度システム**: 交流頻度に基づく親密度スコア
+- **NPCチュートリアル**: ガイド太郎・案内花子がサービスを案内
+- **信頼度スコア**: プロフィール充実度・活動量に基づくランキング
+- **通知システム**: ポーリング型リアルタイム通知（ブラウザ通知対応）
+- **対話エクスポート**: マッチング対話のCSV/PDFエクスポート
+- **プランベース課金**: Free/Premium/Enterprise（Stripe連携）
+- **GDPR準拠退会**: データエクスポート＋完全削除
+- **マーケットプレイス**: AIペルソナテンプレートの売買
+- **管理者ダッシュボード**: 収益・コンテンツモデレーション・ユーザー管理
 
 ## 技術スタック
 
-- **フロントエンド**: React 19 + Vite + Tailwind CSS 4 + shadcn/ui
-- **バックエンド**: Express 4 + tRPC 11 + TypeScript
-- **データベース**: MySQL/TiDB (Drizzle ORM)
-- **認証**: Manus OAuth (メール/Googleログイン)
-- **LLM**: Gemini API, Clawdbot Gateway
-- **LINE**: LINE Messaging API
+| レイヤー | 技術 |
+|---------|------|
+| フロントエンド | React 19 + Vite + Tailwind CSS 4 + shadcn/ui + wouter |
+| API | Cloudflare Workers + Hono + tRPC v11 |
+| データベース | Cloudflare D1 (SQLite) |
+| ストレージ | Cloudflare R2 |
+| 認証 | Email/Password + JWT (jose, PBKDF2) |
+| LLM | Azure AI Foundry (Kimi-K2.5) + OpenAI/Gemini/Anthropic/xAI |
+| 決済 | Stripe (Checkout + Webhooks) |
+| ホスティング | Cloudflare Pages (frontend) + Workers (API) |
 
-## 必要な環境変数
+## 環境構成
 
-以下の環境変数が必要です。`.env.example`を参考に`.env`ファイルを作成してください。
+### 本番環境
 
-### システム必須
+- **Frontend**: https://bunshin-ai.pages.dev
+- **API**: https://bunshin-ai-api.common-gifted-tokyo.workers.dev
+- **D1 Database ID**: 2d1ebbfb-5c34-48be-a48e-bb0fac6c676d
 
-```env
-# データベース
-DATABASE_URL=mysql://user:password@host:port/database
-
-# 認証（Manus OAuth）
-JWT_SECRET=your-jwt-secret
-VITE_APP_ID=your-manus-app-id
-OAUTH_SERVER_URL=https://api.manus.im
-VITE_OAUTH_PORTAL_URL=https://portal.manus.im
-OWNER_OPEN_ID=owner-open-id
-OWNER_NAME=owner-name
-
-# Manus Built-in APIs
-BUILT_IN_FORGE_API_URL=https://api.manus.im
-BUILT_IN_FORGE_API_KEY=your-forge-api-key
-VITE_FRONTEND_FORGE_API_KEY=your-frontend-forge-api-key
-VITE_FRONTEND_FORGE_API_URL=https://api.manus.im
-
-# アプリ設定
-VITE_APP_TITLE=分身AI
-VITE_APP_LOGO=https://your-logo-url.com/logo.png
-VITE_ANALYTICS_WEBSITE_ID=your-analytics-id
-VITE_ANALYTICS_ENDPOINT=https://analytics.manus.im
-```
-
-### LINE連携（オプション）
+### 必要な環境変数 (Wrangler Secrets)
 
 ```env
-LINE_CHANNEL_ID=your-line-channel-id
-LINE_CHANNEL_SECRET=your-line-channel-secret
-LINE_CHANNEL_ACCESS_TOKEN=your-line-access-token
-LINE_DEBUG_MODE=false
+JWT_SECRET=           # JWT署名シークレット
+AZURE_FOUNDRY_API_KEY= # Azure AI Foundry APIキー
+AZURE_FOUNDRY_RESOURCE= # Azure AI Foundryリソース名
+STRIPE_SECRET_KEY=     # Stripe秘密鍵（オプション）
+STRIPE_WEBHOOK_SECRET= # Stripeウェブフック署名シークレット（オプション）
+SLACK_WEBHOOK_URL=     # Slack通知URL（オプション）
+TAVILY_API_KEY=        # Web検索API（マッチング強化、オプション）
 ```
 
-### Clawdbot連携（オプション）
+## セットアップ
 
-```env
-CLAWDBOT_GATEWAY_URL=https://your-clawdbot-gateway.com
-CLAWDBOT_AUTH_TOKEN=your-clawdbot-auth-token
-CLAWDBOT_AGENT_ID=main
-```
-
-### AI API（オプション）
-
-```env
-GEMINI_API_KEY=your-gemini-api-key
-```
-
-### Stripe決済（オプション）
-
-```env
-STRIPE_SECRET_KEY=your-stripe-secret-key
-STRIPE_WEBHOOK_SECRET=your-stripe-webhook-secret
-VITE_STRIPE_PUBLISHABLE_KEY=your-stripe-publishable-key
-```
-
-## セットアップ手順
-
-### 1. 依存関係のインストール
+### 1. 依存関係インストール
 
 ```bash
-pnpm install
+npm install
 ```
 
-### 2. 環境変数の設定
-
-```.env.example`を`.env`にコピーして、必要な値を設定してください。
+### 2. ローカル開発
 
 ```bash
-cp .env.example .env
-# .envファイルを編集
+# Worker（API）起動
+npx wrangler dev --config wrangler.toml
+
+# Client（フロントエンド）起動
+npx vite dev
 ```
 
-### 3. データベースのマイグレーション
+### 3. デプロイ
 
 ```bash
-pnpm db:push
-```
+# Worker
+npx wrangler deploy --config wrangler.toml
 
-このコマンドは、Drizzle ORMを使用してデータベーススキーマを同期します。
-
-### 4. 開発サーバーの起動
-
-```bash
-pnpm dev
-```
-
-- フロントエンド: http://localhost:3000
-- バックエンドAPI: http://localhost:3000/api
-
-## 主要URL
-
-### ユーザー向け画面
-
-- `/` - ホーム
-- `/profile` - プロフィール設定
-- `/twins` - 分身AI管理
-- `/line` - LINE連携
-- `/clawdbot-link` - Clawdbot連携
-- `/ai-api` - AI API設定
-- `/cards` - 名刺・カード管理
-
-### API エンドポイント
-
-- `/api/trpc/*` - tRPC API（全機能）
-- `/api/oauth/callback` - Manus OAuth コールバック
-- `/api/line/webhook` - LINE Webhook
-- `/api/stripe/webhook` - Stripe Webhook
-
-## データベーススキーマ
-
-主要なテーブル：
-
-- `users` - ユーザー情報
-- `digital_twins` - 分身AI情報
-- `line_connections` - LINE連携情報
-- `clawdbot_connections` - Clawdbot連携情報
-- `cards` - 名刺・カード情報
-- `chat_sessions` - チャットセッション
-- `chat_messages` - チャットメッセージ
-
-スキーマ定義: `drizzle/schema.ts`
-
-## 開発コマンド
-
-```bash
-# 開発サーバー起動
-pnpm dev
-
-# ビルド
-pnpm build
-
-# 本番サーバー起動
-pnpm start
-
-# テスト実行
-pnpm test
-
-# TypeScriptチェック
-pnpm typecheck
-
-# データベーススキーマ同期
-pnpm db:push
-
-# データベーススキーマ生成
-pnpm db:generate
+# Client
+npx vite build
+npx wrangler pages deploy dist/public --project-name bunshin-ai
 ```
 
 ## プロジェクト構造
 
 ```
-/home/ubuntu/bunshin-ai/
-├── client/          # フロントエンド（React + Vite）
+bunshin-ai_ao/
+├── client/                 # フロントエンド (React 19)
 │   ├── src/
-│   │   ├── pages/   # ページコンポーネント
-│   │   ├── components/ # 共通コンポーネント
-│   │   ├── contexts/   # Reactコンテキスト
-│   │   ├── hooks/      # カスタムフック
-│   │   ├── lib/        # ユーティリティ
-│   │   ├── App.tsx     # ルーティング
-│   │   └── main.tsx    # エントリーポイント
-│   ├── public/      # 静的ファイル
-│   └── index.html   # HTMLテンプレート
-├── server/          # バックエンド（Express + tRPC）
-│   ├── routers.ts   # tRPC API定義
-│   ├── db.ts        # データベース操作
-│   ├── services/    # ビジネスロジック
-│   ├── line/        # LINE連携
-│   └── _core/       # フレームワーク（認証、環境変数等）
-├── drizzle/         # データベーススキーマ
-│   └── schema.ts    # テーブル定義
-├── shared/          # 共通型・定数
-├── docs/            # ドキュメント
-└── package.json     # 依存関係
+│   │   ├── pages/          # ページコンポーネント (36ページ)
+│   │   │   ├── Dashboard.tsx
+│   │   │   ├── Onboarding.tsx
+│   │   │   ├── Chat.tsx
+│   │   │   ├── MatchingSession.tsx
+│   │   │   ├── Profile.tsx
+│   │   │   ├── Plan.tsx
+│   │   │   └── ... (他30ページ)
+│   │   ├── components/     # 共通コンポーネント
+│   │   │   ├── DashboardLayout.tsx  # メインレイアウト+認証ガード
+│   │   │   └── ui/         # shadcn/ui
+│   │   ├── _core/hooks/    # useAuth, useTranslation等
+│   │   ├── lib/trpc.ts     # tRPCクライアント設定
+│   │   └── App.tsx         # ルーティング
+│   └── index.html
+├── worker/                 # Cloudflare Worker (API)
+│   ├── src/
+│   │   ├── index.ts        # 全tRPCルーター + Honoミドルウェア (~6100行)
+│   │   ├── db-helpers.ts   # D1スキーマ + マイグレーション + ヘルパー
+│   │   └── llm.ts          # マルチプロバイダーLLM呼び出し
+│   └── vitest.config.ts
+├── e2e/                    # Playwright E2Eテスト (10グループ)
+│   ├── playwright.config.ts
+│   ├── auth.setup.ts
+│   └── group1-10.spec.ts
+├── wrangler.toml           # Worker設定
+└── server/                 # レガシーExpressサーバー（未使用）
 ```
 
-## LINE連携の設定
+## API概要
 
-### 1. LINE Developers でチャネルを作成
+### tRPCルーター (33ルーター)
 
-1. [LINE Developers](https://developers.line.biz/)にアクセス
-2. 新規チャネルを作成（Messaging API）
-3. Channel ID, Channel Secret, Channel Access Tokenを取得
+| ルーター | 説明 |
+|---------|------|
+| `auth` | 認証 (register/login/me/logout/deleteAccount/exportMyData) |
+| `profile` | プロフィール管理 |
+| `myTwin` | 分身AI管理 (CRUD + 性格診断 + 波形) |
+| `friends` | 友達管理 (申請/承認/一覧) |
+| `chat` | AIチャット (セッション/メッセージ) |
+| `matching` | マッチング (作成/対話/分析/エクスポート) |
+| `points` | ポイントシステム |
+| `quests` | デイリークエスト |
+| `growth` | 分身成長システム |
+| `trust` | 信頼度スコア |
+| `marketplace` | ペルソナマーケットプレイス |
+| `notification` | 通知管理 |
+| `admin` | 管理者機能 (ユーザー管理/収益/モデレーション) |
+| `plan` | プラン管理 + レート制限 |
+| `stripe` | 決済連携 |
+| `discover` | ユーザー検索 |
+| `onboarding` | オンボーディングフロー |
+| `scheduler` | 自動マッチングスケジューラー |
 
-### 2. Webhook URLを設定
+### REST エンドポイント
 
-LINE Developersコンソールで、Webhook URLを設定：
+| パス | 説明 |
+|------|------|
+| `GET /api/health` | ヘルスチェック (DB疎通・応答時間) |
+| `GET /api/health/detailed` | 詳細ヘルスチェック (管理者専用) |
+| `GET /api/status` | サービスステータス + 統計 |
+| `POST /api/auth/set-session` | セッションCookie設定 |
+| `POST /api/auth/logout` | セッションCookie削除 |
+| `GET /api/export/matching/:id/csv` | マッチング対話CSVエクスポート |
+| `GET /api/export/matching/:id/pdf` | マッチング対話PDFレポート |
+| `GET /assets/*` | R2ストレージファイル配信 |
+| `POST /api/stripe/webhook` | Stripe Webhook |
 
-```
-https://your-domain.com/api/line/webhook
-```
+## データベーステーブル (38テーブル)
 
-### 3. 環境変数を設定
-
-`.env`ファイルに以下を追加：
-
-```env
-LINE_CHANNEL_ID=your-channel-id
-LINE_CHANNEL_SECRET=your-channel-secret
-LINE_CHANNEL_ACCESS_TOKEN=your-access-token
-```
-
-### 4. LINE公式アカウントを友だち追加
-
-QRコードまたはLINE IDで友だち追加すると、6桁の連携コードが送信されます。
-
-### 5. Webアプリで連携コードを入力
-
-`/line`画面で6桁のコードを入力して連携完了。
-
-## Clawdbot連携の設定
-
-### 1. Clawdbot Gatewayを起動
-
-Clawdbot Gatewayを別途起動し、URLを確認（例: `http://localhost:4141`）
-
-### 2. 環境変数を設定（オプション）
-
-システム全体のデフォルトとして設定する場合：
-
-```env
-CLAWDBOT_GATEWAY_URL=https://your-clawdbot-gateway.com
-CLAWDBOT_AUTH_TOKEN=your-auth-token
-CLAWDBOT_AGENT_ID=main
-```
-
-### 3. Webアプリで設定
-
-`/clawdbot-link`画面で個別に設定することも可能：
-
-- Gateway URL: Clawdbot GatewayのURL
-- 認証トークン: Bearer トークン（オプション）
-- エージェントID: デフォルトは `main`
-
-**注意**: 本番環境では`localhost`は使用できません。ngrokなどで公開URLを取得してください。
+users, user_profiles, digital_twins, friendships, knowledge_base, uploaded_files,
+ai_api_configs, orchestration_roles, chat_sessions, chat_messages,
+matching_sessions, matching_dialogues, matching_results, usage_tracking,
+value_scenario_responses, cumulative_waveforms, other_perspective_waveforms,
+intimacy_scores, user_points, point_transactions, redeemable_products,
+point_redemptions, point_settings, line_connections, clawdbot_connections,
+twin_growth_status, twin_skill_levels, twin_milestones, cards,
+conversation_learning, ai_provider_settings, persona_templates,
+persona_purchases, persona_reviews, trust_scores, trust_score_history,
+matching_requests, auto_matching_schedules, notification_settings,
+content_reports, moderation_actions, twin_visibility_rules, notifications
 
 ## テスト
 
 ```bash
-# 全テスト実行
-pnpm test
+# Workerユニットテスト
+npx vitest run --config worker/vitest.config.ts
 
-# 特定のテストファイルを実行
-pnpm test server/cards.test.ts
+# E2Eテスト（全グループ）
+npx playwright test --config e2e/playwright.config.ts
 
-# テストカバレッジ
-pnpm test --coverage
+# 特定グループのみ
+npx playwright test --config e2e/playwright.config.ts e2e/group1-core.spec.ts
 ```
 
-主要なテストファイル：
+## セキュリティ
 
-- `server/auth.logout.test.ts` - 認証テスト
-- `server/cards.test.ts` - カード管理テスト
-- `server/line/linkByCode.test.ts` - LINE連携テスト
-- `server/clawdbot.test.ts` - Clawdbot接続テスト
-
-## Phase2 ゲート運用メモ（Cloudflare）
-
-`pnpm check` / `pnpm build` / `pnpm exec wrangler deploy --dry-run` の3ゲートを Phase2 の標準確認手順とする。
-
-### build warning（chunk size）の扱い
-
-- `(!) Some chunks are larger than 500 kB` は **警告** であり、単体ではリリースブロッカーではない。
-- ただし以下を満たす場合は改善タスクを切る：
-  - メインバンドル（`index-*.js`）が前回安定値から **+15%以上** 増加
-  - 体感初期表示劣化（LCP悪化・初回遅延）が確認される
-  - 同一警告が3回以上連続し、増加トレンドが続く
-
-### 監視ポイント
-
-- `pnpm build` 出力の `index-*.js` サイズ（gzip含む）
-- `wrangler deploy --dry-run` の binding 認識（特に `DB`）
-- `pnpm check` の再発有無（TS2339 / TS7006）
-
-### 対応トリガー時の優先順位
-
-1. ルート単位の遅延読込（dynamic import）
-2. 重い表示機能（図表・エディタ・可視化）の分割
-3. `rollupOptions.output.manualChunks` の導入
-
-## トラブルシューティング
-
-### データベース接続エラー
-
-`DATABASE_URL`が正しく設定されているか確認してください。
-
-```bash
-# データベース接続テスト
-pnpm db:push
-```
-
-### LINE Webhook エラー
-
-1. Webhook URLが正しく設定されているか確認
-2. `LINE_CHANNEL_SECRET`が正しいか確認
-3. サーバーログを確認（`/api/line/webhook`）
-
-### Clawdbot 接続エラー
-
-1. Gateway URLが到達可能か確認（`localhost`は本番では使用不可）
-2. 認証トークンが正しいか確認
-3. `/clawdbot-link`画面で接続テストを実行
+- JWT Cookie認証 (HttpOnly, SameSite=None, Secure)
+- PBKDF2 (100,000 iterations) パスワードハッシュ
+- プランベースAPIレート制限 (Free: 30/min, Premium: 120/min, Enterprise: 600/min)
+- 認証エンドポイント強化レート制限 (10/min)
+- CORS ホワイトリスト
+- CSP / X-Frame-Options / HSTS セキュリティヘッダー
+- Stripe Webhook HMAC署名検証
+- パラメータ化クエリ (D1 prepared statements)
 
 ## ライセンス
 
 MIT License
-
-## 貢献
-
-プルリクエストを歓迎します。大きな変更の場合は、まずissueを開いて変更内容を議論してください。
-
-## サポート
-
-問題や質問がある場合は、GitHubのissueを作成してください。

@@ -29,6 +29,7 @@ type Env = {
   AZURE_FOUNDRY_API_KEY?: string;
   AZURE_FOUNDRY_RESOURCE?: string;
   STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
   LINE_CHANNEL_SECRET?: string;
   LINE_CHANNEL_ACCESS_TOKEN?: string;
   CLAWDBOT_GATEWAY_URL?: string;
@@ -142,7 +143,7 @@ const appRouter = router({
   // ============ Auth ============
   auth: router({
     register: publicProcedure
-      .input(z.object({ email: z.string().email(), password: z.string().min(6), name: z.string().min(1), tosAccepted: z.boolean().optional() }))
+      .input(z.object({ email: z.string().email().max(255), password: z.string().min(8).max(128), name: z.string().min(1).max(100), tosAccepted: z.boolean().optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         // Check if email already exists
@@ -598,6 +599,7 @@ Step 5完了時に以下を出力:
         await ensureSchema(ctx.env.DB);
         const twin = await getMyTwin(ctx.env.DB, ctx.userId);
         if (!twin) throw new TRPCError({ code: "NOT_FOUND" });
+        // Dynamic SET clause: column names are hardcoded below, not from user input (safe from SQL injection)
         const sets: string[] = [];
         const binds: any[] = [];
         if (input.name !== undefined) { sets.push("name=?"); binds.push(input.name); }
@@ -1808,7 +1810,12 @@ JSON形式で出力:
       .input(z.object({ id: z.number() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
-        await ctx.env.DB.prepare(`DELETE FROM knowledge_base WHERE id=?`).bind(input.id).run();
+        // Ownership check: only allow deleting knowledge entries belonging to user's twin
+        const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+        if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIが見つかりません" });
+        const entry = await ctx.env.DB.prepare(`SELECT id FROM knowledge_base WHERE id=? AND twinId=?`).bind(input.id, twin.id).first<any>();
+        if (!entry) throw new TRPCError({ code: "NOT_FOUND", message: "ナレッジエントリが見つかりません" });
+        await ctx.env.DB.prepare(`DELETE FROM knowledge_base WHERE id=? AND twinId=?`).bind(input.id, twin.id).run();
         return { success: true };
       }),
   }),
@@ -1946,6 +1953,7 @@ JSON形式で出力:
       .input(z.object({ id: z.number(), roleName: z.string().optional(), roleDescription: z.string().optional(), assignedProvider: z.enum(["openai", "gemini", "anthropic", "grok", "builtin"]).optional(), assignedModel: z.string().optional(), priority: z.number().optional(), isActive: z.number().optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
+        // Dynamic SET clause: column names are hardcoded below, not from user input (safe from SQL injection)
         const sets: string[] = [];
         const binds: any[] = [];
         if (input.roleName !== undefined) { sets.push("roleName=?"); binds.push(input.roleName); }
@@ -3624,6 +3632,7 @@ JSON形式で回答: {"summary": "傾向の要約(50文字)", "topPattern": "最
       .input(z.object({ id: z.number(), name: z.string().optional(), title: z.string().optional(), company: z.string().optional(), position: z.string().optional(), email: z.string().optional(), phone: z.string().optional(), notes: z.string().optional(), isFavorite: z.boolean().optional(), isArchived: z.boolean().optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
+        // Dynamic SET clause: column names are hardcoded below, not from user input (safe from SQL injection)
         const sets: string[] = [];
         const binds: any[] = [];
         const nameVal = input.name ?? input.title;
@@ -4006,6 +4015,7 @@ JSON形式で出力:
         await ensureSchema(ctx.env.DB);
         const existing = await ctx.env.DB.prepare(`SELECT id FROM conversation_learning WHERE userId=?`).bind(ctx.userId).first<any>();
         if (existing) {
+          // Dynamic SET clause: column names are hardcoded below, not from user input (safe from SQL injection)
           const sets: string[] = [];
           const binds: any[] = [];
           if (input.autoLearnEnabled !== undefined) { sets.push("autoLearnEnabled=?"); binds.push(input.autoLearnEnabled ? 1 : 0); }
@@ -4045,6 +4055,7 @@ JSON形式で出力:
       .input(z.object({ gatewayUrl: z.string().optional(), authToken: z.string().optional(), agentId: z.string().optional(), settings: z.record(z.string(), z.unknown()).optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
+        // Dynamic SET clause: column names are hardcoded below, not from user input (safe from SQL injection)
         const sets: string[] = [];
         const binds: any[] = [];
         if (input.gatewayUrl !== undefined) { sets.push("gatewayUrl=?"); binds.push(input.gatewayUrl); }
@@ -4631,6 +4642,7 @@ JSON形式で出力:
         // Update twin profile if data provided
         const twin = await getMyTwin(ctx.env.DB, ctx.userId);
         if (twin) {
+          // Dynamic SET clause: column names are hardcoded below, not from user input (safe from SQL injection)
           const sets: string[] = [];
           const binds: any[] = [];
           if (input.description) { sets.push("description=?"); binds.push(input.description); }
@@ -5322,8 +5334,25 @@ api.use("*", async (c, next) => {
   c.res.headers.set("X-Frame-Options", "DENY");
   c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   c.res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  c.res.headers.set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://bunshin-ai-api.common-gifted-tokyo.workers.dev https://bunshin-ai.pages.dev; frame-ancestors 'none'");
   if (c.req.url.includes("workers.dev")) {
     c.res.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+});
+
+// Request counter for monitoring
+let requestCountSinceStart = 0;
+let errorCountSinceStart = 0;
+const startedAt = new Date().toISOString();
+
+api.use("/api/*", async (c, next) => {
+  requestCountSinceStart++;
+  try {
+    await next();
+    if (c.res.status >= 500) errorCountSinceStart++;
+  } catch (err) {
+    errorCountSinceStart++;
+    throw err;
   }
 });
 
@@ -5396,7 +5425,84 @@ api.use("/api/trpc/auth.*", async (c, next) => {
 });
 
 api.get("/", (c) => c.json({ message: "Bunshin AI API v2. Use /api/* endpoints." }));
-api.get("/api/health", (c) => c.json({ ok: true }));
+api.get("/api/health", async (c) => {
+  const env = c.env as Env;
+  const start = Date.now();
+  let dbOk = false;
+  let dbLatencyMs = 0;
+  try {
+    const dbStart = Date.now();
+    await env.DB.prepare("SELECT 1").first();
+    dbLatencyMs = Date.now() - dbStart;
+    dbOk = true;
+  } catch { /* DB unreachable */ }
+  const totalMs = Date.now() - start;
+  return c.json({
+    ok: dbOk,
+    timestamp: new Date().toISOString(),
+    version: "2.2.0",
+    uptime: "cloudflare-workers",
+    checks: {
+      database: { ok: dbOk, latencyMs: dbLatencyMs },
+      r2Storage: { ok: !!env.ASSETS },
+      llm: { ok: !!(env.AZURE_FOUNDRY_API_KEY) },
+    },
+    responseTimeMs: totalMs,
+    requestCount: requestCountSinceStart,
+    errorCount: errorCountSinceStart,
+    startedAt,
+  });
+});
+
+api.get("/api/health/detailed", async (c) => {
+  const env = c.env as Env;
+  await ensureSchema(env.DB);
+  // Verify auth - admin only
+  const cookieHeader = c.req.header("cookie") || null;
+  const token = parseCookie(cookieHeader, COOKIE_NAME);
+  if (!token) return c.json({ error: "Unauthorized" }, 401);
+  const sess = await verifySessionToken(token, env);
+  if (!sess) return c.json({ error: "Unauthorized" }, 401);
+  const user = await env.DB.prepare("SELECT role FROM users WHERE id=?").bind(sess.userId).first<any>();
+  if (user?.role !== "admin") return c.json({ error: "Admin only" }, 403);
+
+  const start = Date.now();
+  // DB stats
+  const userCount = await env.DB.prepare("SELECT COUNT(*) as cnt FROM users WHERE isNpc=0").first<any>();
+  const twinCount = await env.DB.prepare("SELECT COUNT(*) as cnt FROM digital_twins").first<any>();
+  const sessionCount = await env.DB.prepare("SELECT COUNT(*) as cnt FROM matching_sessions").first<any>();
+  const chatCount = await env.DB.prepare("SELECT COUNT(*) as cnt FROM chat_messages").first<any>();
+  const notifCount = await env.DB.prepare("SELECT COUNT(*) as cnt FROM notifications WHERE isRead=0").first<any>();
+  // Recent errors (matching sessions with failed status)
+  const failedMatchings = await env.DB.prepare("SELECT COUNT(*) as cnt FROM matching_sessions WHERE status='failed'").first<any>();
+  // Active users last 24h
+  const activeUsers24h = await env.DB.prepare("SELECT COUNT(*) as cnt FROM users WHERE lastSignedIn > datetime('now', '-1 day')").first<any>();
+
+  return c.json({
+    ok: true,
+    timestamp: new Date().toISOString(),
+    version: "2.2.0",
+    responseTimeMs: Date.now() - start,
+    database: {
+      users: userCount?.cnt ?? 0,
+      twins: twinCount?.cnt ?? 0,
+      matchingSessions: sessionCount?.cnt ?? 0,
+      chatMessages: chatCount?.cnt ?? 0,
+      unreadNotifications: notifCount?.cnt ?? 0,
+      failedMatchings: failedMatchings?.cnt ?? 0,
+    },
+    activity: {
+      activeUsers24h: activeUsers24h?.cnt ?? 0,
+    },
+    services: {
+      database: true,
+      r2Storage: !!env.ASSETS,
+      llm: !!env.AZURE_FOUNDRY_API_KEY,
+      stripe: !!env.STRIPE_SECRET_KEY,
+      slack: !!env.SLACK_WEBHOOK_URL,
+    },
+  });
+});
 
 api.get("/api/status", async (c) => {
   const db = (c.env as Env).DB;
@@ -5406,7 +5512,7 @@ api.get("/api/status", async (c) => {
   const twinCount = await db.prepare(`SELECT COUNT(*) as cnt FROM digital_twins`).first<any>();
   return c.json({
     status: "ok",
-    version: "2.1.0",
+    version: "2.2.0",
     features: {
       npcTutorial: true,
       trustScore: true,
@@ -5579,6 +5685,27 @@ api.post("/api/stripe/webhook", async (c) => {
 
   await ensureSchema(env.DB);
   const body = await c.req.text();
+
+  // Verify webhook signature if secret is configured
+  if (env.STRIPE_WEBHOOK_SECRET) {
+    const sigHeader = c.req.header("stripe-signature") || "";
+    const parts = Object.fromEntries(sigHeader.split(",").map(p => { const [k, v] = p.split("="); return [k, v]; }));
+    const timestamp = parts["t"];
+    const signature = parts["v1"];
+    if (!timestamp || !signature) return c.json({ error: "Missing signature" }, 400);
+    // Reject old timestamps (>5 min)
+    if (Math.abs(Date.now() / 1000 - parseInt(timestamp)) > 300) {
+      return c.json({ error: "Timestamp too old" }, 400);
+    }
+    const payload = `${timestamp}.${body}`;
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", encoder.encode(env.STRIPE_WEBHOOK_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(payload));
+    const expectedSig = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, "0")).join("");
+    if (expectedSig !== signature) {
+      return c.json({ error: "Invalid signature" }, 400);
+    }
+  }
 
   let event: any;
   try {
@@ -6086,10 +6213,12 @@ async function handleScheduled(env: Env): Promise<void> {
       await db.prepare(`UPDATE matching_sessions SET status='completed', completedAt=datetime('now') WHERE id=?`).bind(sessionId).run();
 
       // Update schedule: set lastRunAt and compute nextRunAt
-      const interval = schedule.frequency === "daily" ? "+1 day" : schedule.frequency === "biweekly" ? "+14 days" : "+7 days";
+      // Use whitelist to prevent SQL injection from schedule.frequency values
+      const INTERVAL_MAP: Record<string, string> = { daily: "+1 day", biweekly: "+14 days", weekly: "+7 days" };
+      const interval = INTERVAL_MAP[schedule.frequency] || "+7 days";
       await db.prepare(
-        `UPDATE auto_matching_schedules SET lastRunAt=datetime('now'), nextRunAt=datetime('now','${interval}'), updatedAt=datetime('now') WHERE id=?`
-      ).bind(schedule.id).run();
+        `UPDATE auto_matching_schedules SET lastRunAt=datetime('now'), nextRunAt=datetime('now',?), updatedAt=datetime('now') WHERE id=?`
+      ).bind(interval, schedule.id).run();
     } catch (err) {
       console.error(`[Scheduler] Failed for schedule ${schedule.id}:`, err);
     }

@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS uploaded_files (
   processedAt TEXT,
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_userId ON uploaded_files(userId);
 
 CREATE TABLE IF NOT EXISTS ai_api_configs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,6 +131,7 @@ CREATE TABLE IF NOT EXISTS ai_api_configs (
   createdAt TEXT NOT NULL DEFAULT (datetime('now')),
   updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_ai_api_configs_userId ON ai_api_configs(userId);
 
 CREATE TABLE IF NOT EXISTS orchestration_roles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -143,6 +145,7 @@ CREATE TABLE IF NOT EXISTS orchestration_roles (
   createdAt TEXT NOT NULL DEFAULT (datetime('now')),
   updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_orch_roles_userId ON orchestration_roles(userId);
 
 CREATE TABLE IF NOT EXISTS chat_sessions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -174,6 +177,9 @@ CREATE TABLE IF NOT EXISTS matching_sessions (
   createdAt TEXT NOT NULL DEFAULT (datetime('now')),
   completedAt TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_matching_sessions_initiator ON matching_sessions(initiatorUserId);
+CREATE INDEX IF NOT EXISTS idx_matching_sessions_twin1 ON matching_sessions(twin1Id);
+CREATE INDEX IF NOT EXISTS idx_matching_sessions_twin2 ON matching_sessions(twin2Id);
 
 CREATE TABLE IF NOT EXISTS matching_dialogues (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -185,6 +191,7 @@ CREATE TABLE IF NOT EXISTS matching_dialogues (
   turnNumber INTEGER NOT NULL,
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_matching_dialogues_sessionId ON matching_dialogues(sessionId);
 
 CREATE TABLE IF NOT EXISTS matching_results (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -204,6 +211,7 @@ CREATE TABLE IF NOT EXISTS matching_results (
   nextSteps TEXT,
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_matching_results_sessionId ON matching_results(sessionId);
 
 CREATE TABLE IF NOT EXISTS usage_tracking (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -213,6 +221,7 @@ CREATE TABLE IF NOT EXISTS usage_tracking (
   createdAt TEXT NOT NULL DEFAULT (datetime('now')),
   updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_usage_tracking_userId ON usage_tracking(userId);
 
 CREATE TABLE IF NOT EXISTS value_scenario_responses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -225,6 +234,7 @@ CREATE TABLE IF NOT EXISTS value_scenario_responses (
   analysisResult TEXT,
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_vsr_userId ON value_scenario_responses(userId);
 
 CREATE TABLE IF NOT EXISTS cumulative_waveforms (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -238,6 +248,7 @@ CREATE TABLE IF NOT EXISTS cumulative_waveforms (
   lastUpdated TEXT NOT NULL DEFAULT (datetime('now')),
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_cum_waveforms_userId ON cumulative_waveforms(userId);
 
 CREATE TABLE IF NOT EXISTS other_perspective_waveforms (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -252,6 +263,7 @@ CREATE TABLE IF NOT EXISTS other_perspective_waveforms (
   lastUpdated TEXT NOT NULL DEFAULT (datetime('now')),
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_other_waveforms_userId ON other_perspective_waveforms(userId);
 
 CREATE TABLE IF NOT EXISTS intimacy_scores (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -268,6 +280,7 @@ CREATE TABLE IF NOT EXISTS intimacy_scores (
   createdAt TEXT NOT NULL DEFAULT (datetime('now')),
   updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_intimacy_userId ON intimacy_scores(userId);
 
 CREATE TABLE IF NOT EXISTS user_points (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -396,6 +409,7 @@ CREATE TABLE IF NOT EXISTS twin_growth_status (
   createdAt TEXT NOT NULL DEFAULT (datetime('now')),
   updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_growth_twinId ON twin_growth_status(twinId);
 
 CREATE TABLE IF NOT EXISTS twin_skill_levels (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -611,7 +625,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   isRead INTEGER NOT NULL DEFAULT 0,
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_notifications_userId ON notifications(userId);
+CREATE INDEX IF NOT EXISTS idx_notifications_userId_read ON notifications(userId, isRead);
 `;
 
 // Migrations to run after schema creation (ALTER TABLE etc.)
