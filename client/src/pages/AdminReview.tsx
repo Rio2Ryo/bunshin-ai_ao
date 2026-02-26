@@ -20,6 +20,11 @@ import {
   Loader2,
   Clock,
   Shield,
+  DollarSign,
+  TrendingUp,
+  Activity,
+  Store,
+  Coins,
 } from "lucide-react";
 
 const TARGET_TYPE_LABELS: Record<string, string> = {
@@ -70,6 +75,10 @@ function AdminReview() {
     staleTime: 30_000,
   });
 
+  const { data: revenueData, isLoading: revenueLoading } = trpc.admin.revenue.useQuery(undefined, {
+    staleTime: 60_000,
+  });
+
   // Mutations
   const reviewMutation = trpc.admin.reviewReport.useMutation({
     onSuccess: () => {
@@ -104,7 +113,7 @@ function AdminReview() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="overview">概要</TabsTrigger>
             <TabsTrigger value="reports" className="relative">
               レポート
@@ -115,7 +124,8 @@ function AdminReview() {
               )}
             </TabsTrigger>
             <TabsTrigger value="users">ユーザー</TabsTrigger>
-            <TabsTrigger value="history">モデレーション履歴</TabsTrigger>
+            <TabsTrigger value="history">履歴</TabsTrigger>
+            <TabsTrigger value="revenue">収益</TabsTrigger>
           </TabsList>
 
           {/* Overview Tab */}
@@ -498,6 +508,238 @@ function AdminReview() {
                   </div>
                 </CardContent>
               </Card>
+            )}
+          </TabsContent>
+
+          {/* Revenue Tab */}
+          <TabsContent value="revenue" className="space-y-6">
+            {revenueLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : (
+              <>
+                {/* KPI Cards */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                          <Users className="h-5 w-5 text-blue-500" />
+                        </div>
+                        <div>
+                          <p className="text-2xl font-bold">{revenueData?.totalUsers ?? 0}</p>
+                          <p className="text-xs text-muted-foreground">総ユーザー数</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-lg bg-green-500/10 flex items-center justify-center">
+                          <Activity className="h-5 w-5 text-green-500" />
+                        </div>
+                        <div>
+                          <p className="text-2xl font-bold">{revenueData?.activeUsers ?? 0}</p>
+                          <p className="text-xs text-muted-foreground">アクティブ (30日)</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
+                          <DollarSign className="h-5 w-5 text-amber-500" />
+                        </div>
+                        <div>
+                          <p className="text-2xl font-bold">{"\u00A5"}{(revenueData?.monthlyRevenue ?? 0).toLocaleString()}</p>
+                          <p className="text-xs text-muted-foreground">月間収益 (推定)</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-lg bg-red-500/10 flex items-center justify-center">
+                          <TrendingUp className="h-5 w-5 text-red-500" />
+                        </div>
+                        <div>
+                          <p className="text-2xl font-bold">{revenueData?.churnRate ?? 0}%</p>
+                          <p className="text-xs text-muted-foreground">解約率 (30日)</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-6">
+                  {/* Plan Distribution */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">プラン別ユーザー分布</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {revenueData?.planDistribution && revenueData.planDistribution.length > 0 ? (
+                        <div className="space-y-4">
+                          {(() => {
+                            const planLabels: Record<string, string> = { free: "フリー", premium: "プレミアム", enterprise: "エンタープライズ" };
+                            const planColors: Record<string, string> = { free: "bg-gray-400", premium: "bg-amber-500", enterprise: "bg-purple-500" };
+                            const total = revenueData.planDistribution.reduce((s: number, p: any) => s + (p.count || 0), 0);
+                            return revenueData.planDistribution.map((p: any) => {
+                              const pct = total > 0 ? Math.round((p.count / total) * 100) : 0;
+                              return (
+                                <div key={p.plan} className="space-y-1.5">
+                                  <div className="flex items-center justify-between text-sm">
+                                    <span className="font-medium">{planLabels[p.plan] || p.plan}</span>
+                                    <span className="text-muted-foreground">{p.count}人 ({pct}%)</span>
+                                  </div>
+                                  <div className="h-3 bg-muted rounded-full overflow-hidden">
+                                    <div
+                                      className={`h-full rounded-full transition-all ${planColors[p.plan] || "bg-blue-500"}`}
+                                      style={{ width: `${pct}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            });
+                          })()}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">データがありません</p>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {/* Monthly Revenue Trend */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">月間収益トレンド</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {revenueData?.monthlyTrend && revenueData.monthlyTrend.length > 0 ? (
+                        <div className="space-y-2">
+                          {(() => {
+                            const maxRevenue = Math.max(...revenueData.monthlyTrend.map((m: any) => m.revenue || 0), 1);
+                            return revenueData.monthlyTrend.map((m: any) => {
+                              const pct = Math.round(((m.revenue || 0) / maxRevenue) * 100);
+                              return (
+                                <div key={m.month} className="flex items-center gap-3 text-sm">
+                                  <span className="w-16 text-muted-foreground text-xs shrink-0">{m.month}</span>
+                                  <div className="flex-1 h-5 bg-muted rounded overflow-hidden">
+                                    <div
+                                      className="h-full bg-amber-500 rounded transition-all"
+                                      style={{ width: `${pct}%` }}
+                                    />
+                                  </div>
+                                  <span className="w-20 text-right text-xs font-medium shrink-0">
+                                    {"\u00A5"}{(m.revenue || 0).toLocaleString()}
+                                  </span>
+                                </div>
+                              );
+                            });
+                          })()}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">データがありません</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-6">
+                  {/* DAU Chart */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">日次アクティブユーザー (14日間)</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {revenueData?.dailyActive && revenueData.dailyActive.length > 0 ? (
+                        <div className="flex items-end gap-1 h-32">
+                          {(() => {
+                            const maxCount = Math.max(...revenueData.dailyActive.map((d: any) => d.count || 0), 1);
+                            return revenueData.dailyActive.map((d: any) => {
+                              const heightPct = Math.max(((d.count || 0) / maxCount) * 100, 4);
+                              const dayLabel = d.day ? d.day.slice(5) : "";
+                              return (
+                                <div key={d.day} className="flex-1 flex flex-col items-center gap-1" title={`${d.day}: ${d.count}人`}>
+                                  <span className="text-[10px] text-muted-foreground">{d.count}</span>
+                                  <div className="w-full flex justify-center">
+                                    <div
+                                      className="w-full max-w-[24px] bg-blue-500 rounded-t transition-all"
+                                      style={{ height: `${heightPct}%`, minHeight: "4px" }}
+                                    />
+                                  </div>
+                                  <span className="text-[9px] text-muted-foreground">{dayLabel}</span>
+                                </div>
+                              );
+                            });
+                          })()}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">データがありません</p>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {/* Marketplace & Points */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">マーケットプレイス & ポイント経済</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                      {/* Marketplace */}
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <Store className="h-4 w-4 text-purple-500" />
+                          マーケットプレイス
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="rounded-lg bg-muted/50 p-3">
+                            <p className="text-lg font-bold">{revenueData?.marketplaceSales?.count ?? 0}</p>
+                            <p className="text-xs text-muted-foreground">総販売数</p>
+                          </div>
+                          <div className="rounded-lg bg-muted/50 p-3">
+                            <p className="text-lg font-bold">{(revenueData?.marketplaceSales?.totalPoints ?? 0).toLocaleString()}</p>
+                            <p className="text-xs text-muted-foreground">消費ポイント</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Point Economy */}
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <Coins className="h-4 w-4 text-amber-500" />
+                          ポイント経済
+                        </div>
+                        {revenueData?.pointStats && revenueData.pointStats.length > 0 ? (
+                          <div className="space-y-2">
+                            {revenueData.pointStats.map((ps: any) => {
+                              const typeLabels: Record<string, string> = { earn: "獲得", spend: "消費", expire: "期限切れ", bonus: "ボーナス", refund: "返金" };
+                              const typeColors: Record<string, string> = { earn: "text-green-500", spend: "text-red-500", expire: "text-gray-500", bonus: "text-blue-500", refund: "text-amber-500" };
+                              return (
+                                <div key={ps.type} className="flex items-center justify-between text-sm">
+                                  <span className={`font-medium ${typeColors[ps.type] || ""}`}>
+                                    {typeLabels[ps.type] || ps.type}
+                                  </span>
+                                  <div className="text-right">
+                                    <span className="font-medium">{(ps.total || 0).toLocaleString()}pt</span>
+                                    <span className="text-muted-foreground text-xs ml-2">({ps.count}件)</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">ポイント取引がありません</p>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </>
             )}
           </TabsContent>
         </Tabs>

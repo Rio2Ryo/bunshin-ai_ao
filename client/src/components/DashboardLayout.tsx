@@ -20,7 +20,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -157,6 +157,16 @@ function DashboardLayoutContent({
   const { data: receivedRequests } = trpc.matching.receivedRequests.useQuery(undefined, { staleTime: 15_000 });
   const pendingRequestCount = receivedRequests?.length ?? 0;
   const { t, language, setLanguage } = useTranslation();
+  const utils = trpc.useUtils();
+  const { data: notifData } = trpc.notification.list.useQuery({ unreadOnly: true, limit: 10 }, { refetchInterval: 30_000, staleTime: 10_000 });
+  const markAllReadMut = trpc.notification.markAllRead.useMutation({ onSuccess: () => utils.notification.list.invalidate() });
+  const unreadCount = notifData?.unreadCount ?? 0;
+
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
 
   const translatedMenuGroups: MenuGroup[] = useMemo(() => [
     {
@@ -351,6 +361,45 @@ function DashboardLayoutContent({
           </SidebarContent>
 
           <SidebarFooter className="p-3">
+            {/* Notification bell */}
+            <div className="px-1 mb-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent transition-colors w-full group-data-[collapsible=icon]:justify-center relative">
+                    <Bell className="h-4 w-4 shrink-0" />
+                    {!isCollapsed && <span>通知</span>}
+                    {unreadCount > 0 && (
+                      <Badge variant="destructive" className="absolute -top-1 -right-1 h-4 min-w-4 p-0 flex items-center justify-center text-[9px]">
+                        {unreadCount > 9 ? '9+' : unreadCount}
+                      </Badge>
+                    )}
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-72">
+                  <div className="px-3 py-2 flex items-center justify-between border-b">
+                    <span className="text-sm font-medium">通知</span>
+                    {unreadCount > 0 && (
+                      <button onClick={() => markAllReadMut.mutate()} className="text-xs text-primary hover:underline">すべて既読</button>
+                    )}
+                  </div>
+                  <div className="max-h-60 overflow-y-auto">
+                    {(notifData?.notifications ?? []).length === 0 ? (
+                      <div className="px-3 py-4 text-center text-xs text-muted-foreground">通知はありません</div>
+                    ) : (
+                      (notifData?.notifications ?? []).map((n: any) => (
+                        <DropdownMenuItem key={n.id} className="flex flex-col items-start gap-0.5 py-2 cursor-pointer" onClick={() => {
+                          if (n.data) { try { const d = JSON.parse(n.data); if (d.link) setLocation(d.link); } catch {} }
+                        }}>
+                          <span className="text-xs font-medium">{n.title}</span>
+                          {n.message && <span className="text-[11px] text-muted-foreground line-clamp-2">{n.message}</span>}
+                          <span className="text-[10px] text-muted-foreground">{new Date(n.createdAt).toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                        </DropdownMenuItem>
+                      ))
+                    )}
+                  </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
             {/* Language toggle */}
             <div className="px-1 mb-2">
               <button
@@ -381,6 +430,13 @@ function DashboardLayoutContent({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
                 <DropdownMenuItem
+                  onClick={() => setLocation("/profile")}
+                  className="cursor-pointer"
+                >
+                  <Settings2 className="mr-2 h-4 w-4" />
+                  <span>{language === "en" ? "Account Settings" : "アカウント設定"}</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
                   onClick={logout}
                   className="cursor-pointer text-destructive focus:text-destructive"
                 >
@@ -407,21 +463,28 @@ function DashboardLayoutContent({
             <span className="text-sm font-medium tracking-tight text-foreground">
               {activeMenuItem?.label ?? "分身AI"}
             </span>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-accent">
-                  <Avatar className="h-7 w-7 border">
-                    <AvatarFallback className="text-[10px] font-medium">
-                      {user?.name?.charAt(0).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
+            <div className="flex items-center gap-1">
+              {unreadCount > 0 && (
+                <button onClick={() => setLocation('/dashboard')} className="relative h-8 w-8 flex items-center justify-center rounded-lg hover:bg-accent">
+                  <Bell className="h-5 w-5 text-muted-foreground" />
+                  <span className="absolute -top-0.5 -right-0.5 h-3.5 w-3.5 rounded-full bg-destructive text-[9px] text-white flex items-center justify-center">{unreadCount > 9 ? '9+' : unreadCount}</span>
                 </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuItem onClick={() => setLocation("/profile")} className="cursor-pointer">
-                  <User className="mr-2 h-4 w-4" />
-                  <span>{t("nav.profile")}</span>
-                </DropdownMenuItem>
+              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-accent">
+                    <Avatar className="h-7 w-7 border">
+                      <AvatarFallback className="text-[10px] font-medium">
+                        {user?.name?.charAt(0).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem onClick={() => setLocation("/profile")} className="cursor-pointer">
+                    <User className="mr-2 h-4 w-4" />
+                    <span>{t("nav.profile")}</span>
+                  </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setLocation("/plan")} className="cursor-pointer">
                   <Crown className="mr-2 h-4 w-4" />
                   <span>{t("nav.plan")}</span>
@@ -439,6 +502,7 @@ function DashboardLayoutContent({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            </div>
           </div>
         )}
         <main id="main-content" className={`flex-1 p-4 ${isMobile ? "pb-20" : ""}`}>{children}</main>

@@ -11,14 +11,32 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Save, Plus, X, Eye, Shield } from "lucide-react";
+import { Loader2, Save, Plus, X, Eye, Shield, Download, Trash2, AlertTriangle } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { useLocation } from "wouter";
 
 export default function Profile() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const [, navigate] = useLocation();
   usePageMeta({ title: "プロフィール", description: "あなたのプロフィール情報を管理しましょう。スキル、経歴、自己紹介を設定できます。", path: "/profile" });
   const { data: profile, isLoading, isError } = trpc.profile.get.useQuery();
   const { data: trustData } = trpc.trust.getScore.useQuery();
   const updateProfile = trpc.profile.update.useMutation();
+
+  // Account deletion state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deletePassword, setDeletePassword] = useState("");
+  const [isExporting, setIsExporting] = useState(false);
+  const deleteAccount = trpc.auth.deleteAccount.useMutation();
 
   const [formData, setFormData] = useState({
     displayName: "",
@@ -363,6 +381,174 @@ export default function Profile() {
             </Button>
           </div>
         </form>
+
+        {/* Danger Zone */}
+        <Card className="border-destructive/50">
+          <CardHeader>
+            <CardTitle className="text-destructive flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5" />
+              危険な操作
+            </CardTitle>
+            <CardDescription>
+              アカウントに関する取り消し不可能な操作です。慎重に行ってください。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Data Export */}
+            <div className="flex items-center justify-between rounded-lg border p-4">
+              <div>
+                <p className="text-sm font-medium">データエクスポート</p>
+                <p className="text-xs text-muted-foreground">
+                  あなたのデータをJSON形式でダウンロードします（GDPR対応）
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isExporting}
+                onClick={async () => {
+                  setIsExporting(true);
+                  try {
+                    const res = await fetch(
+                      `${(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "")}/trpc/auth.exportMyData`,
+                      { credentials: "include" }
+                    );
+                    if (!res.ok) throw new Error("Export failed");
+                    const json = await res.json() as any;
+                    // tRPC wraps the result — extract .result.data
+                    const data = json?.result?.data?.json ?? json?.result?.data ?? json;
+                    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `bunshin-ai-data-export-${new Date().toISOString().slice(0, 10)}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    toast.success("データをエクスポートしました");
+                  } catch {
+                    toast.error("データのエクスポートに失敗しました");
+                  } finally {
+                    setIsExporting(false);
+                  }
+                }}
+              >
+                {isExporting ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4 mr-2" />
+                )}
+                エクスポート
+              </Button>
+            </div>
+
+            {/* Account Deletion */}
+            <div className="flex items-center justify-between rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+              <div>
+                <p className="text-sm font-medium text-destructive">アカウント削除</p>
+                <p className="text-xs text-muted-foreground">
+                  アカウントとすべてのデータが完全に削除されます
+                </p>
+              </div>
+              <Dialog open={deleteDialogOpen} onOpenChange={(open) => {
+                setDeleteDialogOpen(open);
+                if (!open) {
+                  setDeleteConfirmation("");
+                  setDeletePassword("");
+                }
+              }}>
+                <DialogTrigger asChild>
+                  <Button variant="destructive" size="sm">
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    アカウント削除
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle className="text-destructive flex items-center gap-2">
+                      <AlertTriangle className="h-5 w-5" />
+                      アカウントを削除しますか？
+                    </DialogTitle>
+                    <DialogDescription>
+                      この操作は取り消せません。すべてのデータが完全に削除されます。
+                      分身AI、チャット履歴、マッチング結果、友達関係、ポイントなど、全てのデータが失われます。
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="delete-confirmation">
+                        確認のため「DELETE」と入力してください
+                      </Label>
+                      <Input
+                        id="delete-confirmation"
+                        value={deleteConfirmation}
+                        onChange={(e) => setDeleteConfirmation(e.target.value)}
+                        placeholder="DELETE"
+                        autoComplete="off"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="delete-password">パスワード</Label>
+                      <Input
+                        id="delete-password"
+                        type="password"
+                        value={deletePassword}
+                        onChange={(e) => setDeletePassword(e.target.value)}
+                        placeholder="パスワードを入力"
+                        autoComplete="current-password"
+                      />
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button
+                      variant="outline"
+                      onClick={() => setDeleteDialogOpen(false)}
+                    >
+                      キャンセル
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      disabled={
+                        deleteConfirmation !== "DELETE" ||
+                        !deletePassword ||
+                        deleteAccount.isPending
+                      }
+                      onClick={async () => {
+                        try {
+                          await deleteAccount.mutateAsync({
+                            password: deletePassword,
+                            confirmation: "DELETE" as const,
+                          });
+                          toast.success("アカウントが削除されました");
+                          // Clear session cookie
+                          try {
+                            await fetch(
+                              `${(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "")}/api/auth/logout`,
+                              { method: "POST", credentials: "include" }
+                            );
+                          } catch { /* ignore */ }
+                          navigate("/");
+                        } catch (err: any) {
+                          toast.error(
+                            err?.message || "アカウントの削除に失敗しました"
+                          );
+                        }
+                      }}
+                    >
+                      {deleteAccount.isPending ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4 mr-2" />
+                      )}
+                      アカウントを削除する
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </DashboardLayout>
   );

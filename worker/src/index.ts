@@ -127,6 +127,11 @@ function generateCode(length = 6): string {
   return code;
 }
 
+// ============ Helper: escape HTML ============
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 // ============ tRPC Router ============
 
 const appRouter = router({
@@ -284,6 +289,159 @@ Step 5完了時に以下を出力:
       await ctx.env.DB.prepare(`UPDATE users SET tosAcceptedAt=datetime('now'), tosVersion='1.0' WHERE id=?`).bind(ctx.userId).run();
       return { success: true };
     }),
+
+    // ---- GDPR: Data Export ----
+    exportMyData: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const userId = ctx.userId;
+
+      const user = await ctx.env.DB.prepare(
+        `SELECT id, name, email, plan, role, createdAt, updatedAt, lastSignedIn, onboardingCompleted, tutorialCompleted, tosAcceptedAt, tosVersion FROM users WHERE id=?`
+      ).bind(userId).first<any>();
+      const profile = await ctx.env.DB.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(userId).first<any>();
+      const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=?`).bind(userId).first<any>();
+      const friends = await ctx.env.DB.prepare(
+        `SELECT f.*, u.name as friendName FROM friendships f JOIN users u ON u.id = CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END WHERE (f.userId=? OR f.friendId=?) AND f.status='accepted'`
+      ).bind(userId, userId, userId).all<any>();
+      const chatSessions = await ctx.env.DB.prepare(`SELECT * FROM chat_sessions WHERE userId=?`).bind(userId).all<any>();
+      const matchings = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE initiatorUserId=?`).bind(userId).all<any>();
+      const points = await ctx.env.DB.prepare(`SELECT * FROM user_points WHERE userId=?`).bind(userId).first<any>();
+      const trustScore = await ctx.env.DB.prepare(`SELECT * FROM trust_scores WHERE userId=?`).bind(userId).first<any>();
+      const apiConfigs = await ctx.env.DB.prepare(`SELECT id, provider, isActive, lastValidated, createdAt FROM ai_api_configs WHERE userId=?`).bind(userId).all<any>();
+      const cards = await ctx.env.DB.prepare(`SELECT * FROM cards WHERE userId=?`).bind(userId).all<any>();
+      const usageTracking = await ctx.env.DB.prepare(`SELECT * FROM usage_tracking WHERE userId=?`).bind(userId).first<any>();
+
+      // Strip sensitive fields from twin
+      if (twin) {
+        delete twin.systemPrompt;
+      }
+
+      return {
+        exportedAt: new Date().toISOString(),
+        user: user ? { ...user, passwordHash: undefined } : null,
+        profile: profile ? { ...profile, skills: parseJson<string[]>(profile.skills) ?? [], expertise: parseJson<string[]>(profile.expertise) ?? [] } : null,
+        twin: twin ? normalizeTwin(twin) : null,
+        friends: friends.results ?? [],
+        chatSessionCount: chatSessions.results?.length ?? 0,
+        matchingSessionCount: matchings.results?.length ?? 0,
+        points,
+        trustScore,
+        apiConfigs: apiConfigs.results ?? [],
+        cards: cards.results ?? [],
+        usageTracking,
+      };
+    }),
+
+    // ---- GDPR: Account Deletion ----
+    deleteAccount: protectedProcedure
+      .input(z.object({ password: z.string().min(1), confirmation: z.literal("DELETE") }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+
+        // Verify password
+        const user = await ctx.env.DB.prepare(`SELECT passwordHash FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+        if (!user?.passwordHash) throw new TRPCError({ code: "UNAUTHORIZED", message: "パスワードが設定されていません" });
+        const valid = await verifyPassword(input.password, user.passwordHash);
+        if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "パスワードが正しくありません" });
+
+        const userId = ctx.userId;
+
+        // Get user's twin ID for cascade deletes
+        const twin = await ctx.env.DB.prepare(`SELECT id FROM digital_twins WHERE userId=?`).bind(userId).first<any>();
+        const twinId = twin?.id;
+
+        // Cancel Stripe subscription if exists
+        const stripeUser = await ctx.env.DB.prepare(`SELECT stripeSubscriptionId FROM users WHERE id=?`).bind(userId).first<any>();
+        if (stripeUser?.stripeSubscriptionId && ctx.env.STRIPE_SECRET_KEY) {
+          try {
+            await fetch(`https://api.stripe.com/v1/subscriptions/${stripeUser.stripeSubscriptionId}`, {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${ctx.env.STRIPE_SECRET_KEY}` },
+            });
+          } catch { /* ignore Stripe errors during deletion */ }
+        }
+
+        // Delete all user data using parameterized queries
+        // Twin-related tables (only if twin exists)
+        if (twinId) {
+          const twinDeletions = [
+            ctx.env.DB.prepare(`DELETE FROM knowledge_base WHERE twinId=?`).bind(twinId),
+            ctx.env.DB.prepare(`DELETE FROM twin_growth_status WHERE twinId=?`).bind(twinId),
+            ctx.env.DB.prepare(`DELETE FROM twin_skill_levels WHERE twinId=?`).bind(twinId),
+            ctx.env.DB.prepare(`DELETE FROM twin_milestones WHERE twinId=?`).bind(twinId),
+            ctx.env.DB.prepare(`DELETE FROM twin_visibility_rules WHERE twinId=?`).bind(twinId),
+            ctx.env.DB.prepare(`DELETE FROM conversation_learning WHERE twinId=?`).bind(twinId),
+          ];
+          for (const stmt of twinDeletions) {
+            try { await stmt.run(); } catch { /* table may not exist */ }
+          }
+        }
+
+        // Chat data
+        try { await ctx.env.DB.prepare(`DELETE FROM chat_messages WHERE sessionId IN (SELECT id FROM chat_sessions WHERE userId=?)`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM chat_sessions WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+
+        // Matching data
+        try { await ctx.env.DB.prepare(`DELETE FROM matching_dialogues WHERE sessionId IN (SELECT id FROM matching_sessions WHERE initiatorUserId=?)`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM matching_results WHERE sessionId IN (SELECT id FROM matching_sessions WHERE initiatorUserId=?)`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM matching_sessions WHERE initiatorUserId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM matching_requests WHERE senderUserId=? OR receiverUserId=?`).bind(userId, userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM auto_matching_schedules WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+
+        // Social
+        try { await ctx.env.DB.prepare(`DELETE FROM friendships WHERE userId=? OR friendId=?`).bind(userId, userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM intimacy_scores WHERE userId=? OR friendId=?`).bind(userId, userId).run(); } catch { /* ignore */ }
+
+        // Waveforms & scenarios
+        try { await ctx.env.DB.prepare(`DELETE FROM value_scenario_responses WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM cumulative_waveforms WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM other_perspective_waveforms WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+
+        // Points & marketplace
+        try { await ctx.env.DB.prepare(`DELETE FROM point_transactions WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM user_points WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM persona_purchases WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM persona_reviews WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Anonymize persona templates (preserve marketplace integrity)
+        try { await ctx.env.DB.prepare(`UPDATE persona_templates SET creatorUserId=0 WHERE creatorUserId=?`).bind(userId).run(); } catch { /* ignore */ }
+
+        // Config & connections
+        try { await ctx.env.DB.prepare(`DELETE FROM ai_api_configs WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM orchestration_roles WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM ai_provider_settings WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM notification_settings WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM line_connections WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM clawdbot_connections WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+
+        // Files & cards
+        try { await ctx.env.DB.prepare(`DELETE FROM uploaded_files WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM cards WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+
+        // Reports & moderation
+        try { await ctx.env.DB.prepare(`DELETE FROM content_reports WHERE reporterUserId=?`).bind(userId).run(); } catch { /* ignore */ }
+
+        // Trust
+        try { await ctx.env.DB.prepare(`DELETE FROM trust_score_history WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM trust_scores WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+
+        // Usage
+        try { await ctx.env.DB.prepare(`DELETE FROM usage_tracking WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+
+        // Notifications (table may not exist yet)
+        try { await ctx.env.DB.prepare(`DELETE FROM notifications WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+
+        // Point redemptions
+        try { await ctx.env.DB.prepare(`DELETE FROM point_redemptions WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+
+        // Profile & twin (near-last)
+        try { await ctx.env.DB.prepare(`DELETE FROM user_profiles WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM digital_twins WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+
+        // User record (last)
+        try { await ctx.env.DB.prepare(`DELETE FROM users WHERE id=?`).bind(userId).run(); } catch { /* ignore */ }
+
+        return { success: true, message: "アカウントが完全に削除されました" };
+      }),
   }),
 
   // ============ Profile ============
@@ -2639,6 +2797,36 @@ ${dialogueHtml || "<p>対話がまだ行われていません</p>"}
 
         return { html };
       }),
+    exportData: protectedProcedure
+      .input(z.object({ sessionId: z.number() }))
+      .query(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const ms = await ctx.env.DB.prepare(
+          `SELECT ms.*, t1.name as twin1Name, t2.name as twin2Name
+           FROM matching_sessions ms
+           LEFT JOIN digital_twins t1 ON t1.id=ms.twin1Id
+           LEFT JOIN digital_twins t2 ON t2.id=ms.twin2Id
+           WHERE ms.id=? AND ms.initiatorUserId=?`
+        ).bind(input.sessionId, ctx.userId).first<any>();
+        if (!ms) throw new TRPCError({ code: "NOT_FOUND" });
+
+        const dialogues = await ctx.env.DB.prepare(
+          `SELECT md.*, dt.name as speakerName FROM matching_dialogues md LEFT JOIN digital_twins dt ON dt.id=md.speakerTwinId WHERE md.sessionId=? ORDER BY md.turnNumber`
+        ).bind(input.sessionId).all<any>();
+        const result = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(input.sessionId).first<any>();
+
+        return {
+          session: { id: ms.id, theme: ms.theme, twin1: ms.twin1Name, twin2: ms.twin2Name, createdAt: ms.createdAt, completedAt: ms.completedAt },
+          dialogues: (dialogues.results ?? []).map((d: any) => ({ turn: d.turnNumber, speaker: d.speakerName, content: d.content, createdAt: d.createdAt })),
+          result: result ? {
+            score: result.compatibilityScore,
+            summary: result.summary,
+            strengths: parseJson(result.strengths),
+            challenges: parseJson(result.challenges),
+            recommendations: parseJson(result.recommendations),
+          } : null,
+        };
+      }),
     // ---- Score-based candidate discovery (±20 trust score) ----
     discoverCandidates: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
@@ -3941,6 +4129,17 @@ JSON形式で出力:
       const user = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
       return { plan: user?.plan ?? "free" };
     }),
+    getRateLimits: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const user = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      const plan = user?.plan || "free";
+      const limits: Record<string, { requestsPerMin: number; matchingsPerMonth: number; maxFriends: number; chatMessagesPerDay: number }> = {
+        free: { requestsPerMin: 30, matchingsPerMonth: 3, maxFriends: 5, chatMessagesPerDay: 50 },
+        premium: { requestsPerMin: 120, matchingsPerMonth: 20, maxFriends: 50, chatMessagesPerDay: 500 },
+        enterprise: { requestsPerMin: 600, matchingsPerMonth: -1, maxFriends: -1, chatMessagesPerDay: -1 },
+      };
+      return { plan, limits: limits[plan] || limits.free };
+    }),
     getInfo: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const user = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
@@ -4739,6 +4938,84 @@ JSON形式で出力:
       ).all<any>();
       return rows.results ?? [];
     }),
+
+    // Revenue dashboard
+    revenue: protectedProcedure.use(async ({ ctx, next }) => {
+      if (ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "管理者権限が必要です" });
+      return next();
+    }).query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+
+      // Plan distribution
+      const planDist = await ctx.env.DB.prepare(
+        `SELECT plan, COUNT(*) as count FROM users WHERE isNpc=0 GROUP BY plan`
+      ).all<any>();
+
+      // Monthly signups (last 12 months)
+      const monthlySignups = await ctx.env.DB.prepare(
+        `SELECT strftime('%Y-%m', createdAt) as month, COUNT(*) as count, plan
+         FROM users WHERE isNpc=0 AND createdAt >= date('now', '-12 months')
+         GROUP BY month, plan ORDER BY month`
+      ).all<any>();
+
+      // Total users
+      const totalUsers = (await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM users WHERE isNpc=0`).first<any>())?.c ?? 0;
+
+      // Active users (logged in within last 30 days)
+      const activeUsers = (await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as c FROM users WHERE isNpc=0 AND lastSignedIn >= date('now', '-30 days')`
+      ).first<any>())?.c ?? 0;
+
+      // Churn: users who were active last period but haven't logged in for 30+ days
+      const churned = (await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as c FROM users WHERE isNpc=0 AND lastSignedIn < date('now', '-30 days') AND lastSignedIn >= date('now', '-60 days')`
+      ).first<any>())?.c ?? 0;
+      const activeLastPeriod = (await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as c FROM users WHERE isNpc=0 AND lastSignedIn >= date('now', '-60 days') AND lastSignedIn < date('now', '-30 days')`
+      ).first<any>())?.c ?? 0;
+      const churnRate = activeLastPeriod > 0 ? Math.round((churned / activeLastPeriod) * 100) : 0;
+
+      // Revenue estimate (from plan counts × price)
+      const priceMap: Record<string, number> = { free: 0, premium: 980, enterprise: 4980 };
+      const planResults = planDist.results ?? [];
+      const monthlyRevenue = planResults.reduce((sum: number, p: any) => sum + ((priceMap[p.plan] || 0) * p.count), 0);
+
+      // Monthly revenue trend (from signups with paid plans)
+      const monthlyTrend: Record<string, number> = {};
+      for (const r of (monthlySignups.results ?? [])) {
+        if (!monthlyTrend[r.month]) monthlyTrend[r.month] = 0;
+        monthlyTrend[r.month] += (priceMap[r.plan] || 0);
+      }
+
+      // Point transactions summary
+      const pointStats = await ctx.env.DB.prepare(
+        `SELECT type, SUM(amount) as total, COUNT(*) as count FROM point_transactions GROUP BY type`
+      ).all<any>();
+
+      // Marketplace sales
+      const marketplaceSales = (await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as count, SUM(pointsSpent) as total FROM persona_purchases`
+      ).first<any>());
+
+      // Daily active users for last 14 days
+      const dailyActive = await ctx.env.DB.prepare(
+        `SELECT date(lastSignedIn) as day, COUNT(*) as count FROM users
+         WHERE isNpc=0 AND lastSignedIn >= date('now', '-14 days')
+         GROUP BY day ORDER BY day`
+      ).all<any>();
+
+      return {
+        planDistribution: planResults,
+        totalUsers,
+        activeUsers,
+        churnRate,
+        monthlyRevenue,
+        monthlyTrend: Object.entries(monthlyTrend).map(([month, revenue]) => ({ month, revenue })),
+        pointStats: pointStats.results ?? [],
+        marketplaceSales: { count: marketplaceSales?.count ?? 0, totalPoints: marketplaceSales?.total ?? 0 },
+        dailyActive: dailyActive.results ?? [],
+      };
+    }),
   }),
 
   // ============ Content Report (any authenticated user) ============
@@ -4912,6 +5189,35 @@ JSON形式で出力:
       return (rows.results ?? []).map((r: any) => ({ ...r, tags: parseJson<string[]>(r.tags) ?? [] }));
     }),
   }),
+
+  notification: router({
+    list: protectedProcedure
+      .input(z.object({ limit: z.number().optional(), unreadOnly: z.boolean().optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const limit = input?.limit ?? 50;
+        const where = input?.unreadOnly ? `AND isRead=0` : '';
+        const rows = await ctx.env.DB.prepare(
+          `SELECT * FROM notifications WHERE userId=? ${where} ORDER BY createdAt DESC LIMIT ?`
+        ).bind(ctx.userId, limit).all<any>();
+        const unreadCount = (await ctx.env.DB.prepare(
+          `SELECT COUNT(*) as c FROM notifications WHERE userId=? AND isRead=0`
+        ).bind(ctx.userId).first<any>())?.c ?? 0;
+        return { notifications: rows.results ?? [], unreadCount };
+      }),
+    markRead: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        await ctx.env.DB.prepare(`UPDATE notifications SET isRead=1 WHERE id=? AND userId=?`).bind(input.id, ctx.userId).run();
+        return { success: true };
+      }),
+    markAllRead: protectedProcedure.mutation(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`UPDATE notifications SET isRead=1 WHERE userId=? AND isRead=0`).bind(ctx.userId).run();
+      return { success: true };
+    }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;
@@ -4953,6 +5259,13 @@ async function sendLineNotification(db: D1Database, userId: number, message: str
   } catch { return false; }
 }
 
+/** Create in-app notification */
+async function createNotification(db: D1Database, userId: number, type: string, title: string, message: string, data?: Record<string, unknown>): Promise<void> {
+  try {
+    await db.prepare(`INSERT INTO notifications (userId, type, title, message, data) VALUES (?,?,?,?,?)`).bind(userId, type, title, message, data ? JSON.stringify(data) : null).run();
+  } catch { /* ignore notification errors */ }
+}
+
 /** Notify user about matching completion */
 async function notifyMatchingComplete(
   db: D1Database,
@@ -4972,6 +5285,8 @@ async function notifyMatchingComplete(
   if (settings.lineNotify && env.LINE_CHANNEL_ACCESS_TOKEN) {
     await sendLineNotification(db, userId, message, env.LINE_CHANNEL_ACCESS_TOKEN);
   }
+  // In-app notification
+  await createNotification(db, userId, 'matching_complete', 'マッチング完了', `テーマ「${sessionTheme}」のスコア: ${score}%`, { link: '/matching' });
 }
 
 // ============ Hono App ============
@@ -5012,29 +5327,50 @@ api.use("*", async (c, next) => {
   }
 });
 
-// Simple in-memory rate limiter (per-IP, resets per worker instance)
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT_WINDOW = 60_000; // 1 minute
-const RATE_LIMIT_MAX = 120; // requests per window
+// Plan-aware rate limiter (user-specific with plan tiers)
+const rateLimitMap = new Map<string, { count: number; resetAt: number; limit: number }>();
+const RATE_LIMIT_WINDOW = 60_000;
+const PLAN_RATE_LIMITS: Record<string, number> = { free: 30, premium: 120, enterprise: 600 };
+const DEFAULT_RATE_LIMIT = 20;
 
 api.use("/api/*", async (c, next) => {
   const ip = c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for") || "unknown";
-  const now = Date.now();
-  let entry = rateLimitMap.get(ip);
-
-  if (!entry || now > entry.resetAt) {
-    entry = { count: 0, resetAt: now + RATE_LIMIT_WINDOW };
-    rateLimitMap.set(ip, entry);
+  const nowMs = Date.now();
+  let key = `ip:${ip}`;
+  let resolvedLimit = DEFAULT_RATE_LIMIT;
+  try {
+    const cookieHeader = c.req.header("cookie") || null;
+    const tk = parseCookie(cookieHeader, COOKIE_NAME);
+    if (tk) {
+      const s = await verifySessionToken(tk, c.env as Env);
+      if (s) {
+        key = `user:${s.userId}`;
+        const existing = rateLimitMap.get(key);
+        if (existing && nowMs <= existing.resetAt) {
+          resolvedLimit = existing.limit;
+        } else {
+          const u = await (c.env as Env).DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(s.userId).first<any>();
+          resolvedLimit = PLAN_RATE_LIMITS[u?.plan || "free"] || PLAN_RATE_LIMITS.free;
+        }
+      }
+    }
+  } catch { /* ignore auth errors in rate limiter */ }
+  let entry = rateLimitMap.get(key);
+  if (!entry || nowMs > entry.resetAt) {
+    entry = { count: 0, resetAt: nowMs + RATE_LIMIT_WINDOW, limit: resolvedLimit };
+    rateLimitMap.set(key, entry);
   }
-
   entry.count++;
-  c.res.headers.set("X-RateLimit-Limit", String(RATE_LIMIT_MAX));
-  c.res.headers.set("X-RateLimit-Remaining", String(Math.max(0, RATE_LIMIT_MAX - entry.count)));
-
-  if (entry.count > RATE_LIMIT_MAX) {
-    return c.json({ error: "Rate limit exceeded. Please try again later." }, 429);
+  c.res.headers.set("X-RateLimit-Limit", String(entry.limit));
+  c.res.headers.set("X-RateLimit-Remaining", String(Math.max(0, entry.limit - entry.count)));
+  c.res.headers.set("X-RateLimit-Reset", String(Math.ceil(entry.resetAt / 1000)));
+  if (entry.count > entry.limit) {
+    return c.json({ error: "Rate limit exceeded. Please try again later.", retryAfter: Math.ceil((entry.resetAt - nowMs) / 1000) }, 429);
   }
-
+  if (rateLimitMap.size > 1000) {
+    const keys = Array.from(rateLimitMap.keys());
+    for (const k of keys) { const v = rateLimitMap.get(k); if (v && nowMs > v.resetAt) rateLimitMap.delete(k); }
+  }
   await next();
 });
 
@@ -5043,11 +5379,11 @@ const AUTH_RATE_LIMIT_MAX = 10;
 api.use("/api/trpc/auth.*", async (c, next) => {
   const ip = c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for") || "unknown";
   const key = `auth:${ip}`;
-  const now = Date.now();
+  const nowMs = Date.now();
   let entry = rateLimitMap.get(key);
 
-  if (!entry || now > entry.resetAt) {
-    entry = { count: 0, resetAt: now + RATE_LIMIT_WINDOW };
+  if (!entry || nowMs > entry.resetAt) {
+    entry = { count: 0, resetAt: nowMs + RATE_LIMIT_WINDOW, limit: AUTH_RATE_LIMIT_MAX };
     rateLimitMap.set(key, entry);
   }
 
@@ -5167,6 +5503,73 @@ api.post("/api/auth/logout", (c) => {
     isProduction ? `Secure` : "",
   ].filter(Boolean).join("; ");
   return c.json({ success: true }, 200, { "Set-Cookie": cookie });
+});
+
+// Matching dialogue export (CSV)
+api.get("/api/export/matching/:id/csv", async (c) => {
+  const env = c.env as Env;
+  await ensureSchema(env.DB);
+  const cookieHeader = c.req.header("cookie") || null;
+  const token = parseCookie(cookieHeader, COOKIE_NAME);
+  if (!token) return c.json({ error: "Unauthorized" }, 401);
+  const sess = await verifySessionToken(token, env);
+  if (!sess) return c.json({ error: "Unauthorized" }, 401);
+  const sessionId = parseInt(c.req.param("id") || "0");
+  if (!sessionId) return c.json({ error: "Invalid session ID" }, 400);
+  const ms = await env.DB.prepare(
+    `SELECT ms.*, t1.name as twin1Name, t2.name as twin2Name FROM matching_sessions ms LEFT JOIN digital_twins t1 ON t1.id=ms.twin1Id LEFT JOIN digital_twins t2 ON t2.id=ms.twin2Id WHERE ms.id=? AND ms.initiatorUserId=?`
+  ).bind(sessionId, sess.userId).first<any>();
+  if (!ms) return c.json({ error: "Not found" }, 404);
+  const dialogues = await env.DB.prepare(
+    `SELECT md.*, dt.name as speakerName FROM matching_dialogues md LEFT JOIN digital_twins dt ON dt.id=md.speakerTwinId WHERE md.sessionId=? ORDER BY md.turnNumber`
+  ).bind(sessionId).all<any>();
+  const result = await env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(sessionId).first<any>();
+  const lines: string[] = ['\uFEFF"ターン","発言者","内容","日時"'];
+  for (const d of (dialogues.results ?? [])) {
+    lines.push(`${d.turnNumber},"${(d.speakerName||'').replace(/"/g,'""')}","${(d.content||'').replace(/"/g,'""')}","${d.createdAt||''}"`);
+  }
+  if (result) {
+    lines.push('');
+    lines.push('"--- 分析結果 ---"');
+    lines.push(`"相性スコア","${result.compatibilityScore ?? '-'}"`);
+    lines.push(`"要約","${(result.summary||'').replace(/"/g,'""')}"`);
+  }
+  return new Response(lines.join('\n'), {
+    headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="matching-${sessionId}.csv"` },
+  });
+});
+
+// Matching dialogue export (printable HTML for PDF)
+api.get("/api/export/matching/:id/pdf", async (c) => {
+  const env = c.env as Env;
+  await ensureSchema(env.DB);
+  const cookieHeader = c.req.header("cookie") || null;
+  const token = parseCookie(cookieHeader, COOKIE_NAME);
+  if (!token) return c.json({ error: "Unauthorized" }, 401);
+  const sess = await verifySessionToken(token, env);
+  if (!sess) return c.json({ error: "Unauthorized" }, 401);
+  const sessionId = parseInt(c.req.param("id") || "0");
+  if (!sessionId) return c.json({ error: "Invalid session ID" }, 400);
+  const ms = await env.DB.prepare(
+    `SELECT ms.*, t1.name as twin1Name, t2.name as twin2Name FROM matching_sessions ms LEFT JOIN digital_twins t1 ON t1.id=ms.twin1Id LEFT JOIN digital_twins t2 ON t2.id=ms.twin2Id WHERE ms.id=? AND ms.initiatorUserId=?`
+  ).bind(sessionId, sess.userId).first<any>();
+  if (!ms) return c.json({ error: "Not found" }, 404);
+  const dialogues = await env.DB.prepare(
+    `SELECT md.*, dt.name as speakerName FROM matching_dialogues md LEFT JOIN digital_twins dt ON dt.id=md.speakerTwinId WHERE md.sessionId=? ORDER BY md.turnNumber`
+  ).bind(sessionId).all<any>();
+  const result = await env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(sessionId).first<any>();
+  const dialogueHtml = (dialogues.results ?? []).map((d: any) =>
+    `<div style="margin:8px 0;padding:10px 14px;background:${d.turnNumber%2===0?'#f0f7ff':'#f7f0ff'};border-radius:8px;"><strong>${escapeHtml(d.speakerName||'Unknown')}</strong><p style="margin:4px 0 0;white-space:pre-wrap;">${escapeHtml(d.content||'')}</p></div>`
+  ).join('');
+  let scoreHtml = '<p>分析結果なし</p>';
+  if (result) {
+    const strengths = result.strengths ? JSON.parse(result.strengths) : [];
+    const challenges = result.challenges ? JSON.parse(result.challenges) : [];
+    const recommendations = result.recommendations ? JSON.parse(result.recommendations) : [];
+    scoreHtml = `<div style="text-align:center;margin:20px 0;"><div style="display:inline-block;width:80px;height:80px;border-radius:50%;background:${(result.compatibilityScore??0)>=70?'#22c55e':'#f59e0b'};color:white;line-height:80px;font-size:24px;font-weight:bold;">${result.compatibilityScore??'-'}%</div></div><h3>要約</h3><p>${escapeHtml(result.summary||'')}</p>${strengths.length?'<h3>強み</h3><ul>'+strengths.map((s:string)=>`<li>${escapeHtml(s)}</li>`).join('')+'</ul>':''}${challenges.length?'<h3>課題</h3><ul>'+challenges.map((s:string)=>`<li>${escapeHtml(s)}</li>`).join('')+'</ul>':''}${recommendations.length?'<h3>提案</h3><ul>'+recommendations.map((s:string)=>`<li>${escapeHtml(s)}</li>`).join('')+'</ul>':''}`;
+  }
+  const html = `<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>マッチングレポート #${sessionId}</title><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:700px;margin:0 auto;padding:20px;color:#333}h1{font-size:20px;border-bottom:2px solid #6366f1;padding-bottom:8px}h2{font-size:16px;color:#6366f1;margin-top:24px}h3{font-size:14px;margin-top:16px}@media print{body{padding:0}.no-print{display:none!important}}</style></head><body><button class="no-print" onclick="window.print()" style="position:fixed;top:10px;right:10px;padding:8px 16px;background:#6366f1;color:white;border:none;border-radius:6px;cursor:pointer;">PDFに保存</button><h1>マッチング対話レポート</h1><p><strong>テーマ:</strong> ${escapeHtml(ms.theme)}</p><p><strong>参加者:</strong> ${escapeHtml(ms.twin1Name||'')} vs ${escapeHtml(ms.twin2Name||'')}</p><p><strong>日時:</strong> ${ms.createdAt||''}</p><h2>対話ログ</h2>${dialogueHtml}<h2>分析結果</h2>${scoreHtml}<hr><p style="font-size:11px;color:#999;">分身AI - マッチングレポート - ${new Date().toISOString().slice(0,10)}</p></body></html>`;
+  return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 });
 
 // Stripe webhook handler

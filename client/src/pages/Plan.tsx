@@ -341,6 +341,9 @@ export default function Plan() {
         </Card>
       </div>
 
+      {/* Rate Limits */}
+      <RateLimitCard />
+
       {/* Upgrade Dialog */}
       <Dialog open={showUpgradeDialog} onOpenChange={setShowUpgradeDialog}>
         <DialogContent className="bg-gray-900 border-gray-700">
@@ -408,5 +411,42 @@ export default function Plan() {
         </DialogContent>
       </Dialog>
     </DashboardLayout>
+  );
+}
+
+function RateLimitCard() {
+  const { data } = trpc.plan.getRateLimits.useQuery(undefined, { staleTime: 60_000 });
+  if (!data) return null;
+  const fmt = (v: number) => v === -1 ? "無制限" : v.toLocaleString();
+  return (
+    <Card className="mt-6">
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2">
+          <Settings className="h-4 w-4 text-primary" />
+          現在の利用制限
+        </CardTitle>
+        <CardDescription>プラン: {data.plan}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="p-3 bg-muted/50 rounded-lg text-center">
+            <p className="text-xl font-bold">{fmt(data.limits.requestsPerMin)}</p>
+            <p className="text-xs text-muted-foreground">APIリクエスト/分</p>
+          </div>
+          <div className="p-3 bg-muted/50 rounded-lg text-center">
+            <p className="text-xl font-bold">{fmt(data.limits.matchingsPerMonth)}</p>
+            <p className="text-xs text-muted-foreground">マッチング/月</p>
+          </div>
+          <div className="p-3 bg-muted/50 rounded-lg text-center">
+            <p className="text-xl font-bold">{fmt(data.limits.maxFriends)}</p>
+            <p className="text-xs text-muted-foreground">友達上限</p>
+          </div>
+          <div className="p-3 bg-muted/50 rounded-lg text-center">
+            <p className="text-xl font-bold">{fmt(data.limits.chatMessagesPerDay)}</p>
+            <p className="text-xs text-muted-foreground">チャット/日</p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

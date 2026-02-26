@@ -600,6 +600,18 @@ CREATE TABLE IF NOT EXISTS twin_visibility_rules (
   UNIQUE(twinId, viewerUserId)
 );
 CREATE INDEX IF NOT EXISTS idx_twin_visibility_twinId ON twin_visibility_rules(twinId);
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  message TEXT,
+  data TEXT,
+  isRead INTEGER NOT NULL DEFAULT 0,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_userId ON notifications(userId);
 `;
 
 // Migrations to run after schema creation (ALTER TABLE etc.)

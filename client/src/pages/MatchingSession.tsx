@@ -196,6 +196,22 @@ export default function MatchingSession() {
               )}
               PDF印刷
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => window.open(`${window.location.hostname === 'localhost' ? 'http://localhost:8787' : 'https://bunshin-ai-api.common-gifted-tokyo.workers.dev'}/api/export/matching/${sessionId}/csv`, '_blank')}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              CSV
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => window.open(`${window.location.hostname === 'localhost' ? 'http://localhost:8787' : 'https://bunshin-ai-api.common-gifted-tokyo.workers.dev'}/api/export/matching/${sessionId}/pdf`, '_blank')}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              レポート
+            </Button>
           </div>
         </div>
 
