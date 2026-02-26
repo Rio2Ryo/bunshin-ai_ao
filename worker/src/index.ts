@@ -1271,13 +1271,22 @@ ${isLastQuestion ? `
         if (!friend) throw new TRPCError({ code: "NOT_FOUND", message: "ユーザーが見つかりません" });
         if (friend.id === ctx.userId) throw new TRPCError({ code: "BAD_REQUEST", message: "自分にはリクエストを送れません" });
         const res = await ctx.env.DB.prepare(`INSERT INTO friendships (userId, friendId, status) VALUES (?,?,'pending')`).bind(ctx.userId, friend.id).run();
+        // Notify receiver
+        const senderName = ctx.user?.name || "ユーザー";
+        await createNotification(ctx.env.DB, friend.id, "friend_request", "友達リクエスト", `${senderName}さんから友達リクエストが届きました`, { link: "/friends" });
         return { id: Number(res.meta.last_row_id) };
       }),
     acceptRequest: protectedProcedure
       .input(z.object({ requestId: z.number() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
+        const req = await ctx.env.DB.prepare(`SELECT userId FROM friendships WHERE id=? AND friendId=?`).bind(input.requestId, ctx.userId).first<any>();
         await ctx.env.DB.prepare(`UPDATE friendships SET status='accepted', updatedAt=datetime('now') WHERE id=? AND friendId=?`).bind(input.requestId, ctx.userId).run();
+        // Notify sender that request was accepted
+        if (req?.userId) {
+          const accepterName = ctx.user?.name || "ユーザー";
+          await createNotification(ctx.env.DB, req.userId, "friend_accepted", "友達リクエスト承認", `${accepterName}さんが友達リクエストを承認しました`, { link: "/friends" });
+        }
         return { success: true };
       }),
     rejectRequest: protectedProcedure
@@ -2971,6 +2980,10 @@ ${dialogueHtml || "<p>対話がまだ行われていません</p>"}
 
         await addTrustAction(ctx.env.DB, ctx.userId, "matching_request_sent", 2, "マッチングリクエスト送信");
 
+        // Notify receiver
+        const senderName = ctx.user?.name || "ユーザー";
+        await createNotification(ctx.env.DB, input.receiverUserId, "matching_request", "マッチングリクエスト", `${senderName}さんからマッチングリクエストが届きました`, { link: "/matching" });
+
         return { id: Number(res.meta.last_row_id) };
       }),
 
@@ -3059,6 +3072,10 @@ ${dialogueHtml || "<p>対話がまだ行われていません</p>"}
 
         await addTrustAction(ctx.env.DB, ctx.userId, "matching_request_accepted", 3, "マッチングリクエスト承認");
         await addTrustAction(ctx.env.DB, req.senderUserId, "matching_request_accepted", 3, "マッチングリクエストが承認されました");
+
+        // Notify sender that request was accepted
+        const accepterName = ctx.user?.name || "ユーザー";
+        await createNotification(ctx.env.DB, req.senderUserId, "matching_accepted", "マッチングリクエスト承認", `${accepterName}さんがマッチングリクエストを承認しました`, { link: "/matching" });
 
         return { success: true };
       }),

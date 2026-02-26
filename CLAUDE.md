@@ -128,10 +128,24 @@ ai_provider_settings
     - cards.analyzeImage: Vision API OCR (OpenAI gpt-4o / Gemini)
     - files.upload: R2 upload with DB record
 
-## Remaining Stubs
-- stripe/plan: No payment integration
-- points.redeem/redeemProduct: Point redemption not implemented
-- LINE: Worker has no LINE webhook integration (only server/ has it)
+## Implemented SaaS Features (2026-02-26)
+- **Stripe Billing**: Checkout Sessions (monthly/yearly), Customer Portal, Webhook with HMAC verification
+  - plan.createCheckoutSession, plan.createPortalSession, plan.getSubscription, plan.cancelSubscription
+  - /api/stripe/webhook with STRIPE_WEBHOOK_SECRET HMAC-SHA256 signature verification
+  - Events: checkout.session.completed, customer.subscription.deleted/updated
+  - Plans: free / premium (¥980/月) / enterprise (¥4,980/月)
+- **Points System**: Full redeem flow (points.redeemProduct) with balance, stock, transactions
+- **CORS**: Whitelist restricted to bunshin-ai.pages.dev + localhost dev
+- **CSP Headers**: Content-Security-Policy, X-Frame-Options, HSTS, Referrer-Policy
+- **Health Check**: /api/health (DB/R2/LLM checks), /api/health/detailed (admin)
+- **Notifications**: In-app (notification.list/markRead/markAllRead) + Slack + LINE push
+  - Wired into: matching complete, friend requests, matching requests
+- **Landing Page**: Hero, features, pricing, testimonials, CTA, footer
+- **LINE Webhook**: Worker has LINE webhook handler with signature verification
+
+## Remaining Limitations
+- PPTX export: Not supported on CF Workers (returns informational message)
+- LINE: Full bidirectional LINE bot is in server/ (legacy Express), worker only has push + webhook
 
 ## User Language
 Primary language: Japanese (日本語). All UI text is in Japanese.
