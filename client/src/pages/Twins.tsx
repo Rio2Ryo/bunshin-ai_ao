@@ -10,7 +10,9 @@ import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { Bot, Edit, Loader2, MessageSquare, Save, Sparkles, User, Globe, Eye, EyeOff, Tag, X, Brain, Target, Zap, TrendingUp, BarChart3 } from "lucide-react";
+import { Bot, Edit, Loader2, MessageSquare, Save, Sparkles, User, Globe, Eye, EyeOff, Tag, X, Brain, Target, Zap, TrendingUp, BarChart3, Shield, Lock, Users, UserCheck, Check } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { PersonalityRadarChart } from "@/components/PersonalityRadarChart";
 import { PersonalityInterview } from "@/components/PersonalityInterview";
@@ -29,6 +31,43 @@ export default function MyTwin() {
   const generateSelfWaveformMutation = trpc.myTwin.generateSelfWaveform.useMutation();
   const evaluateByAllTwinsMutation = trpc.myTwin.evaluateByAllTwins.useMutation();
   const generateFriendPredictionsMutation = trpc.friends.generateFriendPredictions.useMutation();
+
+  // Visibility settings
+  const { data: visibilityData, refetch: refetchVisibility } = trpc.myTwin.getVisibilitySettings.useQuery();
+  const { data: friendsList } = trpc.friends.list.useQuery();
+  const [visibility, setVisibility] = useState<"public" | "friends" | "private" | "custom">("public");
+  const [selectedViewerIds, setSelectedViewerIds] = useState<number[]>([]);
+  const [isSavingVisibility, setIsSavingVisibility] = useState(false);
+
+  useEffect(() => {
+    if (visibilityData) {
+      setVisibility(visibilityData.visibility as "public" | "friends" | "private" | "custom");
+      setSelectedViewerIds(visibilityData.allowedViewers.map((v) => v.id));
+    }
+  }, [visibilityData]);
+
+  const handleSaveVisibility = async () => {
+    setIsSavingVisibility(true);
+    try {
+      await updateMutation.mutateAsync({
+        visibility,
+        allowedViewerIds: visibility === "custom" ? selectedViewerIds : undefined,
+      });
+      toast.success("プライバシー設定を保存しました");
+      refetchVisibility();
+      refetch();
+    } catch (error) {
+      toast.error("プライバシー設定の保存に失敗しました");
+    } finally {
+      setIsSavingVisibility(false);
+    }
+  };
+
+  const toggleViewer = (friendId: number) => {
+    setSelectedViewerIds((prev) =>
+      prev.includes(friendId) ? prev.filter((id) => id !== friendId) : [...prev, friendId]
+    );
+  };
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isGeneratingWaveform, setIsGeneratingWaveform] = useState(false);
@@ -439,6 +478,132 @@ export default function MyTwin() {
                     <Save className="h-4 w-4 mr-2" />
                   )}
                   公開設定を保存
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* プライバシー設定 */}
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Shield className="h-5 w-5" />
+                  プライバシー設定
+                </CardTitle>
+                <CardDescription>
+                  分身AIの公開範囲を細かく制御できます
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <RadioGroup
+                  value={visibility}
+                  onValueChange={(val) => setVisibility(val as "public" | "friends" | "private" | "custom")}
+                  className="space-y-3"
+                >
+                  <div className="flex items-center space-x-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors">
+                    <RadioGroupItem value="public" id="vis-public" />
+                    <Label htmlFor="vis-public" className="flex items-center gap-2 cursor-pointer flex-1">
+                      <Globe className="h-4 w-4 text-green-500" />
+                      <div>
+                        <p className="font-medium">公開</p>
+                        <p className="text-xs text-muted-foreground">全てのユーザーが発見・閲覧できます</p>
+                      </div>
+                    </Label>
+                  </div>
+
+                  <div className="flex items-center space-x-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors">
+                    <RadioGroupItem value="friends" id="vis-friends" />
+                    <Label htmlFor="vis-friends" className="flex items-center gap-2 cursor-pointer flex-1">
+                      <Users className="h-4 w-4 text-blue-500" />
+                      <div>
+                        <p className="font-medium">友達のみ</p>
+                        <p className="text-xs text-muted-foreground">承認済みの友達だけが閲覧できます</p>
+                      </div>
+                    </Label>
+                  </div>
+
+                  <div className="flex items-center space-x-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors">
+                    <RadioGroupItem value="private" id="vis-private" />
+                    <Label htmlFor="vis-private" className="flex items-center gap-2 cursor-pointer flex-1">
+                      <Lock className="h-4 w-4 text-red-500" />
+                      <div>
+                        <p className="font-medium">非公開</p>
+                        <p className="text-xs text-muted-foreground">自分だけが閲覧できます（誰にも表示されません）</p>
+                      </div>
+                    </Label>
+                  </div>
+
+                  <div className="flex items-center space-x-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors">
+                    <RadioGroupItem value="custom" id="vis-custom" />
+                    <Label htmlFor="vis-custom" className="flex items-center gap-2 cursor-pointer flex-1">
+                      <UserCheck className="h-4 w-4 text-purple-500" />
+                      <div>
+                        <p className="font-medium">カスタム</p>
+                        <p className="text-xs text-muted-foreground">指定したユーザーのみ閲覧を許可します</p>
+                      </div>
+                    </Label>
+                  </div>
+                </RadioGroup>
+
+                {/* カスタムモード：友達選択 */}
+                {visibility === "custom" && (
+                  <div className="space-y-3 rounded-lg border p-4 bg-muted/30">
+                    <Label className="flex items-center gap-2">
+                      <UserCheck className="h-4 w-4" />
+                      閲覧を許可する友達
+                    </Label>
+                    {friendsList && friendsList.length > 0 ? (
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {friendsList.map((f) => (
+                          <div
+                            key={f.friend.id}
+                            className="flex items-center space-x-3 rounded-md border p-2 hover:bg-muted/50 transition-colors cursor-pointer"
+                            onClick={() => toggleViewer(f.friend.id)}
+                          >
+                            <Checkbox
+                              checked={selectedViewerIds.includes(f.friend.id)}
+                              onCheckedChange={() => toggleViewer(f.friend.id)}
+                            />
+                            <div className="flex items-center gap-2 flex-1">
+                              <div className="rounded-full bg-primary/10 p-1.5">
+                                <User className="h-3 w-3 text-primary" />
+                              </div>
+                              <div>
+                                <p className="text-sm font-medium">{f.friend.name || "名前未設定"}</p>
+                                {f.friend.isNpc && (
+                                  <Badge variant="outline" className="text-xs">NPC</Badge>
+                                )}
+                              </div>
+                            </div>
+                            {selectedViewerIds.includes(f.friend.id) && (
+                              <Check className="h-4 w-4 text-green-500" />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground py-2">
+                        友達がいません。まず友達を追加してください。
+                      </p>
+                    )}
+                    {selectedViewerIds.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {selectedViewerIds.length}人を選択中
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <Button
+                  onClick={handleSaveVisibility}
+                  className="w-full"
+                  disabled={isSavingVisibility}
+                >
+                  {isSavingVisibility ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Shield className="h-4 w-4 mr-2" />
+                  )}
+                  プライバシー設定を保存
                 </Button>
               </CardContent>
             </Card>

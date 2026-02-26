@@ -137,7 +137,7 @@ const appRouter = router({
   // ============ Auth ============
   auth: router({
     register: publicProcedure
-      .input(z.object({ email: z.string().email(), password: z.string().min(6), name: z.string().min(1) }))
+      .input(z.object({ email: z.string().email(), password: z.string().min(6), name: z.string().min(1), tosAccepted: z.boolean().optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         // Check if email already exists
@@ -200,6 +200,11 @@ Step 5完了時に以下を出力:
         // Initialize trust score with registration bonus
         await addTrustAction(ctx.env.DB, user.id, "register", 50, "アカウント作成ボーナス");
 
+        // Set TOS acceptance if agreed during registration
+        if (input.tosAccepted) {
+          await ctx.env.DB.prepare(`UPDATE users SET tosAcceptedAt=datetime('now'), tosVersion='1.0' WHERE email=?`).bind(input.email).run();
+        }
+
         const token = await createSessionToken(user.id, ctx.env);
         return {
           user: { id: user.id, name: user.name, email: user.email, role: user.role, plan: user.plan, onboardingCompleted: 0 },
@@ -222,7 +227,7 @@ Step 5完了時に以下を出力:
     me: publicProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       if (ctx.user) {
-        const row = await ctx.env.DB.prepare(`SELECT onboardingCompleted, tutorialCompleted FROM users WHERE id=?`).bind(ctx.user.id).first<any>();
+        const row = await ctx.env.DB.prepare(`SELECT onboardingCompleted, tutorialCompleted, tosAcceptedAt FROM users WHERE id=?`).bind(ctx.user.id).first<any>();
         // Get trust score
         const trustRow = await ctx.env.DB.prepare(`SELECT score, rank FROM trust_scores WHERE userId=?`).bind(ctx.user.id).first<any>();
         const trustScore = trustRow?.score ?? 0;
@@ -268,12 +273,17 @@ Step 5完了時に以下を出力:
           }
         }
 
-        return { ...ctx.user, onboardingCompleted: row?.onboardingCompleted ?? 0, tutorialCompleted: row?.tutorialCompleted ?? 0, trustScore, trustRank, loginStreak };
+        return { ...ctx.user, onboardingCompleted: row?.onboardingCompleted ?? 0, tutorialCompleted: row?.tutorialCompleted ?? 0, tosAcceptedAt: row?.tosAcceptedAt ?? null, trustScore, trustRank, loginStreak };
       }
       // Not logged in
       return null;
     }),
     logout: publicProcedure.mutation(() => ({ success: true })),
+    acceptTos: protectedProcedure.mutation(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`UPDATE users SET tosAcceptedAt=datetime('now'), tosVersion='1.0' WHERE id=?`).bind(ctx.userId).run();
+      return { success: true };
+    }),
   }),
 
   // ============ Profile ============
@@ -423,6 +433,8 @@ Step 5完了時に以下を出力:
         name: z.string().optional(),
         rawInput: z.string().optional().nullable(),
         status: z.enum(["active", "inactive", "training"]).optional(),
+        visibility: z.enum(["public", "friends", "private", "custom"]).optional(),
+        allowedViewerIds: z.array(z.number()).optional(),
       }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
@@ -433,10 +445,19 @@ Step 5完了時に以下を出力:
         if (input.name !== undefined) { sets.push("name=?"); binds.push(input.name); }
         if (input.rawInput !== undefined) { sets.push("rawInput=?"); binds.push(input.rawInput); }
         if (input.status !== undefined) { sets.push("status=?"); binds.push(input.status); }
+        if (input.visibility !== undefined) { sets.push("visibility=?"); binds.push(input.visibility); }
+        if (input.allowedViewerIds !== undefined) { sets.push("allowedViewerIds=?"); binds.push(JSON.stringify(input.allowedViewerIds)); }
         if (sets.length > 0) {
           sets.push("updatedAt=datetime('now')");
           binds.push(twin.id);
           await ctx.env.DB.prepare(`UPDATE digital_twins SET ${sets.join(",")} WHERE id=?`).bind(...binds).run();
+        }
+        // Sync twin_visibility_rules when visibility is 'custom'
+        if (input.visibility === "custom" && input.allowedViewerIds) {
+          await ctx.env.DB.prepare(`DELETE FROM twin_visibility_rules WHERE twinId=?`).bind(twin.id).run();
+          for (const viewerId of input.allowedViewerIds) {
+            await ctx.env.DB.prepare(`INSERT OR IGNORE INTO twin_visibility_rules (twinId, viewerUserId) VALUES (?,?)`).bind(twin.id, viewerId).run();
+          }
         }
         return { success: true };
       }),
@@ -457,6 +478,19 @@ Step 5完了時に以下を出力:
           .run();
         return getMyTwin(ctx.env.DB, ctx.userId);
       }),
+
+    getVisibilitySettings: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) return { visibility: "public" as const, allowedViewers: [] };
+      const rules = await ctx.env.DB.prepare(
+        `SELECT tvr.viewerUserId, u.name FROM twin_visibility_rules tvr JOIN users u ON u.id = tvr.viewerUserId WHERE tvr.twinId=?`
+      ).bind(twin.id).all<any>();
+      return {
+        visibility: ((twin as any).visibility as string) || "public",
+        allowedViewers: (rules.results ?? []).map((r: any) => ({ id: r.viewerUserId as number, name: (r.name as string) || "" })),
+      };
+    }),
 
     reset: protectedProcedure.mutation(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
@@ -2821,6 +2855,184 @@ ${dialogueHtml || "<p>対話がまだ行われていません</p>"}
     exportPptx: protectedProcedure
       .input(z.object({ sessionId: z.number() }))
       .mutation(async () => ({ base64: "", filename: "", url: undefined as string | undefined })),
+    recommendations: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const myTwin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!myTwin) return { recommendations: [], insights: null };
+
+      // Get all completed matching results with details
+      const completedResults = await ctx.env.DB.prepare(
+        `SELECT ms.id, ms.theme, ms.twin1Id, ms.twin2Id, ms.createdAt,
+          mr.compatibilityScore, mr.summary, mr.strengths, mr.challenges, mr.scoreBreakdown,
+          t1.name as t1Name, t1.tags as t1Tags, t1.personality as t1Personality,
+          t2.name as t2Name, t2.tags as t2Tags, t2.personality as t2Personality,
+          u1.id as u1Id, u1.name as u1Name, u2.id as u2Id, u2.name as u2Name,
+          up1.industry as u1Industry, up2.industry as u2Industry
+        FROM matching_sessions ms
+        JOIN matching_results mr ON mr.sessionId = ms.id
+        LEFT JOIN digital_twins t1 ON t1.id = ms.twin1Id
+        LEFT JOIN digital_twins t2 ON t2.id = ms.twin2Id
+        LEFT JOIN users u1 ON u1.id = t1.userId
+        LEFT JOIN users u2 ON u2.id = t2.userId
+        LEFT JOIN user_profiles up1 ON up1.userId = u1.id
+        LEFT JOIN user_profiles up2 ON up2.userId = u2.id
+        WHERE ms.initiatorUserId = ? AND ms.status = 'completed'
+        ORDER BY mr.compatibilityScore DESC`
+      ).bind(ctx.userId).all<any>();
+
+      const results = completedResults.results ?? [];
+      if (results.length === 0) return { recommendations: [], insights: null };
+
+      // Analyze patterns from successful matches (score >= 60)
+      const successfulMatches = results.filter(r => r.compatibilityScore >= 60);
+      const allScores = results.map(r => r.compatibilityScore);
+      const avgScore = Math.round(allScores.reduce((a: number, b: number) => a + b, 0) / allScores.length);
+
+      // Extract tags from successful matches
+      const successTags: Record<string, number> = {};
+      const successIndustries: Record<string, number> = {};
+      for (const r of successfulMatches) {
+        const partnerTags = r.twin1Id === myTwin.id ? r.t2Tags : r.t1Tags;
+        const partnerIndustry = r.twin1Id === myTwin.id ? r.u2Industry : r.u1Industry;
+        if (partnerTags) {
+          try {
+            const tags = JSON.parse(partnerTags) as string[];
+            tags.forEach(t => { successTags[t] = (successTags[t] || 0) + 1; });
+          } catch {}
+        }
+        if (partnerIndustry) {
+          successIndustries[partnerIndustry] = (successIndustries[partnerIndustry] || 0) + 1;
+        }
+      }
+
+      // Get friends not yet matched or with low match count
+      const friendRows = await ctx.env.DB.prepare(
+        `SELECT u.id as fId, u.name as fName, u.isNpc as fIsNpc,
+          dt.id as twinId, dt.name as twinName, dt.description as twinDesc,
+          dt.personality as twinPersonality, dt.tags as twinTags, dt.bigFiveTraits as twinBigFive,
+          up.industry as fIndustry, up.company as fCompany, up.skills as fSkills
+        FROM friendships f
+        JOIN users u ON u.id = CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END
+        LEFT JOIN digital_twins dt ON dt.userId = u.id
+        LEFT JOIN user_profiles up ON up.userId = u.id
+        WHERE (f.userId=? OR f.friendId=?) AND f.status='accepted' AND dt.id IS NOT NULL`
+      ).bind(ctx.userId, ctx.userId, ctx.userId).all<any>();
+
+      // Score each friend based on pattern matching
+      const recs: Array<{
+        friendId: number; friendName: string; twinName: string; twinDescription: string | null;
+        score: number; reasons: string[]; industry: string | null; tags: string[];
+        matchHistory: { count: number; bestScore: number | null; lastTheme: string | null };
+      }> = [];
+
+      for (const f of friendRows.results ?? []) {
+        const matchHistory = await ctx.env.DB.prepare(
+          `SELECT COUNT(*) as cnt, MAX(mr.compatibilityScore) as best, ms.theme as lastTheme
+           FROM matching_sessions ms
+           LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+           WHERE ms.initiatorUserId=? AND (ms.twin1Id=? OR ms.twin2Id=?)
+           ORDER BY ms.createdAt DESC`
+        ).bind(ctx.userId, f.twinId, f.twinId).first<any>();
+
+        let recScore = 50;
+        const reasons: string[] = [];
+        const fTags: string[] = f.twinTags ? (JSON.parse(f.twinTags) as string[] ?? []) : [];
+
+        // Tag overlap with successful patterns
+        let tagOverlap = 0;
+        for (const tag of fTags) {
+          if (successTags[tag]) {
+            tagOverlap += successTags[tag];
+          }
+        }
+        if (tagOverlap > 0) {
+          recScore += Math.min(tagOverlap * 5, 20);
+          reasons.push("過去の成功マッチングと共通のタグがあります");
+        }
+
+        // Industry match with successful patterns
+        if (f.fIndustry && successIndustries[f.fIndustry]) {
+          recScore += Math.min(successIndustries[f.fIndustry] * 5, 15);
+          reasons.push(`${f.fIndustry}業界との相性が高い傾向です`);
+        }
+
+        // Profile completeness bonus
+        if (f.twinDesc) recScore += 3;
+        if (f.twinPersonality) recScore += 3;
+        if (fTags.length > 0) recScore += Math.min(fTags.length * 2, 6);
+        if (f.twinBigFive) recScore += 3;
+        if (f.fSkills) recScore += 2;
+
+        // Prefer unmatched or less-matched friends
+        const matchCount = matchHistory?.cnt ?? 0;
+        if (matchCount === 0) {
+          recScore += 10;
+          reasons.push("まだマッチングしていない相手です");
+        } else if (matchCount < 3) {
+          recScore += 5;
+          reasons.push("マッチング回数が少なく、新しいテーマで試す価値があります");
+        }
+
+        // If best previous score was high, boost
+        if (matchHistory?.best && matchHistory.best >= 70) {
+          recScore += 10;
+          reasons.push(`過去のマッチングで${matchHistory.best}%の高スコアを記録しています`);
+        }
+
+        recScore = Math.min(recScore, 99);
+
+        if (reasons.length === 0) reasons.push("プロフィール情報に基づく推薦です");
+
+        recs.push({
+          friendId: f.fId,
+          friendName: f.fName,
+          twinName: f.twinName,
+          twinDescription: f.twinDesc,
+          score: Math.round(recScore),
+          reasons,
+          industry: f.fIndustry,
+          tags: fTags,
+          matchHistory: {
+            count: matchCount,
+            bestScore: matchHistory?.best ?? null,
+            lastTheme: matchHistory?.lastTheme ?? null,
+          },
+        });
+      }
+
+      recs.sort((a, b) => b.score - a.score);
+
+      // Generate AI insights if enough data (3+ completed matchings)
+      let insights: { summary: string; topPattern: string; suggestion: string } | null = null;
+      if (results.length >= 3) {
+        try {
+          const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "analysis", ctx.env);
+          if (llmConfig) {
+            const topTags = Object.entries(successTags).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t]) => t);
+            const topIndustries = Object.entries(successIndustries).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([i]) => i);
+            const aiResult = await invokeLLM(llmConfig, [
+              { role: "system", content: "あなたはビジネスマッチングアドバイザーです。ユーザーのマッチング傾向を分析して簡潔なインサイトを提供してください。" },
+              { role: "user", content: `過去${results.length}回のマッチング結果:
+平均スコア: ${avgScore}%
+成功(60%+): ${successfulMatches.length}回
+成功パターンのタグ: ${topTags.join(", ") || "なし"}
+成功パターンの業界: ${topIndustries.join(", ") || "なし"}
+最高スコア: ${Math.max(...allScores)}%
+
+JSON形式で回答: {"summary": "傾向の要約(50文字)", "topPattern": "最も相性の良いパターン(30文字)", "suggestion": "次のマッチングへの提案(50文字)"}` },
+            ], { maxTokens: 256, temperature: 0.3 });
+            const jsonMatch = aiResult.content.match(/\{[\s\S]*\}/);
+            if (jsonMatch) insights = JSON.parse(jsonMatch[0]);
+          }
+        } catch {}
+      }
+
+      return {
+        recommendations: recs.slice(0, 10),
+        insights,
+        stats: { totalMatchings: results.length, avgScore, successCount: successfulMatches.length },
+      };
+    }),
   }),
 
   // ============ Points ============
@@ -3938,8 +4150,27 @@ JSON形式で出力:
       .input(z.object({ query: z.string().optional(), limit: z.number().optional() }).optional())
       .query(async ({ ctx }) => {
         await ensureSchema(ctx.env.DB);
-        const rows = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE isPublic=1 AND userId!=? LIMIT 20`).bind(ctx.userId).all<any>();
-        return (rows.results ?? []).map(normalizeTwin);
+        const rows = await ctx.env.DB.prepare(
+          `SELECT dt.*, u.id as ownerId, u.name as ownerName FROM digital_twins dt
+           JOIN users u ON u.id = dt.userId
+           WHERE dt.userId != ? AND (
+             dt.visibility = 'public'
+             OR (dt.visibility = 'friends' AND EXISTS (
+               SELECT 1 FROM friendships f WHERE f.status='accepted'
+               AND ((f.userId=? AND f.friendId=dt.userId) OR (f.friendId=? AND f.userId=dt.userId))
+             ))
+             OR (dt.visibility = 'custom' AND EXISTS (
+               SELECT 1 FROM twin_visibility_rules tvr WHERE tvr.twinId=dt.id AND tvr.viewerUserId=?
+             ))
+             OR (dt.isPublic=1 AND (dt.visibility IS NULL OR dt.visibility = ''))
+           )
+           LIMIT 20`
+        ).bind(ctx.userId, ctx.userId, ctx.userId, ctx.userId).all<any>();
+        return (rows.results ?? []).map((r: any) => ({
+          ...normalizeTwin(r),
+          ownerId: r.ownerId,
+          ownerName: r.ownerName,
+        }));
       }),
   }),
 
@@ -4400,6 +4631,286 @@ JSON形式で出力:
         }
         return { success: true };
       }),
+  }),
+
+  // ============ Admin Content Moderation ============
+  admin: router({
+    // Dashboard overview
+    overview: protectedProcedure.use(async ({ ctx, next }) => {
+      if (ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "管理者権限が必要です" });
+      return next();
+    }).query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const userCount = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM users WHERE isNpc=0`).first<any>();
+      const twinCount = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM digital_twins`).first<any>();
+      const matchingCount = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM matching_sessions`).first<any>();
+      const reportCount = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM content_reports WHERE status='pending'`).first<any>();
+      const recentUsers = await ctx.env.DB.prepare(`SELECT id, name, email, createdAt FROM users WHERE isNpc=0 ORDER BY createdAt DESC LIMIT 10`).all<any>();
+      const recentMatchings = await ctx.env.DB.prepare(`SELECT ms.id, ms.theme, ms.status, ms.createdAt, u.name as initiatorName FROM matching_sessions ms JOIN users u ON u.id = ms.initiatorUserId ORDER BY ms.createdAt DESC LIMIT 10`).all<any>();
+      return {
+        stats: {
+          users: userCount?.c ?? 0,
+          twins: twinCount?.c ?? 0,
+          matchings: matchingCount?.c ?? 0,
+          pendingReports: reportCount?.c ?? 0,
+        },
+        recentUsers: recentUsers.results ?? [],
+        recentMatchings: recentMatchings.results ?? [],
+      };
+    }),
+
+    // List content reports
+    reports: protectedProcedure.use(async ({ ctx, next }) => {
+      if (ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "管理者権限が必要です" });
+      return next();
+    })
+      .input(z.object({ status: z.enum(["pending", "reviewed", "dismissed"]).optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const status = input?.status || "pending";
+        const rows = await ctx.env.DB.prepare(
+          `SELECT cr.*, u.name as reporterName FROM content_reports cr JOIN users u ON u.id = cr.reporterUserId WHERE cr.status=? ORDER BY cr.createdAt DESC LIMIT 50`
+        ).bind(status).all<any>();
+        return rows.results ?? [];
+      }),
+
+    // Review a report
+    reviewReport: protectedProcedure.use(async ({ ctx, next }) => {
+      if (ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "管理者権限が必要です" });
+      return next();
+    })
+      .input(z.object({ reportId: z.number(), action: z.enum(["approve", "dismiss", "delete_content", "warn_user", "ban_user"]), reason: z.string().optional() }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const report = await ctx.env.DB.prepare(`SELECT * FROM content_reports WHERE id=?`).bind(input.reportId).first<any>();
+        if (!report) throw new TRPCError({ code: "NOT_FOUND" });
+
+        // Update report status
+        await ctx.env.DB.prepare(
+          `UPDATE content_reports SET status='reviewed', reviewedBy=?, reviewedAt=datetime('now'), action=? WHERE id=?`
+        ).bind(ctx.userId, input.action, input.reportId).run();
+
+        // Log moderation action
+        await ctx.env.DB.prepare(
+          `INSERT INTO moderation_actions (adminUserId, targetType, targetId, action, reason) VALUES (?,?,?,?,?)`
+        ).bind(ctx.userId, report.targetType, report.targetId, input.action, input.reason || "").run();
+
+        // Execute action
+        if (input.action === "delete_content") {
+          if (report.targetType === "twin") {
+            await ctx.env.DB.prepare(`UPDATE digital_twins SET isPublic=0 WHERE id=?`).bind(report.targetId).run();
+          } else if (report.targetType === "persona_template") {
+            await ctx.env.DB.prepare(`UPDATE persona_templates SET isPublished=0, isApproved=0 WHERE id=?`).bind(report.targetId).run();
+          }
+        }
+
+        return { success: true };
+      }),
+
+    // List all users (with pagination)
+    users: protectedProcedure.use(async ({ ctx, next }) => {
+      if (ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "管理者権限が必要です" });
+      return next();
+    })
+      .input(z.object({ limit: z.number().default(50), offset: z.number().default(0), search: z.string().optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        let sql = `SELECT u.id, u.name, u.email, u.role, u.plan, u.createdAt, u.isNpc,
+          (SELECT COUNT(*) FROM matching_sessions WHERE initiatorUserId=u.id) as matchingCount,
+          (SELECT score FROM trust_scores WHERE userId=u.id) as trustScore
+          FROM users u WHERE u.isNpc=0`;
+        const binds: any[] = [];
+        if (input?.search) { sql += ` AND (u.name LIKE ? OR u.email LIKE ?)`; binds.push(`%${input.search}%`, `%${input.search}%`); }
+        sql += ` ORDER BY u.createdAt DESC LIMIT ? OFFSET ?`;
+        binds.push(input?.limit ?? 50, input?.offset ?? 0);
+        const rows = await ctx.env.DB.prepare(sql).bind(...binds).all<any>();
+        const total = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM users WHERE isNpc=0`).first<any>();
+        return { users: rows.results ?? [], total: total?.c ?? 0 };
+      }),
+
+    // Moderation history
+    moderationHistory: protectedProcedure.use(async ({ ctx, next }) => {
+      if (ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "管理者権限が必要です" });
+      return next();
+    }).query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT ma.*, u.name as adminName FROM moderation_actions ma JOIN users u ON u.id = ma.adminUserId ORDER BY ma.createdAt DESC LIMIT 50`
+      ).all<any>();
+      return rows.results ?? [];
+    }),
+  }),
+
+  // ============ Content Report (any authenticated user) ============
+  report: router({
+    submit: protectedProcedure
+      .input(z.object({
+        targetType: z.enum(["twin", "chat_message", "persona_template", "user_profile"]),
+        targetId: z.number(),
+        reason: z.string().min(1),
+        details: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        await ctx.env.DB.prepare(
+          `INSERT INTO content_reports (reporterUserId, targetType, targetId, reason, details) VALUES (?,?,?,?,?)`
+        ).bind(ctx.userId, input.targetType, input.targetId, input.reason, input.details || "").run();
+        return { success: true };
+      }),
+  }),
+
+  // ============ Marketplace ============
+  marketplace: router({
+    // List published & approved templates
+    list: protectedProcedure
+      .input(z.object({ category: z.string().optional(), search: z.string().optional(), sort: z.enum(["popular", "newest", "rating", "price"]).optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        let sql = `SELECT pt.*, u.name as creatorName FROM persona_templates pt JOIN users u ON u.id = pt.creatorUserId WHERE pt.isPublished=1 AND pt.isApproved=1`;
+        const binds: any[] = [];
+        if (input?.category) { sql += ` AND pt.category=?`; binds.push(input.category); }
+        if (input?.search) { sql += ` AND (pt.name LIKE ? OR pt.description LIKE ?)`; binds.push(`%${input.search}%`, `%${input.search}%`); }
+        const sort = input?.sort || "popular";
+        if (sort === "popular") sql += ` ORDER BY pt.purchaseCount DESC`;
+        else if (sort === "newest") sql += ` ORDER BY pt.createdAt DESC`;
+        else if (sort === "rating") sql += ` ORDER BY pt.rating DESC`;
+        else if (sort === "price") sql += ` ORDER BY pt.price ASC`;
+        sql += ` LIMIT 50`;
+        const rows = await ctx.env.DB.prepare(sql).bind(...binds).all<any>();
+        return (rows.results ?? []).map((r: any) => ({
+          id: r.id, name: r.name, description: r.description, category: r.category,
+          price: r.price, currency: r.currency, previewBio: r.previewBio,
+          rating: r.rating, ratingCount: r.ratingCount, purchaseCount: r.purchaseCount,
+          creatorName: r.creatorName, creatorId: r.creatorUserId,
+          tags: parseJson<string[]>(r.tags) ?? [],
+          createdAt: r.createdAt,
+        }));
+      }),
+
+    // Get template details
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const t = await ctx.env.DB.prepare(
+          `SELECT pt.*, u.name as creatorName FROM persona_templates pt JOIN users u ON u.id = pt.creatorUserId WHERE pt.id=?`
+        ).bind(input.id).first<any>();
+        if (!t) throw new TRPCError({ code: "NOT_FOUND" });
+        const purchased = await ctx.env.DB.prepare(`SELECT id FROM persona_purchases WHERE userId=? AND templateId=?`).bind(ctx.userId, input.id).first<any>();
+        const reviews = await ctx.env.DB.prepare(`SELECT pr.*, u.name FROM persona_reviews pr JOIN users u ON u.id = pr.userId WHERE pr.templateId=? ORDER BY pr.createdAt DESC LIMIT 10`).bind(input.id).all<any>();
+        return {
+          ...t, tags: parseJson<string[]>(t.tags) ?? [], creatorName: t.creatorName,
+          isPurchased: !!purchased,
+          reviews: (reviews.results ?? []).map((r: any) => ({ id: r.id, rating: r.rating, comment: r.comment, userName: r.name, createdAt: r.createdAt })),
+        };
+      }),
+
+    // Publish a template from your own twin
+    publish: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        category: z.string().default("general"),
+        price: z.number().min(0).default(0),
+        previewBio: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+        if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIを作成してください" });
+        const res = await ctx.env.DB.prepare(
+          `INSERT INTO persona_templates (creatorUserId, name, description, personality, systemPrompt, tags, category, price, previewBio, isPublished, isApproved) VALUES (?,?,?,?,?,?,?,?,?,1,0)`
+        ).bind(ctx.userId, input.name, input.description || twin.description || "", twin.personality || "", twin.systemPrompt || "", toJson(input.tags || []), input.category, input.price, input.previewBio || "").run();
+        return { id: Number(res.meta.last_row_id), status: "pending_approval" };
+      }),
+
+    // Purchase a template
+    purchase: protectedProcedure
+      .input(z.object({ templateId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const template = await ctx.env.DB.prepare(`SELECT * FROM persona_templates WHERE id=? AND isPublished=1 AND isApproved=1`).bind(input.templateId).first<any>();
+        if (!template) throw new TRPCError({ code: "NOT_FOUND", message: "テンプレートが見つかりません" });
+        const existing = await ctx.env.DB.prepare(`SELECT id FROM persona_purchases WHERE userId=? AND templateId=?`).bind(ctx.userId, input.templateId).first<any>();
+        if (existing) throw new TRPCError({ code: "CONFLICT", message: "既に購入済みです" });
+        if (template.price > 0) {
+          const points = await ctx.env.DB.prepare(`SELECT balance FROM user_points WHERE userId=?`).bind(ctx.userId).first<any>();
+          if (!points || points.balance < template.price) throw new TRPCError({ code: "FORBIDDEN", message: "ポイントが不足しています" });
+          await ctx.env.DB.prepare(`UPDATE user_points SET balance=balance-?, totalSpent=totalSpent+?, updatedAt=datetime('now') WHERE userId=?`).bind(template.price, template.price, ctx.userId).run();
+          await ctx.env.DB.prepare(`INSERT INTO point_transactions (userId, type, amount, balanceAfter, actionType, description) VALUES (?,?,?,?,?,?)`).bind(ctx.userId, "spend", -template.price, (points.balance - template.price), "marketplace_purchase", `テンプレート「${template.name}」を購入`).run();
+        }
+        await ctx.env.DB.prepare(`INSERT INTO persona_purchases (userId, templateId, pointsSpent) VALUES (?,?,?)`).bind(ctx.userId, input.templateId, template.price).run();
+        await ctx.env.DB.prepare(`UPDATE persona_templates SET purchaseCount=purchaseCount+1 WHERE id=?`).bind(input.templateId).run();
+        return { success: true };
+      }),
+
+    // Apply a purchased template to your twin
+    apply: protectedProcedure
+      .input(z.object({ templateId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const purchase = await ctx.env.DB.prepare(`SELECT id FROM persona_purchases WHERE userId=? AND templateId=?`).bind(ctx.userId, input.templateId).first<any>();
+        if (!purchase) throw new TRPCError({ code: "FORBIDDEN", message: "テンプレートを購入してください" });
+        const template = await ctx.env.DB.prepare(`SELECT * FROM persona_templates WHERE id=?`).bind(input.templateId).first<any>();
+        if (!template) throw new TRPCError({ code: "NOT_FOUND" });
+        const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+        if (!twin) throw new TRPCError({ code: "NOT_FOUND" });
+        await ctx.env.DB.prepare(
+          `UPDATE digital_twins SET personality=?, systemPrompt=?, description=?, tags=?, updatedAt=datetime('now') WHERE id=?`
+        ).bind(template.personality, template.systemPrompt, template.description, template.tags, twin.id).run();
+        await ctx.env.DB.prepare(`UPDATE persona_purchases SET appliedAt=datetime('now') WHERE userId=? AND templateId=?`).bind(ctx.userId, input.templateId).run();
+        return { success: true };
+      }),
+
+    // Review a purchased template
+    review: protectedProcedure
+      .input(z.object({ templateId: z.number(), rating: z.number().min(1).max(5), comment: z.string().optional() }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const purchase = await ctx.env.DB.prepare(`SELECT id FROM persona_purchases WHERE userId=? AND templateId=?`).bind(ctx.userId, input.templateId).first<any>();
+        if (!purchase) throw new TRPCError({ code: "FORBIDDEN", message: "購入済みテンプレートのみレビューできます" });
+        await ctx.env.DB.prepare(
+          `INSERT OR REPLACE INTO persona_reviews (templateId, userId, rating, comment) VALUES (?,?,?,?)`
+        ).bind(input.templateId, ctx.userId, input.rating, input.comment || "").run();
+        const avg = await ctx.env.DB.prepare(`SELECT AVG(rating) as a, COUNT(*) as c FROM persona_reviews WHERE templateId=?`).bind(input.templateId).first<any>();
+        await ctx.env.DB.prepare(`UPDATE persona_templates SET rating=?, ratingCount=? WHERE id=?`).bind(Math.round((avg?.a ?? 0) * 10) / 10, avg?.c ?? 0, input.templateId).run();
+        return { success: true };
+      }),
+
+    // My published templates
+    myTemplates: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(`SELECT * FROM persona_templates WHERE creatorUserId=? ORDER BY createdAt DESC`).bind(ctx.userId).all<any>();
+      return (rows.results ?? []).map((r: any) => ({ ...r, tags: parseJson<string[]>(r.tags) ?? [] }));
+    }),
+
+    // My purchases
+    myPurchases: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT pp.*, pt.name, pt.description, pt.category, pt.tags, pt.price FROM persona_purchases pp JOIN persona_templates pt ON pt.id = pp.templateId WHERE pp.userId=? ORDER BY pp.createdAt DESC`
+      ).bind(ctx.userId).all<any>();
+      return (rows.results ?? []).map((r: any) => ({ ...r, tags: parseJson<string[]>(r.tags) ?? [] }));
+    }),
+
+    // Admin: approve/reject template
+    moderate: protectedProcedure
+      .input(z.object({ templateId: z.number(), approved: z.boolean() }))
+      .mutation(async ({ ctx, input }) => {
+        if (ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+        await ensureSchema(ctx.env.DB);
+        await ctx.env.DB.prepare(`UPDATE persona_templates SET isApproved=? WHERE id=?`).bind(input.approved ? 1 : 0, input.templateId).run();
+        return { success: true };
+      }),
+
+    // Admin: list pending templates
+    pendingTemplates: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(`SELECT pt.*, u.name as creatorName FROM persona_templates pt JOIN users u ON u.id = pt.creatorUserId WHERE pt.isApproved=0 AND pt.isPublished=1 ORDER BY pt.createdAt DESC`).all<any>();
+      return (rows.results ?? []).map((r: any) => ({ ...r, tags: parseJson<string[]>(r.tags) ?? [] }));
+    }),
   }),
 });
 

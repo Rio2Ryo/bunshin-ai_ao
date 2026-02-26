@@ -464,6 +464,49 @@ CREATE TABLE IF NOT EXISTS ai_provider_settings (
   updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS persona_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  creatorUserId INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  personality TEXT,
+  systemPrompt TEXT,
+  tags TEXT,
+  category TEXT NOT NULL DEFAULT 'general',
+  price INTEGER NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'points',
+  previewBio TEXT,
+  rating REAL DEFAULT 0,
+  ratingCount INTEGER NOT NULL DEFAULT 0,
+  purchaseCount INTEGER NOT NULL DEFAULT 0,
+  isPublished INTEGER NOT NULL DEFAULT 0,
+  isApproved INTEGER NOT NULL DEFAULT 0,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+  updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_persona_templates_creator ON persona_templates(creatorUserId);
+
+CREATE TABLE IF NOT EXISTS persona_purchases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  templateId INTEGER NOT NULL,
+  pointsSpent INTEGER NOT NULL DEFAULT 0,
+  appliedAt TEXT,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(userId, templateId)
+);
+CREATE INDEX IF NOT EXISTS idx_persona_purchases_userId ON persona_purchases(userId);
+
+CREATE TABLE IF NOT EXISTS persona_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  templateId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  rating INTEGER NOT NULL,
+  comment TEXT,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(templateId, userId)
+);
+
 CREATE TABLE IF NOT EXISTS trust_scores (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   userId INTEGER NOT NULL UNIQUE,
@@ -522,6 +565,41 @@ CREATE TABLE IF NOT EXISTS notification_settings (
   createdAt TEXT NOT NULL DEFAULT (datetime('now')),
   updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS content_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  reporterUserId INTEGER NOT NULL,
+  targetType TEXT NOT NULL,
+  targetId INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  details TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  reviewedBy INTEGER,
+  reviewedAt TEXT,
+  action TEXT,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_content_reports_status ON content_reports(status);
+
+CREATE TABLE IF NOT EXISTS moderation_actions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  adminUserId INTEGER NOT NULL,
+  targetType TEXT NOT NULL,
+  targetId INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  reason TEXT,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS twin_visibility_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  twinId INTEGER NOT NULL,
+  viewerUserId INTEGER NOT NULL,
+  permission TEXT NOT NULL DEFAULT 'view',
+  grantedAt TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(twinId, viewerUserId)
+);
+CREATE INDEX IF NOT EXISTS idx_twin_visibility_twinId ON twin_visibility_rules(twinId);
 `;
 
 // Migrations to run after schema creation (ALTER TABLE etc.)
@@ -545,6 +623,10 @@ ALTER TABLE users ADD COLUMN onboardingStep INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN tutorialCompleted INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE matching_sessions ADD COLUMN settings TEXT;
 ALTER TABLE matching_results ADD COLUMN webSearchData TEXT;
+ALTER TABLE users ADD COLUMN tosAcceptedAt TEXT;
+ALTER TABLE users ADD COLUMN tosVersion TEXT;
+ALTER TABLE digital_twins ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public';
+ALTER TABLE digital_twins ADD COLUMN allowedViewerIds TEXT;
 `;
 
 // Separate migration for line_connections: make userId/twinId nullable

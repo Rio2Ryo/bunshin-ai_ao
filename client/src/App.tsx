@@ -40,6 +40,10 @@ const TrustScore = lazy(() => import("./pages/TrustScore"));
 const Intimacy = lazy(() => import("./pages/Intimacy"));
 const Analytics = lazy(() => import("./pages/Analytics"));
 const ApiDocs = lazy(() => import("./pages/ApiDocs"));
+const Terms = lazy(() => import("./pages/Terms"));
+const Recommendations = lazy(() => import("./pages/Recommendations"));
+const AdminReview = lazy(() => import("./pages/AdminReview"));
+const Marketplace = lazy(() => import("./pages/Marketplace"));
 
 function PageLoader() {
   return (
@@ -81,7 +85,11 @@ function Router() {
         <Route path="/intimacy" component={Intimacy} />
         <Route path="/analytics" component={Analytics} />
         <Route path="/admin/ai-provider" component={AdminAIProvider} />
+        <Route path="/admin/review" component={AdminReview} />
         <Route path="/api-docs" component={ApiDocs} />
+        <Route path="/terms" component={Terms} />
+        <Route path="/recommendations" component={Recommendations} />
+        <Route path="/marketplace" component={Marketplace} />
 
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />

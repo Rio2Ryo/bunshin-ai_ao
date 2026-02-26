@@ -18,6 +18,7 @@ export default function Register() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [tosAccepted, setTosAccepted] = useState(false);
   const utils = trpc.useUtils();
 
   const registerMutation = trpc.auth.register.useMutation({
@@ -52,7 +53,11 @@ export default function Register() {
       toast.error("パスワードは6文字以上で入力してください");
       return;
     }
-    registerMutation.mutate({ name, email, password });
+    if (!tosAccepted) {
+      toast.error("利用規約に同意してください");
+      return;
+    }
+    registerMutation.mutate({ name, email, password, tosAccepted: true });
   };
 
   return (
@@ -120,6 +125,19 @@ export default function Register() {
                 minLength={6}
                 autoComplete="new-password"
               />
+            </div>
+            <div className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                id="tos"
+                checked={tosAccepted}
+                onChange={(e) => setTosAccepted(e.target.checked)}
+                className="mt-1 rounded border-input"
+              />
+              <Label htmlFor="tos" className="text-xs text-muted-foreground leading-relaxed cursor-pointer">
+                <Link href="/terms" className="text-primary hover:underline">利用規約</Link>および
+                <Link href="/privacy" className="text-primary hover:underline">プライバシーポリシー</Link>に同意します
+              </Label>
             </div>
             <Button
               type="submit"

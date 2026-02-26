@@ -14,6 +14,7 @@ const translations = {
     "nav.discover": "発見",
     "nav.friends": "友達",
     "nav.matching": "マッチング",
+    "nav.recommendations": "推薦",
     "nav.intimacy": "親密度",
     "nav.growth": "育成",
     "nav.line": "LINE連携",
@@ -23,6 +24,7 @@ const translations = {
     "nav.menu": "メニュー",
     "nav.home": "ホーム",
     "nav.match": "マッチ",
+    "nav.marketplace": "マーケット",
     "nav.admin": "管理者",
     // Dashboard
     "dashboard.welcome": "おかえりなさい、",
@@ -111,6 +113,7 @@ const translations = {
     "nav.discover": "Discover",
     "nav.friends": "Friends",
     "nav.matching": "Matching",
+    "nav.recommendations": "Recommendations",
     "nav.intimacy": "Intimacy",
     "nav.growth": "Growth",
     "nav.line": "LINE Link",
@@ -120,6 +123,7 @@ const translations = {
     "nav.menu": "Menu",
     "nav.home": "Home",
     "nav.match": "Match",
+    "nav.marketplace": "Marketplace",
     "nav.admin": "Admin",
     // Dashboard
     "dashboard.welcome": "Welcome back, ",

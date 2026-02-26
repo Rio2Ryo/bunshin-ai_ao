@@ -20,12 +20,13 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { trpc } from "@/lib/trpc";
 import { useTranslation } from "@/contexts/LanguageContext";
 import {
@@ -41,6 +42,7 @@ type MenuGroup = { label: string; items: MenuItem[] };
 
 // 管理者専用メニュー (includes items hidden from regular users)
 const adminMenuItems: MenuItem[] = [
+  { icon: ShieldAlert, label: "審査", path: "/admin/review" },
   { icon: Cpu, label: "AIプロバイダー", path: "/admin/ai-provider" },
   { icon: Settings2, label: "AI API設定", path: "/ai-config" },
   { icon: Zap, label: "オーケストレーション", path: "/orchestration" },
@@ -76,6 +78,48 @@ export default function DashboardLayout({
 
   if (!user) {
     return <DashboardLayoutSkeleton />
+  }
+
+  // Check TOS acceptance - show TOS gate if not accepted
+  const TosGate = () => {
+    const [tosAccepted, setTosAccepted] = useState(() => !!(user as any)?.tosAcceptedAt);
+    const acceptTosMutation = trpc.auth.acceptTos.useMutation({
+      onSuccess: () => setTosAccepted(true),
+    });
+
+    if (tosAccepted) return null;
+
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <Card className="max-w-md w-full">
+          <CardHeader>
+            <CardTitle className="text-lg">利用規約の同意が必要です</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              サービスを利用するには、利用規約に同意していただく必要があります。
+            </p>
+            <div className="flex gap-2">
+              <Link href="/terms">
+                <Button variant="outline" size="sm">利用規約を読む</Button>
+              </Link>
+            </div>
+            <Button
+              className="w-full"
+              onClick={() => acceptTosMutation.mutate()}
+              disabled={acceptTosMutation.isPending}
+            >
+              {acceptTosMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              利用規約に同意する
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  };
+
+  if (!(user as any)?.tosAcceptedAt) {
+    return <TosGate />;
   }
 
   return (
@@ -132,12 +176,14 @@ function DashboardLayoutContent({
         { icon: Globe, label: t("nav.discover"), path: "/discover" },
         { icon: UserPlus, label: t("nav.friends"), path: "/friends" },
         { icon: Users, label: t("nav.matching"), path: "/matching" },
+        { icon: Lightbulb, label: t("nav.recommendations"), path: "/recommendations" },
         { icon: Heart, label: t("nav.intimacy"), path: "/intimacy" },
       ],
     },
     {
       label: language === "en" ? "More" : "もっと",
       items: [
+        { icon: Store, label: t("nav.marketplace"), path: "/marketplace" },
         { icon: Sparkles, label: t("nav.growth"), path: "/growth" },
         { icon: MessageCircle, label: t("nav.line"), path: "/line-link" },
         { icon: CreditCard, label: t("nav.cards"), path: "/cards" },
