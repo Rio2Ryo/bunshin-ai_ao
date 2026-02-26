@@ -1982,7 +1982,25 @@ JSON形式で出力:
     }),
     updateSettings: protectedProcedure
       .input(z.object({ defaultProvider: z.enum(["openai", "gemini", "anthropic", "grok", "builtin"]).optional() }))
-      .mutation(async () => ({ success: true })),
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        if (input.defaultProvider) {
+          // Upsert ai_provider_settings for 'orchestration' feature
+          const existing = await ctx.env.DB.prepare(
+            `SELECT id FROM ai_provider_settings WHERE userId=? AND feature='orchestration'`
+          ).bind(ctx.userId).first<any>();
+          if (existing) {
+            await ctx.env.DB.prepare(
+              `UPDATE ai_provider_settings SET provider=?, updatedAt=datetime('now') WHERE id=?`
+            ).bind(input.defaultProvider, existing.id).run();
+          } else {
+            await ctx.env.DB.prepare(
+              `INSERT INTO ai_provider_settings (userId, feature, provider) VALUES (?,?,?)`
+            ).bind(ctx.userId, "orchestration", input.defaultProvider).run();
+          }
+        }
+        return { success: true };
+      }),
   }),
 
   // ============ Chat ============
@@ -3057,13 +3075,47 @@ ${dialogueHtml || "<p>対話がまだ行われていません</p>"}
 
     generatePresentation: protectedProcedure
       .input(z.object({ sessionId: z.number() }))
-      .mutation(async () => ({ slideContent: { markdown: "", slideCount: 0 }, slideCount: 0 })),
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const session = await ctx.env.DB.prepare(`SELECT ms.*, mr.compatibilityScore, mr.summary, mr.strengths, mr.challenges, mr.recommendations FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id WHERE ms.id=?`).bind(input.sessionId).first<any>();
+        if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+        const dialogues = await ctx.env.DB.prepare(`SELECT md.*, dt.name as speakerName FROM matching_dialogues md JOIN digital_twins dt ON dt.id=md.speakerTwinId WHERE md.sessionId=? ORDER BY md.turnNumber`).bind(input.sessionId).all<any>();
+        const twin1 = await ctx.env.DB.prepare(`SELECT name FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+        const twin2 = await ctx.env.DB.prepare(`SELECT name FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+        const strengths = parseJson<string[]>(session.strengths) ?? [];
+        const challenges = parseJson<string[]>(session.challenges) ?? [];
+        const recommendations = parseJson<string[]>(session.recommendations) ?? [];
+        const dialogueText = (dialogues.results ?? []).map((d: any) => `${d.speakerName}: ${d.content}`).join("\n\n");
+
+        const markdown = `# マッチングレポート\n## テーマ: ${session.theme}\n\n**参加者**: ${twin1?.name ?? "Twin 1"} × ${twin2?.name ?? "Twin 2"}\n**相性スコア**: ${session.compatibilityScore ?? "-"}%\n\n---\n\n## 要約\n${session.summary || "分析結果なし"}\n\n## 強み\n${strengths.map(s => `- ${s}`).join("\n") || "- なし"}\n\n## 課題\n${challenges.map(s => `- ${s}`).join("\n") || "- なし"}\n\n## 提案\n${recommendations.map(s => `- ${s}`).join("\n") || "- なし"}\n\n---\n\n## 対話ログ\n${dialogueText || "対話なし"}`;
+        const slideCount = 4 + Math.ceil((dialogues.results?.length ?? 0) / 3);
+        return { slideContent: { markdown, slideCount }, slideCount };
+      }),
     generateNanoBananaSlides: protectedProcedure
       .input(z.object({ sessionId: z.number() }))
-      .mutation(async () => ({ slideContentFile: "", slideCount: 0, slides: [], theme: "", twin1Name: "", twin2Name: "", compatibilityScore: 0 })),
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const session = await ctx.env.DB.prepare(`SELECT ms.*, mr.compatibilityScore, mr.summary, mr.strengths, mr.challenges FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id WHERE ms.id=?`).bind(input.sessionId).first<any>();
+        if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+        const twin1 = await ctx.env.DB.prepare(`SELECT name FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+        const twin2 = await ctx.env.DB.prepare(`SELECT name FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+        const strengths = parseJson<string[]>(session.strengths) ?? [];
+        const challenges = parseJson<string[]>(session.challenges) ?? [];
+        const slides = [
+          { title: session.theme, content: `${twin1?.name ?? "Twin 1"} × ${twin2?.name ?? "Twin 2"}`, type: "title" },
+          { title: "相性スコア", content: `${session.compatibilityScore ?? 0}%`, type: "score" },
+          { title: "強み", content: strengths.join("\n"), type: "list" },
+          { title: "課題と提案", content: challenges.join("\n"), type: "list" },
+        ];
+        return { slideContentFile: "", slideCount: slides.length, slides, theme: session.theme, twin1Name: twin1?.name ?? "", twin2Name: twin2?.name ?? "", compatibilityScore: parseFloat(session.compatibilityScore ?? "0") };
+      }),
     exportPptx: protectedProcedure
       .input(z.object({ sessionId: z.number() }))
-      .mutation(async () => ({ base64: "", filename: "", url: undefined as string | undefined })),
+      .mutation(async () => {
+        // PPTX generation requires external library not available in CF Workers
+        // Return empty with message - users should use PDF export instead
+        return { base64: "", filename: "", url: undefined as string | undefined, message: "PPTX出力は現在準備中です。PDF出力をご利用ください。" };
+      }),
     recommendations: protectedProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const myTwin = await getMyTwin(ctx.env.DB, ctx.userId);
@@ -3305,7 +3357,21 @@ JSON形式で回答: {"summary": "傾向の要約(50文字)", "topPattern": "最
     }),
     updateSetting: protectedProcedure
       .input(z.object({ actionType: z.string(), points: z.number().optional(), isActive: z.number().optional() }))
-      .mutation(async () => ({ success: true })),
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        // Admin-only: update point settings
+        if (ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "管理者権限が必要です" });
+        const existing = await ctx.env.DB.prepare(`SELECT id FROM point_settings WHERE actionType=?`).bind(input.actionType).first<any>();
+        if (existing) {
+          const sets: string[] = ["updatedAt=datetime('now')"];
+          const vals: any[] = [];
+          if (input.points !== undefined) { sets.push("points=?"); vals.push(input.points); }
+          if (input.isActive !== undefined) { sets.push("isActive=?"); vals.push(input.isActive); }
+          vals.push(existing.id);
+          await ctx.env.DB.prepare(`UPDATE point_settings SET ${sets.join(",")} WHERE id=?`).bind(...vals).run();
+        }
+        return { success: true };
+      }),
     redeemProduct: protectedProcedure
       .input(z.object({ productId: z.number(), shippingInfo: z.record(z.string(), z.unknown()).optional() }))
       .mutation(async ({ ctx, input }) => {
