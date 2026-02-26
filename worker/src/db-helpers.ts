@@ -615,6 +615,14 @@ CREATE TABLE IF NOT EXISTS twin_visibility_rules (
 );
 CREATE INDEX IF NOT EXISTS idx_twin_visibility_twinId ON twin_visibility_rules(twinId);
 
+CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  eventId TEXT NOT NULL UNIQUE,
+  eventType TEXT NOT NULL,
+  processed INTEGER NOT NULL DEFAULT 1,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   userId INTEGER NOT NULL,

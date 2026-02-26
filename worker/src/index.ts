@@ -5439,27 +5439,40 @@ async function notifyMatchingComplete(
 
 const api = new Hono<{ Bindings: Env }>();
 
-// Allowed origins for CORS
-const ALLOWED_ORIGINS = [
+// Allowed origins for CORS (strict whitelist)
+const ALLOWED_ORIGINS = new Set([
   "https://bunshin-ai.pages.dev",
   "http://localhost:5173",
   "http://localhost:3000",
-];
+]);
+
+function isAllowedOrigin(origin: string | undefined): string | null {
+  if (!origin) return null; // Server-to-server (no CORS needed)
+  if (ALLOWED_ORIGINS.has(origin)) return origin;
+  // Allow Cloudflare Pages preview deployments
+  if (origin.endsWith(".bunshin-ai.pages.dev") && origin.startsWith("https://")) return origin;
+  return null; // Reject unknown origins
+}
 
 api.use(
   "/api/*",
   cors({
     origin: (origin) => {
-      if (!origin) return "https://bunshin-ai.pages.dev";
-      if (ALLOWED_ORIGINS.includes(origin)) return origin;
-      if (origin.endsWith(".bunshin-ai.pages.dev")) return origin;
-      return "https://bunshin-ai.pages.dev";
+      const allowed = isAllowedOrigin(origin);
+      // Return the origin if allowed; Hono omits Access-Control-Allow-Origin if empty string returned
+      return allowed || "";
     },
-    allowHeaders: ["content-type"],
+    allowHeaders: ["content-type", "x-trpc-source"],
     allowMethods: ["GET", "POST", "OPTIONS"],
     credentials: true,
   })
 );
+
+// Explicit Vary: Origin for correct caching + CORS per-origin behavior
+api.use("/api/*", async (c, next) => {
+  await next();
+  c.res.headers.append("Vary", "Origin");
+});
 
 // Security headers
 api.use("*", async (c, next) => {
@@ -5468,6 +5481,7 @@ api.use("*", async (c, next) => {
   c.res.headers.set("X-Frame-Options", "DENY");
   c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   c.res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  c.res.headers.set("X-Permitted-Cross-Domain-Policies", "none");
   c.res.headers.set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://bunshin-ai-api.common-gifted-tokyo.workers.dev https://bunshin-ai.pages.dev; frame-ancestors 'none'");
   if (c.req.url.includes("workers.dev")) {
     c.res.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
@@ -5495,6 +5509,7 @@ const rateLimitMap = new Map<string, { count: number; resetAt: number; limit: nu
 const RATE_LIMIT_WINDOW = 60_000;
 const PLAN_RATE_LIMITS: Record<string, number> = { free: 30, premium: 120, enterprise: 600 };
 const DEFAULT_RATE_LIMIT = 20;
+let lastCleanup = Date.now();
 
 api.use("/api/*", async (c, next) => {
   const ip = c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for") || "unknown";
@@ -5524,39 +5539,57 @@ api.use("/api/*", async (c, next) => {
     rateLimitMap.set(key, entry);
   }
   entry.count++;
+
+  const retryAfterSec = Math.ceil((entry.resetAt - nowMs) / 1000);
   c.res.headers.set("X-RateLimit-Limit", String(entry.limit));
   c.res.headers.set("X-RateLimit-Remaining", String(Math.max(0, entry.limit - entry.count)));
   c.res.headers.set("X-RateLimit-Reset", String(Math.ceil(entry.resetAt / 1000)));
   if (entry.count > entry.limit) {
-    return c.json({ error: "Rate limit exceeded. Please try again later.", retryAfter: Math.ceil((entry.resetAt - nowMs) / 1000) }, 429);
+    c.res.headers.set("Retry-After", String(retryAfterSec));
+    return c.json({ error: "Rate limit exceeded. Please try again later.", retryAfter: retryAfterSec }, 429);
   }
-  if (rateLimitMap.size > 1000) {
+  // Periodic cleanup every 30s (avoids memory leaks)
+  if (nowMs - lastCleanup > 30_000) {
+    lastCleanup = nowMs;
     const keys = Array.from(rateLimitMap.keys());
-    for (const k of keys) { const v = rateLimitMap.get(k); if (v && nowMs > v.resetAt) rateLimitMap.delete(k); }
+    for (const k of keys) {
+      const v = rateLimitMap.get(k);
+      if (v && nowMs > v.resetAt) rateLimitMap.delete(k);
+    }
   }
   await next();
 });
 
-// Stricter rate limit for auth endpoints (10 per minute)
-const AUTH_RATE_LIMIT_MAX = 10;
-api.use("/api/trpc/auth.*", async (c, next) => {
-  const ip = c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for") || "unknown";
-  const key = `auth:${ip}`;
-  const nowMs = Date.now();
-  let entry = rateLimitMap.get(key);
+// Per-endpoint rate limiter helper
+function perEndpointRateLimit(prefix: string, maxPerMin: number) {
+  return async (c: any, next: any) => {
+    const ip = c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for") || "unknown";
+    const key = `${prefix}:${ip}`;
+    const nowMs = Date.now();
+    let entry = rateLimitMap.get(key);
+    if (!entry || nowMs > entry.resetAt) {
+      entry = { count: 0, resetAt: nowMs + RATE_LIMIT_WINDOW, limit: maxPerMin };
+      rateLimitMap.set(key, entry);
+    }
+    entry.count++;
+    if (entry.count > maxPerMin) {
+      const retryAfter = Math.ceil((entry.resetAt - nowMs) / 1000);
+      c.res.headers.set("Retry-After", String(retryAfter));
+      return c.json({ error: `Rate limit exceeded for ${prefix}. Please try again later.`, retryAfter }, 429);
+    }
+    await next();
+  };
+}
 
-  if (!entry || nowMs > entry.resetAt) {
-    entry = { count: 0, resetAt: nowMs + RATE_LIMIT_WINDOW, limit: AUTH_RATE_LIMIT_MAX };
-    rateLimitMap.set(key, entry);
-  }
+// Stricter rate limit for auth endpoints (10 per minute per IP)
+api.use("/api/trpc/auth.*", perEndpointRateLimit("auth", 10));
 
-  entry.count++;
-  if (entry.count > AUTH_RATE_LIMIT_MAX) {
-    return c.json({ error: "Too many authentication attempts. Please try again later." }, 429);
-  }
-
-  await next();
-});
+// Stricter rate limit for LLM-heavy endpoints (5 per minute for free tier)
+api.use("/api/trpc/chat.sendMessage*", perEndpointRateLimit("chat_send", 15));
+api.use("/api/trpc/matching.create*", perEndpointRateLimit("matching_create", 5));
+api.use("/api/trpc/matching.runDialogue*", perEndpointRateLimit("matching_dialogue", 5));
+api.use("/api/trpc/matching.analyze*", perEndpointRateLimit("matching_analyze", 10));
+api.use("/api/trpc/personality.*", perEndpointRateLimit("personality", 5));
 
 api.get("/", (c) => c.json({ message: "Bunshin AI API v2. Use /api/* endpoints." }));
 api.get("/api/health", async (c) => {
@@ -5812,7 +5845,17 @@ api.get("/api/export/matching/:id/pdf", async (c) => {
   return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 });
 
-// Stripe webhook handler
+// Timing-safe comparison for webhook signatures
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+// Stripe webhook handler (hardened)
 api.post("/api/stripe/webhook", async (c) => {
   const env = c.env as Env;
   if (!env.STRIPE_SECRET_KEY) return c.json({ error: "Stripe not configured" }, 500);
@@ -5820,25 +5863,46 @@ api.post("/api/stripe/webhook", async (c) => {
   await ensureSchema(env.DB);
   const body = await c.req.text();
 
-  // Verify webhook signature if secret is configured
-  if (env.STRIPE_WEBHOOK_SECRET) {
-    const sigHeader = c.req.header("stripe-signature") || "";
-    const parts = Object.fromEntries(sigHeader.split(",").map(p => { const [k, v] = p.split("="); return [k, v]; }));
-    const timestamp = parts["t"];
-    const signature = parts["v1"];
-    if (!timestamp || !signature) return c.json({ error: "Missing signature" }, 400);
-    // Reject old timestamps (>5 min)
-    if (Math.abs(Date.now() / 1000 - parseInt(timestamp)) > 300) {
-      return c.json({ error: "Timestamp too old" }, 400);
-    }
-    const payload = `${timestamp}.${body}`;
-    const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey("raw", encoder.encode(env.STRIPE_WEBHOOK_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-    const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(payload));
-    const expectedSig = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, "0")).join("");
-    if (expectedSig !== signature) {
-      return c.json({ error: "Invalid signature" }, 400);
-    }
+  // REQUIRE webhook signature in production (reject unsigned requests)
+  if (!env.STRIPE_WEBHOOK_SECRET) {
+    console.error("STRIPE_WEBHOOK_SECRET not configured — rejecting webhook");
+    return c.json({ error: "Webhook secret not configured" }, 500);
+  }
+
+  const sigHeader = c.req.header("stripe-signature") || "";
+  if (!sigHeader) return c.json({ error: "Missing stripe-signature header" }, 400);
+
+  // Parse all signature parts (Stripe may send multiple v1 signatures)
+  const sigParts: Record<string, string[]> = {};
+  for (const part of sigHeader.split(",")) {
+    const eqIdx = part.indexOf("=");
+    if (eqIdx === -1) continue;
+    const key = part.slice(0, eqIdx).trim();
+    const val = part.slice(eqIdx + 1).trim();
+    if (!sigParts[key]) sigParts[key] = [];
+    sigParts[key].push(val);
+  }
+  const timestamp = sigParts["t"]?.[0];
+  const signatures = sigParts["v1"] || [];
+  if (!timestamp || signatures.length === 0) return c.json({ error: "Missing signature components" }, 400);
+
+  // Reject old timestamps (>5 min) to prevent replay attacks
+  const ts = parseInt(timestamp, 10);
+  if (isNaN(ts) || Math.abs(Date.now() / 1000 - ts) > 300) {
+    return c.json({ error: "Timestamp too old or invalid" }, 400);
+  }
+
+  // Compute expected signature
+  const payload = `${timestamp}.${body}`;
+  const encoder = new TextEncoder();
+  const hmacKey = await crypto.subtle.importKey("raw", encoder.encode(env.STRIPE_WEBHOOK_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", hmacKey, encoder.encode(payload));
+  const expectedSig = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, "0")).join("");
+
+  // Timing-safe comparison against all v1 signatures
+  const signatureValid = signatures.some(s => timingSafeEqual(expectedSig, s));
+  if (!signatureValid) {
+    return c.json({ error: "Invalid signature" }, 400);
   }
 
   let event: any;
@@ -5846,6 +5910,16 @@ api.post("/api/stripe/webhook", async (c) => {
     event = JSON.parse(body);
   } catch {
     return c.json({ error: "Invalid JSON" }, 400);
+  }
+
+  // Idempotency: skip already-processed events
+  if (event.id) {
+    const existing = await env.DB.prepare(
+      `SELECT id FROM stripe_webhook_events WHERE eventId=?`
+    ).bind(event.id).first<any>();
+    if (existing) {
+      return c.json({ received: true, deduplicated: true });
+    }
   }
 
   // Handle relevant events
@@ -5877,7 +5951,6 @@ api.post("/api/stripe/webhook", async (c) => {
       const sub = event.data?.object;
       const customerId = sub?.customer;
       if (customerId && sub?.status === "active") {
-        // Subscription renewed/updated
         await env.DB.prepare(
           `UPDATE users SET stripeSubscriptionId=?, updatedAt=datetime('now') WHERE stripeCustomerId=?`
         ).bind(sub.id, customerId).run();
@@ -5888,6 +5961,15 @@ api.post("/api/stripe/webhook", async (c) => {
       }
       break;
     }
+  }
+
+  // Log processed event for idempotency + audit trail
+  if (event.id) {
+    try {
+      await env.DB.prepare(
+        `INSERT INTO stripe_webhook_events (eventId, eventType) VALUES (?,?)`
+      ).bind(event.id, event.type).run();
+    } catch { /* ignore duplicate insert */ }
   }
 
   return c.json({ received: true });
