@@ -4450,14 +4450,20 @@ JSON形式で出力:
           await ctx.env.DB.prepare(`UPDATE users SET stripeCustomerId=? WHERE id=?`).bind(customerId, ctx.userId).run();
         }
 
+        const stripePriceMap: Record<string, { name: string; amount: number }> = {
+          premium: { name: "分身AI プレミアムプラン", amount: 980 },
+          enterprise: { name: "分身AI エンタープライズプラン", amount: 4980 },
+        };
+        const planInfo = stripePriceMap[input.planId] || stripePriceMap.premium;
+
         const body = new URLSearchParams({
           mode: "subscription",
           customer: customerId,
           "success_url": "https://bunshin-ai.pages.dev/plan?status=success",
           "cancel_url": "https://bunshin-ai.pages.dev/plan?status=cancelled",
           "line_items[0][price_data][currency]": "jpy",
-          "line_items[0][price_data][product_data][name]": "分身AI プレミアムプラン",
-          "line_items[0][price_data][unit_amount]": "980",
+          "line_items[0][price_data][product_data][name]": planInfo.name,
+          "line_items[0][price_data][unit_amount]": String(planInfo.amount),
           "line_items[0][price_data][recurring][interval]": "month",
           "line_items[0][quantity]": "1",
           "metadata[userId]": String(ctx.userId),

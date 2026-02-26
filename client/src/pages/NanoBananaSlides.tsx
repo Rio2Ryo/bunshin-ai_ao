@@ -51,7 +51,7 @@ export default function NanoBananaSlides() {
         window.open(data.url, "_blank");
         toast.success("PPTXファイルをダウンロードしました");
       } else {
-        toast.info("PPTXエクスポートは現在準備中です（Phase 2で実装予定）");
+        toast.info(data.message || "PPTX出力はサーバー環境の制約により利用できません。PDF出力をご利用ください。");
       }
     },
     onError: () => {

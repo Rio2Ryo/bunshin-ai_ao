@@ -315,8 +315,8 @@ export default function Home() {
               yearlyPrice="¥9,800/年（2ヶ月分お得）"
               description="本格的にビジネスマッチングしたい方に"
               features={["分身AI フル機能", "マッチング 月30回", "友達 50人まで", "AIチャット 月500回", "詳細分析レポート", "CSV/PDFエクスポート", "外部AI連携（GPT/Gemini/Claude）", "優先サポート"]}
-              cta="プロプランを始める"
-              ctaLink="/register"
+              cta={isAuthenticated ? "プロプランにアップグレード" : "プロプランを始める"}
+              ctaLink={isAuthenticated ? "/plan" : "/register"}
               popular={true}
             />
             <PricingCard
@@ -326,8 +326,8 @@ export default function Home() {
               yearlyPrice="¥49,800/年（2ヶ月分お得）"
               description="組織・チームでの利用に"
               features={["すべてのプロ機能", "マッチング 無制限", "友達 無制限", "AIチャット 無制限", "APIアクセス 600req/分", "管理者ダッシュボード", "カスタムAIペルソナ", "SLA保証"]}
-              cta="エンタープライズを始める"
-              ctaLink="/register"
+              cta={isAuthenticated ? "エンタープライズにアップグレード" : "エンタープライズを始める"}
+              ctaLink={isAuthenticated ? "/plan" : "/register"}
               popular={false}
             />
           </div>

@@ -52,7 +52,7 @@ export default function Plan() {
         window.open(data.url, "_blank");
         setShowUpgradeDialog(false);
       } else {
-        toast.info("決済機能は現在準備中です（Phase 2で実装予定）");
+        toast.info("Stripe APIキーが設定されていません。管理者にお問い合わせください。");
         setShowUpgradeDialog(false);
       }
     },
@@ -67,7 +67,7 @@ export default function Plan() {
         toast.info("サブスクリプション管理ページに移動します...");
         window.open(data.url, "_blank");
       } else {
-        toast.info("サブスクリプション管理は現在準備中です（Phase 2で実装予定）");
+        toast.info("サブスクリプション管理は現在利用できません。管理者にお問い合わせください。");
       }
     },
     onError: (error) => {
@@ -75,13 +75,13 @@ export default function Plan() {
     },
   });
 
-  // Handle success/cancel URL params
+  // Handle success/cancel URL params from Stripe redirect
   useEffect(() => {
     const params = new URLSearchParams(search);
-    if (params.get("success") === "true") {
+    if (params.get("status") === "success" || params.get("success") === "true") {
       toast.success("決済が完了しました！プランがアップグレードされました。");
       refetch();
-    } else if (params.get("canceled") === "true") {
+    } else if (params.get("status") === "cancelled" || params.get("canceled") === "true") {
       toast.info("決済がキャンセルされました。");
     }
   }, [search, refetch]);
