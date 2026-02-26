@@ -120,7 +120,7 @@ export default function Marketplace() {
     onError: (error) => toast.error(error.message),
   });
 
-  const applyMutation = trpc.marketplace.apply.useMutation({
+  const applyMutation = trpc.marketplace.applyTemplate.useMutation({
     onSuccess: () => {
       toast.success(isJa ? "テンプレートを分身AIに適用しました" : "Template applied to your twin!");
       utils.marketplace.myPurchases.invalidate();

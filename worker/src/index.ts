@@ -4846,7 +4846,7 @@ JSON形式で出力:
       }),
 
     // Apply a purchased template to your twin
-    apply: protectedProcedure
+    applyTemplate: protectedProcedure
       .input(z.object({ templateId: z.number() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
