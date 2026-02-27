@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { Bot, Send, Loader2, SkipForward, ArrowRight, MessageSquare, Users, Shield, Sparkles, Zap, Target, UserPlus, CheckCircle, Play, HelpCircle } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
@@ -54,6 +55,7 @@ const STEP_HELP: Record<number, string> = {
 };
 
 export default function Onboarding() {
+  usePageMeta({ title: "オンボーディング", description: "分身AIの初期設定ガイド", path: "/onboarding" });
   const [, navigate] = useLocation();
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<Array<{ role: string; content: string }>>([]);

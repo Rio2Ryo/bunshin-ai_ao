@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { trpc } from "@/lib/trpc";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Loader2, Save, Bot, Zap, MessageSquare, BarChart3, FileText, Brain } from "lucide-react";
@@ -44,6 +45,7 @@ const AI_PROVIDERS = [
 ];
 
 export default function Orchestration() {
+  usePageMeta({ title: "オーケストレーション", description: "AIモデルのタスク別割り当て設定", path: "/orchestration" });
   const { data: settings, isLoading, isError, refetch } = trpc.orchestration.getSettings.useQuery();
   const updateSettings = trpc.orchestration.updateSettings.useMutation();
 

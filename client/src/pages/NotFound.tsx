@@ -1,9 +1,11 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { AlertCircle, Home } from "lucide-react";
 import { useLocation } from "wouter";
 
 export default function NotFound() {
+  usePageMeta({ title: "ページが見つかりません", description: "お探しのページは存在しません" });
   const [, setLocation] = useLocation();
 
   return (

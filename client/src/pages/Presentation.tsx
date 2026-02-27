@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { ArrowLeft, ChevronLeft, ChevronRight, Download, Loader2 } from "lucide-react";
 import { Streamdown } from "streamdown";
 
@@ -12,6 +13,7 @@ interface PresentationData {
 }
 
 export default function Presentation() {
+  usePageMeta({ title: "プレゼンテーション", description: "マッチング結果のプレゼンテーション" });
   const { id } = useParams<{ id: string }>();
   const sessionId = parseInt(id || "0");
   const [presentationData, setPresentationData] = useState<PresentationData | null>(null);

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +27,7 @@ import {
 } from "lucide-react";
 
 export default function Points() {
+  usePageMeta({ title: "ポイント", description: "ポイント残高・履歴・特典交換", path: "/points" });
   const [selectedProduct, setSelectedProduct] = useState<{
     id: number;
     name: string;

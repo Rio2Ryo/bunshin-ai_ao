@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { Link } from "wouter";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
@@ -23,6 +24,7 @@ import { CumulativeWaveformChart } from "@/components/CumulativeWaveformChart";
 import { OtherPerspectiveWaveformChart } from "@/components/OtherPerspectiveWaveformChart";
 
 export default function MyTwin() {
+  usePageMeta({ title: "分身AI", description: "分身AIの作成・編集・性格分析", path: "/twins" });
   const { data: twin, isLoading, isError, refetch } = trpc.myTwin.get.useQuery();
   const upsertMutation = trpc.myTwin.upsert.useMutation();
   const updateMutation = trpc.myTwin.update.useMutation();

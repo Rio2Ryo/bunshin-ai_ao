@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Loader2, Key, Trash2, CheckCircle, XCircle, ExternalLink } from "lucide-react";
@@ -41,6 +42,7 @@ const AI_PROVIDERS = [
 ];
 
 export default function AIConfig() {
+  usePageMeta({ title: "AI API設定", description: "AI APIキーの管理とプロバイダー設定", path: "/ai-config" });
   const { data: configs, isLoading, refetch } = trpc.aiConfig.list.useQuery();
   const upsertConfig = trpc.aiConfig.upsert.useMutation();
   const deleteConfig = trpc.aiConfig.delete.useMutation();

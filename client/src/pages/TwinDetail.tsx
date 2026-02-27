@@ -3,10 +3,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { ArrowLeft, Bot, Globe, Loader2 } from "lucide-react";
 import { Link, useRoute } from "wouter";
 
 export default function TwinDetail() {
+  usePageMeta({ title: "分身AI詳細", description: "公開されている分身AIの詳細情報", path: "/twins" });
   const [, params] = useRoute("/twins/:id");
   const twinId = Number(params?.id);
 

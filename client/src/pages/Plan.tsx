@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -36,6 +37,7 @@ const planDetails = {
 };
 
 export default function Plan() {
+  usePageMeta({ title: "プラン", description: "料金プランの確認と変更", path: "/plan" });
   const { user } = useAuth();
   const search = useSearch();
   const [showUpgradeDialog, setShowUpgradeDialog] = useState(false);

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,6 +30,7 @@ import {
 } from "lucide-react";
 
 export default function LineLink() {
+  usePageMeta({ title: "LINE連携", description: "LINE公式アカウントとの連携設定", path: "/line-link" });
   const [linkCode, setLinkCode] = useState("");
   const [isLinking, setIsLinking] = useState(false);
   

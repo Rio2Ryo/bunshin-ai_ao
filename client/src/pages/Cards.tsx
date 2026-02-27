@@ -1,6 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import DashboardLayout from "@/components/DashboardLayout";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -71,6 +72,7 @@ function getCardTypeIcon(type: string) {
 }
 
 export default function Cards() {
+  usePageMeta({ title: "名刺管理", description: "名刺のデジタル管理・OCR取り込み", path: "/cards" });
   const { user } = useAuth();
   
   const [searchQuery, setSearchQuery] = useState("");

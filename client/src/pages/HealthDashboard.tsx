@@ -2,6 +2,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { Activity, Database, HardDrive, Brain, CreditCard, MessageSquare, RefreshCw, Clock, AlertTriangle, CheckCircle2, XCircle, Users, Zap, Server } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 
@@ -50,6 +51,7 @@ type DetailedHealth = {
 };
 
 export default function HealthDashboard() {
+  usePageMeta({ title: "システムヘルス", description: "API・DB・サービスの稼働状況", path: "/health" });
   const [health, setHealth] = useState<HealthData | null>(null);
   const [detailed, setDetailed] = useState<DetailedHealth | null>(null);
   const [loading, setLoading] = useState(true);

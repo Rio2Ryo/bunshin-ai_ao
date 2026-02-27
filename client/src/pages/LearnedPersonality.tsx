@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import DashboardLayout from "@/components/DashboardLayout";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -166,6 +167,7 @@ function EditableTagList({
 }
 
 export default function LearnedPersonalityPage() {
+  usePageMeta({ title: "学習した人格", description: "会話から学習した人格データの管理", path: "/learned-personality" });
   const { data: learnedTraits, refetch } = trpc.clawdbot.getLearnedTraits.useQuery();
   const { data: learningStatus } = trpc.clawdbot.getLearningStatus.useQuery();
   

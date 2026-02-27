@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { trpc } from "@/lib/trpc";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { useParams, Link, useLocation } from "wouter";
 import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
@@ -29,6 +30,7 @@ function TypingDots() {
 }
 
 export default function Chat() {
+  usePageMeta({ title: "チャット", description: "分身AIとのチャット", path: "/chat" });
   const { sessionId } = useParams<{ sessionId?: string }>();
   const [, navigate] = useLocation();
 

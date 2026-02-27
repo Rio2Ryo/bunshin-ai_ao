@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
@@ -52,6 +53,7 @@ const categoryColors: Record<string, string> = {
 
 
 export default function Quests() {
+  usePageMeta({ title: "クエスト", description: "デイリークエスト・実績・報酬", path: "/quests" });
   const { data: quests, isLoading } = trpc.points.getQuests.useQuery();
   const { data: balance, refetch: refetchBalance } = trpc.points.getBalance.useQuery();
   

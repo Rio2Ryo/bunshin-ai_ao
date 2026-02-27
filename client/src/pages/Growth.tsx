@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { Sparkles, Star, Trophy, Heart, Zap, Brain, MessageSquare, Target, Crown, Loader2, Settings, ImageIcon, Stethoscope, Handshake, Info, X } from "lucide-react";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
@@ -52,6 +53,7 @@ const evolutionIcons: Record<string, string> = {
 type SkillType = "conversation" | "imageGeneration" | "analysis" | "diagnosis" | "matching";
 
 export default function Growth() {
+  usePageMeta({ title: "成長", description: "分身AIのスキルレベル・成長管理", path: "/growth" });
   const { data: growthStatus, isLoading: statusLoading, isError: statusError, refetch: refetchStatus } = trpc.growth.getStatus.useQuery();
   const { data: skillsData, isLoading: skillsLoading, isError: skillsError, refetch: refetchSkills } = trpc.growth.getSkills.useQuery();
   const { data: milestonesData, isLoading: milestonesLoading, isError: milestonesError } = trpc.growth.getMilestones.useQuery();

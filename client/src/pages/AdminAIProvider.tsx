@@ -1,6 +1,7 @@
 import { useState } from "react";
 import DashboardLayout from "../components/DashboardLayout";
 import { trpc } from "../lib/trpc";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -46,6 +47,7 @@ type Provider = keyof typeof PROVIDERS;
 type Feature = keyof typeof FEATURES;
 
 export default function AdminAIProvider() {
+  usePageMeta({ title: "AIプロバイダー管理", description: "AIプロバイダーの設定と管理", path: "/admin/ai-provider" });
   const [selectedFeature, setSelectedFeature] = useState<Feature>("default");
   const [testingProvider, setTestingProvider] = useState<Provider | null>(null);
 

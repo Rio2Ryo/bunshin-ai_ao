@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { ArrowLeft, ChevronLeft, ChevronRight, Download, Loader2, FileDown, FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
@@ -39,6 +40,7 @@ const slideThemes = [
 ];
 
 export default function NanoBananaSlides() {
+  usePageMeta({ title: "スライド", description: "マッチング結果のスライドプレゼンテーション" });
   const { id } = useParams<{ id: string }>();
   const sessionId = parseInt(id || "0");
   const [data, setData] = useState<NanoBananaData | null>(null);

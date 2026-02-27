@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { trpc } from "@/lib/trpc";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { useState } from "react";
 import { toast } from "sonner";
 import { UserPlus, Users, Loader2, Check, X, Bot, Copy, Share2, QrCode, Link as LinkIcon, Heart, Sparkles, TrendingUp, ExternalLink } from "lucide-react";
@@ -33,6 +34,7 @@ function getCompatibilityLabel(score: number): string {
 }
 
 export default function Friends() {
+  usePageMeta({ title: "友達", description: "友達一覧・友達申請・相性チェック", path: "/friends" });
   const { user } = useAuth();
   const { data: friends, isLoading, refetch } = trpc.friends.list.useQuery();
   const { data: requests, refetch: refetchRequests } = trpc.friends.pendingRequests.useQuery();

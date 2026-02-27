@@ -1,6 +1,7 @@
 import { useState } from "react";
 import DashboardLayout from "../components/DashboardLayout";
 import { trpc } from "../lib/trpc";
+import { usePageMeta } from "@/hooks/usePageMeta";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -51,6 +52,7 @@ const ACTION_COLORS: Record<string, string> = {
 };
 
 function AdminReview() {
+  usePageMeta({ title: "管理者ダッシュボード", description: "ユーザー管理・コンテンツ審査・レポート", path: "/admin" });
   const [activeTab, setActiveTab] = useState("overview");
   const [reportFilter, setReportFilter] = useState<"pending" | "reviewed" | "dismissed">("pending");
   const [userSearch, setUserSearch] = useState("");
