@@ -11,8 +11,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { toast } from "sonner";
-import { UserPlus, Users, Loader2, Check, X, Bot, Copy, Share2, QrCode, Link, Heart, Sparkles, TrendingUp } from "lucide-react";
+import { UserPlus, Users, Loader2, Check, X, Bot, Copy, Share2, QrCode, Link as LinkIcon, Heart, Sparkles, TrendingUp, ExternalLink } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { Link } from "wouter";
 import { QRCodeSVG } from "qrcode.react";
 
 // 相性レベルに応じた色を取得
@@ -248,7 +249,7 @@ export default function Friends() {
                               {shareUrl}
                             </code>
                             <Button variant="outline" size="sm" onClick={handleCopyLink}>
-                              <Link className="h-4 w-4 mr-1" />
+                              <LinkIcon className="h-4 w-4 mr-1" />
                               コピー
                             </Button>
                           </div>
@@ -315,7 +316,13 @@ export default function Friends() {
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <p className="font-medium truncate">{friend.friend.name || "名前未設定"}</p>
+                              {friend.friend.isNpc ? (
+                                <p className="font-medium truncate">{friend.friend.name || "名前未設定"}</p>
+                              ) : (
+                                <Link href={`/users/${friend.friend.id}`}>
+                                  <p className="font-medium truncate hover:text-primary transition-colors cursor-pointer">{friend.friend.name || "名前未設定"}</p>
+                                </Link>
+                              )}
                               {friend.friend.isNpc && <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">NPC</Badge>}
                             </div>
                             {friend.twin ? (

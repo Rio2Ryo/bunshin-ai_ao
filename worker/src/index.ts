@@ -38,6 +38,9 @@ type Env = {
   LINE_DEBUG_MODE?: string;
   TAVILY_API_KEY?: string;
   SLACK_WEBHOOK_URL?: string;
+  RESEND_API_KEY?: string;
+  RESEND_FROM_EMAIL?: string;
+  FRONTEND_URL?: string;
 };
 
 type Context = {
@@ -234,6 +237,7 @@ Step 5完了時に以下を出力:
       await ensureSchema(ctx.env.DB);
       if (ctx.user) {
         const row = await ctx.env.DB.prepare(`SELECT onboardingCompleted, tutorialCompleted, tosAcceptedAt FROM users WHERE id=?`).bind(ctx.user.id).first<any>();
+        const profileRow = await ctx.env.DB.prepare(`SELECT avatarUrl FROM user_profiles WHERE userId=?`).bind(ctx.user.id).first<any>();
         // Get trust score
         const trustRow = await ctx.env.DB.prepare(`SELECT score, rank FROM trust_scores WHERE userId=?`).bind(ctx.user.id).first<any>();
         const trustScore = trustRow?.score ?? 0;
@@ -279,7 +283,7 @@ Step 5完了時に以下を出力:
           }
         }
 
-        return { ...ctx.user, onboardingCompleted: row?.onboardingCompleted ?? 0, tutorialCompleted: row?.tutorialCompleted ?? 0, tosAcceptedAt: row?.tosAcceptedAt ?? null, trustScore, trustRank, loginStreak };
+        return { ...ctx.user, onboardingCompleted: row?.onboardingCompleted ?? 0, tutorialCompleted: row?.tutorialCompleted ?? 0, tosAcceptedAt: row?.tosAcceptedAt ?? null, trustScore, trustRank, loginStreak, avatarUrl: profileRow?.avatarUrl ?? null };
       }
       // Not logged in
       return null;
@@ -434,6 +438,9 @@ Step 5完了時に以下を出力:
         // Point redemptions
         try { await ctx.env.DB.prepare(`DELETE FROM point_redemptions WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
 
+        // Password reset tokens
+        try { await ctx.env.DB.prepare(`DELETE FROM password_reset_tokens WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+
         // Profile & twin (near-last)
         try { await ctx.env.DB.prepare(`DELETE FROM user_profiles WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
         try { await ctx.env.DB.prepare(`DELETE FROM digital_twins WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
@@ -442,6 +449,68 @@ Step 5完了時に以下を出力:
         try { await ctx.env.DB.prepare(`DELETE FROM users WHERE id=?`).bind(userId).run(); } catch { /* ignore */ }
 
         return { success: true, message: "アカウントが完全に削除されました" };
+      }),
+
+    // ---- Password Reset: Request ----
+    requestPasswordReset: publicProcedure
+      .input(z.object({ email: z.string().email() }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const user = await ctx.env.DB.prepare(`SELECT id, email, name FROM users WHERE email=?`).bind(input.email).first<any>();
+        // Always return success to prevent email enumeration
+        if (!user) return { success: true };
+
+        // Generate secure random token
+        const tokenBytes = crypto.getRandomValues(new Uint8Array(32));
+        const token = Array.from(tokenBytes).map(b => b.toString(16).padStart(2, "0")).join("");
+
+        // Expire any existing tokens for this user
+        await ctx.env.DB.prepare(`UPDATE password_reset_tokens SET usedAt=datetime('now') WHERE userId=? AND usedAt IS NULL`).bind(user.id).run();
+
+        // Store token with 1-hour expiry
+        await ctx.env.DB.prepare(
+          `INSERT INTO password_reset_tokens (userId, token, expiresAt) VALUES (?, ?, datetime('now', '+1 hour'))`
+        ).bind(user.id, token).run();
+
+        // Send reset email if RESEND_API_KEY is configured
+        const frontendUrl = ctx.env.FRONTEND_URL || "https://bunshin-ai.pages.dev";
+        const resetUrl = `${frontendUrl}/reset-password?token=${token}`;
+
+        if (ctx.env.RESEND_API_KEY) {
+          try {
+            await fetch("https://api.resend.com/emails", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${ctx.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                from: ctx.env.RESEND_FROM_EMAIL || "noreply@bunshin-ai.com",
+                to: [user.email],
+                subject: "パスワードリセット — 分身AI",
+                html: `<p>${user.name || "ユーザー"}様</p><p>パスワードリセットのリクエストを受け付けました。</p><p><a href="${resetUrl}" style="display:inline-block;padding:12px 24px;background:#6366f1;color:white;border-radius:8px;text-decoration:none;">パスワードをリセット</a></p><p>このリンクは1時間有効です。心当たりがない場合は無視してください。</p><p>— 分身AI チーム</p>`,
+              }),
+            });
+          } catch { /* email send failed, but token is still valid */ }
+        }
+
+        return { success: true };
+      }),
+
+    // ---- Password Reset: Execute ----
+    resetPassword: publicProcedure
+      .input(z.object({ token: z.string().min(1), newPassword: z.string().min(8).max(128) }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const tokenRow = await ctx.env.DB.prepare(
+          `SELECT * FROM password_reset_tokens WHERE token=? AND usedAt IS NULL AND expiresAt > datetime('now')`
+        ).bind(input.token).first<any>();
+        if (!tokenRow) throw new TRPCError({ code: "BAD_REQUEST", message: "リセットリンクが無効または期限切れです。再度リクエストしてください。" });
+
+        const passwordHash = await hashPassword(input.newPassword);
+        await ctx.env.DB.prepare(`UPDATE users SET passwordHash=?, updatedAt=datetime('now') WHERE id=?`).bind(passwordHash, tokenRow.userId).run();
+
+        // Mark token as used
+        await ctx.env.DB.prepare(`UPDATE password_reset_tokens SET usedAt=datetime('now') WHERE id=?`).bind(tokenRow.id).run();
+
+        return { success: true };
       }),
   }),
 
@@ -522,23 +591,70 @@ Step 5完了時に以下を出力:
         }
         return { success: true };
       }),
+    uploadAvatar: protectedProcedure
+      .input(z.object({ imageData: z.string(), contentType: z.string().optional() }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const r2 = ctx.env.ASSETS;
+        if (!r2) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "ストレージが未設定です" });
+
+        const base64Data = input.imageData.replace(/^data:[^;]+;base64,/, "");
+        const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+
+        // Validate size (max 2MB)
+        if (binaryData.length > 2 * 1024 * 1024) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "画像サイズは2MB以下にしてください" });
+        }
+
+        const contentType = input.contentType || "image/jpeg";
+        const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
+        const key = `avatars/${ctx.userId}_${Date.now()}.${ext}`;
+
+        await r2.put(key, binaryData, { httpMetadata: { contentType } });
+
+        const avatarUrl = `/assets/${key}`;
+
+        // Upsert profile with avatarUrl
+        const existing = await ctx.env.DB.prepare(`SELECT id FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+        if (existing) {
+          await ctx.env.DB.prepare(`UPDATE user_profiles SET avatarUrl=?, updatedAt=datetime('now') WHERE userId=?`).bind(avatarUrl, ctx.userId).run();
+        } else {
+          await ctx.env.DB.prepare(`INSERT INTO user_profiles (userId, avatarUrl) VALUES (?,?)`).bind(ctx.userId, avatarUrl).run();
+        }
+
+        // Award trust points for avatar upload
+        const alreadyAwarded = await ctx.env.DB.prepare(
+          `SELECT id FROM trust_score_history WHERE userId=? AND action='profile_field_avatar'`
+        ).bind(ctx.userId).first<any>();
+        if (!alreadyAwarded) {
+          await addTrustAction(ctx.env.DB, ctx.userId, "profile_field_avatar", 5, "プロフィール画像を設定しました");
+        }
+
+        return { avatarUrl };
+      }),
     getPublic: protectedProcedure
       .input(z.object({ userId: z.number() }))
       .query(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
-        const profile = await ctx.env.DB.prepare(`SELECT displayName, bio, industry, company, position, skills, expertise FROM user_profiles WHERE userId=?`).bind(input.userId).first<any>();
+        const profile = await ctx.env.DB.prepare(`SELECT displayName, bio, industry, company, position, skills, expertise, experience, avatarUrl FROM user_profiles WHERE userId=?`).bind(input.userId).first<any>();
         if (!profile) return null;
         const twin = await ctx.env.DB.prepare(`SELECT name, description, personality, tags FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.userId).first<any>();
-        const trust = await ctx.env.DB.prepare(`SELECT score FROM trust_scores WHERE userId=?`).bind(input.userId).first<any>();
+        const trust = await ctx.env.DB.prepare(`SELECT score, rank FROM trust_scores WHERE userId=?`).bind(input.userId).first<any>();
+        const user = await ctx.env.DB.prepare(`SELECT name FROM users WHERE id=?`).bind(input.userId).first<any>();
         return {
+          userId: input.userId,
+          userName: user?.name ?? null,
           displayName: profile.displayName,
           bio: profile.bio,
           industry: profile.industry,
           company: profile.company,
           position: profile.position,
+          experience: profile.experience,
+          avatarUrl: profile.avatarUrl ?? null,
           skills: parseJson<string[]>(profile.skills) ?? [],
           expertise: parseJson<string[]>(profile.expertise) ?? [],
           trustScore: trust?.score ?? 0,
+          trustRank: trust?.rank ?? "beginner",
           twin: twin ? { name: twin.name, description: twin.description, tags: parseJson<string[]>(twin.tags) ?? [] } : null,
         };
       }),
@@ -1267,6 +1383,21 @@ ${isLastQuestion ? `
       .input(z.object({ friendCode: z.string().min(1) }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
+
+        // Enforce maxFriends plan limit
+        const userRow = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+        const userPlan = userRow?.plan || "free";
+        const maxFriendsMap: Record<string, number> = { free: 5, premium: 50, enterprise: -1 };
+        const maxFriends = maxFriendsMap[userPlan] ?? 5;
+        if (maxFriends !== -1) {
+          const friendCount = (await ctx.env.DB.prepare(
+            `SELECT COUNT(*) as c FROM friendships WHERE (userId=? OR friendId=?) AND status='accepted'`
+          ).bind(ctx.userId, ctx.userId).first<any>())?.c ?? 0;
+          if (friendCount >= maxFriends) {
+            throw new TRPCError({ code: "FORBIDDEN", message: `友達上限（${maxFriends}人）に達しました。プランをアップグレードしてください。` });
+          }
+        }
+
         const friend = await ctx.env.DB.prepare(`SELECT * FROM users WHERE friendCode=?`).bind(input.friendCode.toUpperCase()).first<any>();
         if (!friend) throw new TRPCError({ code: "NOT_FOUND", message: "ユーザーが見つかりません" });
         if (friend.id === ctx.userId) throw new TRPCError({ code: "BAD_REQUEST", message: "自分にはリクエストを送れません" });
@@ -2047,6 +2178,21 @@ JSON形式で出力:
       .input(z.object({ sessionId: z.number(), content: z.string().min(1) }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
+
+        // Enforce chatMessagesPerDay plan limit
+        const userRow = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+        const userPlan = userRow?.plan || "free";
+        const chatLimitMap: Record<string, number> = { free: 50, premium: 500, enterprise: -1 };
+        const maxMessages = chatLimitMap[userPlan] ?? 50;
+        if (maxMessages !== -1) {
+          const todayCount = (await ctx.env.DB.prepare(
+            `SELECT COUNT(*) as c FROM chat_messages cm JOIN chat_sessions cs ON cs.id=cm.sessionId WHERE cs.userId=? AND cm.role='user' AND cm.createdAt >= date('now')`
+          ).bind(ctx.userId).first<any>())?.c ?? 0;
+          if (todayCount >= maxMessages) {
+            throw new TRPCError({ code: "FORBIDDEN", message: `本日のチャット上限（${maxMessages}回）に達しました。プランをアップグレードしてください。` });
+          }
+        }
+
         // Save user message
         await ctx.env.DB.prepare(`INSERT INTO chat_messages (sessionId, role, content) VALUES (?,?,?)`).bind(input.sessionId, "user", input.content).run();
 
@@ -2097,7 +2243,24 @@ JSON形式で出力:
               if (skills?.length) systemPrompt += `\n\nスキル: ${skills.join(", ")}`;
             }
             if (profile?.industry) systemPrompt += `\n\n業界: ${profile.industry}`;
-            systemPrompt += `\n\n丁寧かつ親しみやすい日本語で回答してください。ユーザーの専門知識を反映した回答を心がけてください。`;
+
+            // Include knowledge base entries for richer context
+            if (twin) {
+              const knowledgeRows = await ctx.env.DB.prepare(
+                `SELECT title, content, summary FROM knowledge_base WHERE twinId=? ORDER BY createdAt DESC LIMIT 8`
+              ).bind(twin.id).all<any>();
+              const kEntries = knowledgeRows.results ?? [];
+              if (kEntries.length > 0) {
+                systemPrompt += `\n\n## ユーザーの知識ベース（参考情報）:`;
+                for (const k of kEntries) {
+                  const label = k.title || "エントリ";
+                  const body = k.summary || (k.content ? k.content.slice(0, 500) : "");
+                  if (body) systemPrompt += `\n- ${label}: ${body}`;
+                }
+              }
+            }
+
+            systemPrompt += `\n\n丁寧かつ親しみやすい日本語で回答してください。ユーザーの専門知識と知識ベースの情報を反映した回答を心がけてください。`;
           }
 
           // Get conversation history (last 20 messages)
@@ -2404,10 +2567,18 @@ JSON形式で出力:
         const myProfile = await ctx.env.DB.prepare(`SELECT company, industry, position, skills, expertise, bio FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
         const friendProfile = await ctx.env.DB.prepare(`SELECT company, industry, position, skills, expertise, bio FROM user_profiles WHERE userId=?`).bind(input.friendId).first<any>();
 
+        // Fetch knowledge base for both twins (top 5 entries each for matching context)
+        const myKnowledge = (await ctx.env.DB.prepare(
+          `SELECT title, summary, content FROM knowledge_base WHERE twinId=? ORDER BY createdAt DESC LIMIT 5`
+        ).bind(myTwin.id).all<any>()).results ?? [];
+        const friendKnowledge = (await ctx.env.DB.prepare(
+          `SELECT title, summary, content FROM knowledge_base WHERE twinId=? ORDER BY createdAt DESC LIMIT 5`
+        ).bind(friendTwin.id).all<any>()).results ?? [];
+
         // Generate real dialogue between twins
         const twins = [
-          { id: myTwin.id, name: myTwin.name, desc: myTwin.description || "", personality: myTwin.personality || "", profile: myProfile },
-          { id: friendTwin.id, name: normalizeTwin(friendTwin)?.name || "Twin", desc: friendTwin.description || "", personality: friendTwin.personality || "", profile: friendProfile },
+          { id: myTwin.id, name: myTwin.name, desc: myTwin.description || "", personality: myTwin.personality || "", profile: myProfile, knowledge: myKnowledge },
+          { id: friendTwin.id, name: normalizeTwin(friendTwin)?.name || "Twin", desc: friendTwin.description || "", personality: friendTwin.personality || "", profile: friendProfile, knowledge: friendKnowledge },
         ];
         const dialogueHistory: { speaker: string; content: string }[] = [];
         const turnsToRun = Math.min(input.turns, 10);
@@ -2444,9 +2615,19 @@ JSON形式で出力:
             ? `\n\n${webSearchContext}`
             : "";
 
-          const systemPrompt = `あなたは「${speaker.name}」というデジタル分身AIです。${speaker.desc ? `説明: ${speaker.desc}。` : ""}${speaker.personality ? `性格: ${speaker.personality}。` : ""}${profileContext}
+          // Build knowledge context for this speaker
+          let knowledgeContext = "";
+          if (speaker.knowledge && speaker.knowledge.length > 0) {
+            knowledgeContext = "\n知識ベース: " + speaker.knowledge.map((k: any) => {
+              const label = k.title || "";
+              const body = k.summary || (k.content ? k.content.slice(0, 300) : "");
+              return label ? `${label}: ${body}` : body;
+            }).filter(Boolean).join("; ");
+          }
+
+          const systemPrompt = `あなたは「${speaker.name}」というデジタル分身AIです。${speaker.desc ? `説明: ${speaker.desc}。` : ""}${speaker.personality ? `性格: ${speaker.personality}。` : ""}${profileContext}${knowledgeContext}
 テーマ「${input.theme}」について「${other.name}」と建設的なビジネス対話をしています。
-相手の意見を尊重しつつ、自分の専門性や経験に基づいた具体的な提案や考えを述べてください。
+相手の意見を尊重しつつ、自分の専門性や経験・知識ベースに基づいた具体的な提案や考えを述べてください。
 簡潔で具体的な発言（150〜300文字程度）をしてください。${searchSuffix}`;
 
           const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
@@ -4337,10 +4518,10 @@ JSON形式で出力:
         const planName = input.plan || input.planId || "premium";
         const interval = input.billingCycle || input.interval || "monthly";
         const priceMap: Record<string, Record<string, number>> = {
-          premium: { monthly: 980, yearly: 9800 },
+          premium: { monthly: 1480, yearly: 14800 },
           enterprise: { monthly: 4980, yearly: 49800 },
         };
-        const amount = priceMap[planName]?.[interval === "yearly" ? "yearly" : "monthly"] || 980;
+        const amount = priceMap[planName]?.[interval === "yearly" ? "yearly" : "monthly"] || 1480;
         const recurring = interval === "yearly" ? "year" : "month";
 
         // Create Checkout Session with inline price
@@ -4350,7 +4531,7 @@ JSON形式で出力:
           "success_url": "https://bunshin-ai.pages.dev/plan?session_id={CHECKOUT_SESSION_ID}&status=success",
           "cancel_url": "https://bunshin-ai.pages.dev/plan?status=cancelled",
           "line_items[0][price_data][currency]": "jpy",
-          "line_items[0][price_data][product_data][name]": `分身AI ${planName === "enterprise" ? "エンタープライズ" : "プレミアム"}プラン`,
+          "line_items[0][price_data][product_data][name]": `分身AI ${planName === "enterprise" ? "エンタープライズ" : "プロ"}プラン`,
           "line_items[0][price_data][unit_amount]": String(amount),
           "line_items[0][price_data][recurring][interval]": recurring,
           "line_items[0][quantity]": "1",
@@ -4451,7 +4632,7 @@ JSON形式で出力:
         }
 
         const stripePriceMap: Record<string, { name: string; amount: number }> = {
-          premium: { name: "分身AI プレミアムプラン", amount: 980 },
+          premium: { name: "分身AI プロプラン", amount: 1480 },
           enterprise: { name: "分身AI エンタープライズプラン", amount: 4980 },
         };
         const planInfo = stripePriceMap[input.planId] || stripePriceMap.premium;
@@ -5128,7 +5309,7 @@ JSON形式で出力:
       const churnRate = activeLastPeriod > 0 ? Math.round((churned / activeLastPeriod) * 100) : 0;
 
       // Revenue estimate (from plan counts × price)
-      const priceMap: Record<string, number> = { free: 0, premium: 980, enterprise: 4980 };
+      const priceMap: Record<string, number> = { free: 0, premium: 1480, enterprise: 4980 };
       const planResults = planDist.results ?? [];
       const monthlyRevenue = planResults.reduce((sum: number, p: any) => sum + ((priceMap[p.plan] || 0) * p.count), 0);
 
@@ -5611,9 +5792,10 @@ api.get("/api/health", async (c) => {
   } catch { /* DB unreachable */ }
   const totalMs = Date.now() - start;
   return c.json({
+    status: "ok",
     ok: dbOk,
     timestamp: new Date().toISOString(),
-    version: "2.2.0",
+    version: "2.3.0",
     uptime: "cloudflare-workers",
     checks: {
       database: { ok: dbOk, latencyMs: dbLatencyMs },
@@ -5979,6 +6161,76 @@ api.post("/api/stripe/webhook", async (c) => {
   }
 
   return c.json({ received: true });
+});
+
+// ============ Billing Checkout (REST) ============
+api.post("/api/billing/checkout", async (c) => {
+  const env = c.env as Env;
+  if (!env.STRIPE_SECRET_KEY) return c.json({ error: "Stripe not configured" }, 500);
+  await ensureSchema(env.DB);
+
+  // Authenticate via cookie
+  const cookieHeader = c.req.header("cookie") || null;
+  const token = parseCookie(cookieHeader, COOKIE_NAME);
+  if (!token) return c.json({ error: "Unauthorized" }, 401);
+  const sess = await verifySessionToken(token, env);
+  if (!sess) return c.json({ error: "Invalid session" }, 401);
+  const userId = sess.userId;
+
+  let body: any = {};
+  try { body = await c.req.json(); } catch { /* empty body ok */ }
+  const planId = body.plan || body.planId || "premium";
+  const interval = body.interval || body.billingCycle || "monthly";
+
+  const user = await env.DB.prepare(`SELECT email, stripeCustomerId FROM users WHERE id=?`).bind(userId).first<any>();
+
+  // Create or reuse Stripe customer
+  let customerId = user?.stripeCustomerId;
+  if (!customerId) {
+    const custRes = await fetch("https://api.stripe.com/v1/customers", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" },
+      body: `email=${encodeURIComponent(user?.email || "")}&metadata[userId]=${userId}`,
+    });
+    const custData = await custRes.json() as any;
+    if (!custData.id) return c.json({ error: "Failed to create Stripe customer" }, 500);
+    customerId = custData.id;
+    await env.DB.prepare(`UPDATE users SET stripeCustomerId=? WHERE id=?`).bind(customerId, userId).run();
+  }
+
+  const priceMap: Record<string, Record<string, number>> = {
+    premium: { monthly: 1480, yearly: 14800 },
+    enterprise: { monthly: 4980, yearly: 49800 },
+  };
+  const amount = priceMap[planId]?.[interval === "yearly" ? "yearly" : "monthly"] || 1480;
+  const recurring = interval === "yearly" ? "year" : "month";
+  const planLabel = planId === "enterprise" ? "エンタープライズ" : "プロ";
+
+  const params = new URLSearchParams({
+    mode: "subscription",
+    customer: customerId,
+    "success_url": "https://bunshin-ai.pages.dev/plan?session_id={CHECKOUT_SESSION_ID}&status=success",
+    "cancel_url": "https://bunshin-ai.pages.dev/plan?status=cancelled",
+    "line_items[0][price_data][currency]": "jpy",
+    "line_items[0][price_data][product_data][name]": `分身AI ${planLabel}プラン`,
+    "line_items[0][price_data][unit_amount]": String(amount),
+    "line_items[0][price_data][recurring][interval]": recurring,
+    "line_items[0][quantity]": "1",
+    "metadata[userId]": String(userId),
+    "metadata[plan]": planId,
+  });
+
+  const sessionRes = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
+  });
+  const sessionData = await sessionRes.json() as any;
+
+  if (sessionData.url) {
+    return c.json({ url: sessionData.url });
+  }
+  return c.json({ error: sessionData.error?.message || "Checkout session creation failed" }, 400);
 });
 
 // ============ Web Search (Tavily) ============
@@ -6350,6 +6602,13 @@ api.get("/api/line/webhook", (c) => {
 async function handleScheduled(env: Env): Promise<void> {
   const db = env.DB;
   await ensureSchema(db);
+
+  // Monthly reset: reset matchingsThisMonth for users whose lastResetAt is in a previous month
+  try {
+    await db.prepare(
+      `UPDATE usage_tracking SET matchingsThisMonth=0, lastResetAt=datetime('now'), updatedAt=datetime('now') WHERE lastResetAt < date('now', 'start of month')`
+    ).run();
+  } catch { /* ignore if table doesn't exist yet */ }
 
   // Find all active schedules that are due
   const dueSchedules = await db.prepare(

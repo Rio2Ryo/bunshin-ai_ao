@@ -225,7 +225,7 @@ export default function Blog() {
             </ol>
 
             <h3>料金プラン</h3>
-            <p>分身AIは無料から始められます。フリープランでは月3回のマッチングと5人までの友達登録が可能。本格的に活用したい方にはプロプラン（月額¥980）、チームでの利用にはエンタープライズプラン（月額¥4,980）をご用意しています。</p>
+            <p>分身AIは無料から始められます。フリープランでは月3回のマッチングと5人までの友達登録が可能。本格的に活用したい方にはプロプラン（月額¥1,480）、チームでの利用にはエンタープライズプラン（月額¥4,980）をご用意しています。</p>
 
             <div className="not-prose mt-8 p-6 rounded-2xl border border-primary/30 bg-primary/5 text-center">
               <h4 className="text-xl font-bold mb-2">今すぐ分身AIを始めましょう</h4>

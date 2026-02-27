@@ -11,7 +11,7 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Save, Plus, X, Eye, Shield, Download, Trash2, AlertTriangle } from "lucide-react";
+import { Loader2, Save, Plus, X, Eye, Shield, Download, Trash2, AlertTriangle, Camera } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +30,7 @@ export default function Profile() {
   const { data: profile, isLoading, isError } = trpc.profile.get.useQuery();
   const { data: trustData } = trpc.trust.getScore.useQuery();
   const updateProfile = trpc.profile.update.useMutation();
+  const uploadAvatar = trpc.profile.uploadAvatar.useMutation();
 
   // Account deletion state
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -184,8 +185,19 @@ export default function Profile() {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                <p className="font-medium">{formData.displayName || user?.name || "名前未設定"}</p>
-                {formData.company && <p className="text-sm text-muted-foreground">{formData.company}{formData.position ? ` / ${formData.position}` : ""}</p>}
+                <div className="flex items-center gap-3">
+                  {profile?.avatarUrl ? (
+                    <img src={`${(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "")}${profile.avatarUrl}`} alt="" className="h-10 w-10 rounded-full object-cover border" />
+                  ) : (
+                    <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center border text-sm font-medium text-muted-foreground">
+                      {formData.displayName?.charAt(0) || user?.name?.charAt(0) || "?"}
+                    </div>
+                  )}
+                  <div>
+                    <p className="font-medium">{formData.displayName || user?.name || "名前未設定"}</p>
+                    {formData.company && <p className="text-sm text-muted-foreground">{formData.company}{formData.position ? ` / ${formData.position}` : ""}</p>}
+                  </div>
+                </div>
                 {formData.industry && <p className="text-xs text-muted-foreground">{formData.industry}</p>}
                 {formData.bio && <p className="text-sm mt-2">{formData.bio.slice(0, 100)}{formData.bio.length > 100 ? "..." : ""}</p>}
                 {formData.skills.length > 0 && (
@@ -198,6 +210,69 @@ export default function Profile() {
             </CardContent>
           </Card>
         )}
+
+        {/* Avatar Upload */}
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center gap-6">
+              <div className="relative group">
+                <div className="h-20 w-20 rounded-full bg-muted border-2 border-border overflow-hidden flex items-center justify-center">
+                  {profile?.avatarUrl ? (
+                    <img
+                      src={`${(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "")}${profile.avatarUrl}`}
+                      alt="Avatar"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-2xl font-bold text-muted-foreground">
+                      {formData.displayName?.charAt(0) || user?.name?.charAt(0) || "?"}
+                    </span>
+                  )}
+                </div>
+                <label className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                  {uploadAvatar.isPending ? (
+                    <Loader2 className="h-5 w-5 animate-spin text-white" />
+                  ) : (
+                    <Camera className="h-5 w-5 text-white" />
+                  )}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="hidden"
+                    disabled={uploadAvatar.isPending}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      if (file.size > 2 * 1024 * 1024) {
+                        toast.error("画像サイズは2MB以下にしてください");
+                        return;
+                      }
+                      const reader = new FileReader();
+                      reader.onload = async () => {
+                        try {
+                          await uploadAvatar.mutateAsync({
+                            imageData: reader.result as string,
+                            contentType: file.type,
+                          });
+                          toast.success("プロフィール画像を更新しました");
+                          window.location.reload();
+                        } catch {
+                          toast.error("画像のアップロードに失敗しました");
+                        }
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                </label>
+              </div>
+              <div>
+                <p className="font-medium">{formData.displayName || user?.name || "名前未設定"}</p>
+                <p className="text-sm text-muted-foreground">{user?.email}</p>
+                <p className="text-xs text-muted-foreground mt-1">クリックして画像を変更（2MB以下、JPG/PNG/WebP）</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Basic Info */}

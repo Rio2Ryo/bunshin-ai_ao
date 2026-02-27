@@ -133,7 +133,8 @@ ai_provider_settings
   - plan.createCheckoutSession, plan.createPortalSession, plan.getSubscription, plan.cancelSubscription
   - /api/stripe/webhook with STRIPE_WEBHOOK_SECRET HMAC-SHA256 signature verification
   - Events: checkout.session.completed, customer.subscription.deleted/updated
-  - Plans: free / premium (¥980/月) / enterprise (¥4,980/月)
+  - Plans: free / premium (¥1,480/月) / enterprise (¥4,980/月)
+  - Plan limits enforced: maxFriends (friends.sendRequest), chatMessagesPerDay (chat.sendMessage), matchingsPerMonth (matching.create), monthly reset (cron)
 - **Points System**: Full redeem flow (points.redeemProduct) with balance, stock, transactions
 - **CORS**: Whitelist restricted to bunshin-ai.pages.dev + localhost dev
 - **CSP Headers**: Content-Security-Policy, X-Frame-Options, HSTS, Referrer-Policy
@@ -142,6 +143,51 @@ ai_provider_settings
   - Wired into: matching complete, friend requests, matching requests
 - **Landing Page**: Hero, features, pricing, testimonials, CTA, footer
 - **LINE Webhook**: Worker has LINE webhook handler with signature verification
+
+## Password Reset (2026-02-26)
+- auth.requestPasswordReset: Generates secure token (1-hour expiry), sends email via Resend API if configured
+- auth.resetPassword: Verifies token, updates password hash
+- UI: /forgot-password (enter email) + /reset-password?token=xxx (set new password)
+- Login page has "パスワードを忘れた？" link
+- Email enumeration prevention (always returns success)
+- Token invalidation on use + cascade cleanup on account deletion
+- Env vars: RESEND_API_KEY, RESEND_FROM_EMAIL, FRONTEND_URL (all optional)
+
+## Profile Avatar Upload (2026-02-27)
+- profile.uploadAvatar: Base64 image → R2 storage (avatars/ prefix), max 2MB, JPG/PNG/WebP
+- avatarUrl column added to user_profiles via migration
+- auth.me includes avatarUrl for all authenticated requests
+- Profile page: hover-to-upload avatar with Camera icon, inline preview
+- DashboardLayout: sidebar + header avatar shows uploaded image (AvatarImage fallback to initials)
+- Trust points: +5 for first avatar upload (profile_field_avatar)
+- Preview card shows avatar alongside name/company
+
+## Knowledge Base Integration (2026-02-27)
+- **Knowledge Base UI**: Twins page now has full knowledge management section
+  - Add manual text entries (title + content) via form
+  - Upload text files (.txt, .md, .csv, .json, max 500KB) → parsed and stored
+  - List all entries with source type badges, summaries, dates
+  - Delete individual entries with ownership check
+- **Chat integration**: chat.sendMessage system prompt now includes top 8 knowledge entries
+  - Title + summary/content (up to 500 chars per entry) appended to system prompt
+  - Enables twin to answer questions using user's uploaded knowledge
+- **Matching integration**: matching.create dialogue now includes top 5 knowledge entries per twin
+  - Knowledge context injected into each twin's dialogue system prompt
+  - Enables more informed business discussions based on real expertise
+- Backend: knowledge.list, knowledge.add (manual/upload), knowledge.delete already existed
+
+## User Public Profile Page (2026-02-27)
+- New page at `/users/:id` showing other users' public profiles
+- Displays: avatar, display name, company, position, industry, bio, experience, skills, expertise
+- Shows trust score badge with rank (beginner/bronze/silver/gold/platinum/diamond)
+- Shows twin info (name, description, tags) if available
+- Action buttons: 友達になる / マッチングを開始 / チャットへ
+- `profile.getPublic` endpoint enhanced: now returns avatarUrl, experience, trustRank, userName
+- Linked from:
+  - Discover page: "プロフィールを見る" button in twin detail dialog
+  - Friends page: clickable friend names → /users/:friendId (NPC friends excluded)
+  - Matching page: clickable candidate names → /users/:userId
+- Route: `/users/:id` in App.tsx (lazy-loaded)
 
 ## Remaining Limitations
 - PPTX export: Not supported on CF Workers (returns informational message)

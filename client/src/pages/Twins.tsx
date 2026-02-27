@@ -10,7 +10,7 @@ import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { Bot, Edit, Loader2, MessageSquare, Save, Sparkles, User, Globe, Eye, EyeOff, Tag, X, Brain, Target, Zap, TrendingUp, BarChart3, Shield, Lock, Users, UserCheck, Check } from "lucide-react";
+import { Bot, Edit, Loader2, MessageSquare, Save, Sparkles, User, Globe, Eye, EyeOff, Tag, X, Brain, Target, Zap, TrendingUp, BarChart3, Shield, Lock, Users, UserCheck, Check, BookOpen, Plus, Trash2, FileText } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
@@ -482,6 +482,9 @@ export default function MyTwin() {
               </CardContent>
             </Card>
 
+            {/* 知識ベース */}
+            <KnowledgeBaseSection />
+
             {/* プライバシー設定 */}
             <Card className="lg:col-span-2">
               <CardHeader>
@@ -900,5 +903,185 @@ export default function MyTwin() {
         ) : null}
       </div>
     </DashboardLayout>
+  );
+}
+
+/** Knowledge Base Management Section */
+function KnowledgeBaseSection() {
+  const { data: entries, isLoading, refetch } = trpc.knowledge.list.useQuery();
+  const addMutation = trpc.knowledge.add.useMutation({
+    onSuccess: () => {
+      refetch();
+      setTitle("");
+      setContent("");
+      setIsAdding(false);
+      toast.success("知識エントリを追加しました");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+  const deleteMutation = trpc.knowledge.delete.useMutation({
+    onSuccess: () => {
+      refetch();
+      toast.success("知識エントリを削除しました");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const [isAdding, setIsAdding] = useState(false);
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+
+  const handleAdd = () => {
+    if (!content.trim()) {
+      toast.error("内容を入力してください");
+      return;
+    }
+    addMutation.mutate({
+      sourceType: "manual",
+      title: title.trim() || undefined,
+      content: content.trim(),
+      summary: content.trim().slice(0, 200),
+    });
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 500 * 1024) {
+      toast.error("ファイルサイズは500KB以下にしてください");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = reader.result as string;
+      if (!text.trim()) {
+        toast.error("ファイルの内容が空です");
+        return;
+      }
+      addMutation.mutate({
+        sourceType: "upload",
+        title: file.name,
+        content: text.trim(),
+        summary: text.trim().slice(0, 200),
+      });
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  return (
+    <Card className="lg:col-span-2">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <BookOpen className="h-5 w-5" />
+              知識ベース
+            </CardTitle>
+            <CardDescription>
+              ドキュメント、経験、専門知識を追加して分身AIの回答品質を向上させましょう
+            </CardDescription>
+          </div>
+          <div className="flex gap-2">
+            <label>
+              <Button variant="outline" size="sm" asChild className="cursor-pointer">
+                <span>
+                  <FileText className="h-4 w-4 mr-1" />
+                  ファイル
+                </span>
+              </Button>
+              <input type="file" accept=".txt,.md,.csv,.json" className="hidden" onChange={handleFileUpload} />
+            </label>
+            <Button size="sm" onClick={() => setIsAdding(!isAdding)}>
+              <Plus className="h-4 w-4 mr-1" />
+              追加
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Add form */}
+        {isAdding && (
+          <div className="space-y-3 rounded-lg border p-4 bg-muted/30">
+            <div className="space-y-2">
+              <Label htmlFor="kb-title">タイトル（任意）</Label>
+              <Input
+                id="kb-title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="例: マーケティング戦略メモ"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="kb-content">内容 *</Label>
+              <Textarea
+                id="kb-content"
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                placeholder="分身AIに覚えさせたい知識、経験、専門情報を入力..."
+                rows={5}
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={handleAdd} disabled={addMutation.isPending} size="sm">
+                {addMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
+                保存
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => { setIsAdding(false); setTitle(""); setContent(""); }}>
+                キャンセル
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Entries list */}
+        {isLoading ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : !entries || entries.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <BookOpen className="h-10 w-10 mx-auto mb-3 opacity-50" />
+            <p className="text-sm">知識ベースにエントリがありません</p>
+            <p className="text-xs mt-1">「追加」ボタンからテキストやファイルを追加して、分身AIの回答品質を向上させましょう</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">{entries.length}件のエントリ</p>
+            {entries.map((entry: any) => (
+              <div key={entry.id} className="flex items-start justify-between gap-3 rounded-lg border p-3 bg-card hover:bg-muted/30 transition-colors">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Badge variant="outline" className="text-[10px] shrink-0">
+                      {entry.sourceType === "upload" ? "ファイル" : entry.sourceType === "api" ? "API" : "手動"}
+                    </Badge>
+                    <p className="text-sm font-medium truncate">{entry.title || "無題"}</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground line-clamp-2">
+                    {entry.summary || (entry.content ? entry.content.slice(0, 150) : "内容なし")}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    {new Date(entry.createdAt).toLocaleDateString("ja-JP")}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0 h-8 w-8 text-muted-foreground hover:text-destructive"
+                  onClick={() => {
+                    if (confirm("このエントリを削除しますか？")) {
+                      deleteMutation.mutate({ id: entry.id });
+                    }
+                  }}
+                  disabled={deleteMutation.isPending}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

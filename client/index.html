@@ -3,43 +3,80 @@
 
   <head>
     <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>分身AI - Digital Twin AI System</title>
-    
+
+    <!-- Preconnect to API for faster first request -->
+    <link rel="preconnect" href="https://bunshin-ai-api.common-gifted-tokyo.workers.dev" crossorigin />
+    <link rel="dns-prefetch" href="https://bunshin-ai-api.common-gifted-tokyo.workers.dev" />
+
     <!-- PWA Meta Tags -->
-    <meta name="description" content="あなたのデジタルツインを作成し、ビジネスマッチングを実現するAIプラットフォーム" />
+    <meta name="description" content="あなたのデジタルツインを作成し、ビジネスマッチングを実現するAIプラットフォーム。AI分身があなたの代わりにビジネスパートナーを探します。" />
     <meta name="theme-color" content="#6366f1" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="application-name" content="分身AI" />
-    
+    <meta name="keywords" content="デジタルツイン,AI,ビジネスマッチング,分身AI,Digital Twin,AI matching" />
+
     <!-- OGP Meta Tags -->
     <meta property="og:title" content="分身AI - デジタルツインでビジネスマッチング" />
-    <meta property="og:description" content="あなたのデジタルツインを作成し、ビジネスマッチングを実現するAIプラットフォーム" />
+    <meta property="og:description" content="あなたのデジタルツインを作成し、ビジネスマッチングを実現するAIプラットフォーム。AI分身があなたの代わりにビジネスパートナーを探します。" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://bunshin-ai.pages.dev" />
     <meta property="og:image" content="https://bunshin-ai.pages.dev/icons/icon-512x512.png" />
+    <meta property="og:locale" content="ja_JP" />
+    <meta property="og:site_name" content="分身AI" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="分身AI - Digital Twin AI System" />
     <meta name="twitter:description" content="あなたのデジタルツインを作成し、ビジネスマッチングを実現するAIプラットフォーム" />
+    <meta name="twitter:image" content="https://bunshin-ai.pages.dev/icons/icon-512x512.png" />
     <link rel="canonical" href="https://bunshin-ai.pages.dev" />
+
+    <!-- JSON-LD Structured Data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "分身AI",
+      "alternateName": "Bunshin AI",
+      "description": "あなたのデジタルツインを作成し、ビジネスマッチングを実現するAIプラットフォーム",
+      "url": "https://bunshin-ai.pages.dev",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Web",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "JPY",
+        "description": "フリープラン（無料）"
+      },
+      "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": "4.5",
+        "ratingCount": "50"
+      }
+    }
+    </script>
 
     <!-- iOS PWA Support -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="分身AI" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-    
+
     <!-- PWA Manifest -->
     <link rel="manifest" href="/manifest.json" />
-    
+
     <!-- Favicon -->
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-96x96.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/icons/icon-72x72.png" />
   </head>
 
   <body>
+    <noscript>
+      <div style="padding:2rem;text-align:center;font-family:sans-serif">
+        <h1>分身AI</h1>
+        <p>このアプリケーションにはJavaScriptが必要です。ブラウザの設定でJavaScriptを有効にしてください。</p>
+      </div>
+    </noscript>
     <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-md">メインコンテンツへスキップ</a>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>

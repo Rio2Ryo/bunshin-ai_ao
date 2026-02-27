@@ -43,7 +43,9 @@ export function usePageMeta({ title, description, ogImage, path }: PageMeta) {
 
     setMetaTag("og:title", fullTitle);
     setMetaTag("twitter:title", fullTitle);
-    setMetaTag("og:image", ogImage || DEFAULT_OG_IMAGE);
+    const image = ogImage || DEFAULT_OG_IMAGE;
+    setMetaTag("og:image", image);
+    setMetaTag("twitter:image", image);
 
     if (path) {
       setMetaTag("og:url", `${BASE_URL}${path}`);

@@ -21,8 +21,8 @@ const planDetails = {
   },
   premium: {
     name: "プレミアム",
-    priceMonthly: "¥980/月",
-    priceYearly: "¥9,800/年",
+    priceMonthly: "¥1,480/月",
+    priceYearly: "¥14,800/年",
     color: "bg-cyan-500",
     icon: Crown,
   },
@@ -370,7 +370,7 @@ export default function Plan() {
               >
                 <div className="font-semibold">月額プラン</div>
                 <div className="text-2xl font-bold mt-1">
-                  {selectedPlan === "premium" ? "¥980" : "¥4,980"}
+                  {selectedPlan === "premium" ? "¥1,480" : "¥4,980"}
                   <span className="text-sm font-normal text-gray-400">/月</span>
                 </div>
               </button>
@@ -385,7 +385,7 @@ export default function Plan() {
                 <Badge className="absolute -top-2 -right-2 bg-green-600">2ヶ月分お得</Badge>
                 <div className="font-semibold">年額プラン</div>
                 <div className="text-2xl font-bold mt-1">
-                  {selectedPlan === "premium" ? "¥9,800" : "¥49,800"}
+                  {selectedPlan === "premium" ? "¥14,800" : "¥49,800"}
                   <span className="text-sm font-normal text-gray-400">/年</span>
                 </div>
               </button>

@@ -1,5 +1,5 @@
 // Service Worker for 分身AI PWA
-const CACHE_NAME = 'bunshin-ai-v1';
+const CACHE_NAME = 'bunshin-ai-v3';
 const OFFLINE_URL = '/offline.html';
 
 // キャッシュするリソース

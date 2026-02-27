@@ -1,5 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -366,8 +366,8 @@ function DashboardLayoutContent({
             <div className="px-1 mb-2">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent transition-colors w-full group-data-[collapsible=icon]:justify-center relative">
-                    <Bell className="h-4 w-4 shrink-0" />
+                  <button className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent transition-colors w-full group-data-[collapsible=icon]:justify-center relative" aria-label={`通知${unreadCount > 0 ? `（${unreadCount}件未読）` : ''}`}>
+                    <Bell className="h-4 w-4 shrink-0" aria-hidden="true" />
                     {!isCollapsed && <span>通知</span>}
                     {unreadCount > 0 && (
                       <Badge variant="destructive" className="absolute -top-1 -right-1 h-4 min-w-4 p-0 flex items-center justify-center text-[9px]">
@@ -415,6 +415,7 @@ function DashboardLayoutContent({
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-3 rounded-lg px-1 py-1 hover:bg-accent/50 transition-colors w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                   <Avatar className="h-9 w-9 border shrink-0">
+                    {(user as any)?.avatarUrl && <AvatarImage src={`${(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "")}${(user as any).avatarUrl}`} />}
                     <AvatarFallback className="text-xs font-medium">
                       {user?.name?.charAt(0).toUpperCase()}
                     </AvatarFallback>
@@ -466,8 +467,8 @@ function DashboardLayoutContent({
             </span>
             <div className="flex items-center gap-1">
               {unreadCount > 0 && (
-                <button onClick={() => setLocation('/dashboard')} className="relative h-8 w-8 flex items-center justify-center rounded-lg hover:bg-accent">
-                  <Bell className="h-5 w-5 text-muted-foreground" />
+                <button onClick={() => setLocation('/dashboard')} className="relative h-8 w-8 flex items-center justify-center rounded-lg hover:bg-accent" aria-label={`通知（${unreadCount}件未読）`}>
+                  <Bell className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
                   <span className="absolute -top-0.5 -right-0.5 h-3.5 w-3.5 rounded-full bg-destructive text-[9px] text-white flex items-center justify-center">{unreadCount > 9 ? '9+' : unreadCount}</span>
                 </button>
               )}
@@ -475,6 +476,7 @@ function DashboardLayoutContent({
                 <DropdownMenuTrigger asChild>
                   <button className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-accent">
                     <Avatar className="h-7 w-7 border">
+                      {(user as any)?.avatarUrl && <AvatarImage src={`${(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "")}${(user as any).avatarUrl}`} />}
                       <AvatarFallback className="text-[10px] font-medium">
                         {user?.name?.charAt(0).toUpperCase()}
                       </AvatarFallback>

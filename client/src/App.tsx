@@ -47,6 +47,9 @@ const Marketplace = lazy(() => import("./pages/Marketplace"));
 const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
 const Blog = lazy(() => import("./pages/Blog"));
 const HealthDashboard = lazy(() => import("./pages/HealthDashboard"));
+const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
+const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const UserProfile = lazy(() => import("./pages/UserProfile"));
 
 function PageLoader() {
   return (
@@ -61,8 +64,11 @@ function Router() {
     <Suspense fallback={<PageLoader />}>
       <Switch>
         <Route path="/" component={Home} />
+        <Route path="/lp" component={Home} />
         <Route path="/login" component={Login} />
         <Route path="/register" component={Register} />
+        <Route path="/forgot-password" component={ForgotPassword} />
+        <Route path="/reset-password" component={ResetPassword} />
         <Route path="/onboarding" component={Onboarding} />
         <Route path="/dashboard" component={Dashboard} />
         <Route path="/profile" component={Profile} />
@@ -96,6 +102,7 @@ function Router() {
         <Route path="/privacy" component={PrivacyPolicy} />
         <Route path="/blog" component={Blog} />
         <Route path="/health-dashboard" component={HealthDashboard} />
+        <Route path="/users/:id" component={UserProfile} />
 
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />

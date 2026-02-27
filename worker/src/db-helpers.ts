@@ -634,6 +634,16 @@ CREATE TABLE IF NOT EXISTS notifications (
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_userId_read ON notifications(userId, isRead);
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  token TEXT NOT NULL UNIQUE,
+  expiresAt TEXT NOT NULL,
+  usedAt TEXT,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_password_reset_token ON password_reset_tokens(token);
 `;
 
 // Migrations to run after schema creation (ALTER TABLE etc.)
@@ -661,6 +671,7 @@ ALTER TABLE users ADD COLUMN tosAcceptedAt TEXT;
 ALTER TABLE users ADD COLUMN tosVersion TEXT;
 ALTER TABLE digital_twins ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public';
 ALTER TABLE digital_twins ADD COLUMN allowedViewerIds TEXT;
+ALTER TABLE user_profiles ADD COLUMN avatarUrl TEXT;
 `;
 
 // Separate migration for line_connections: make userId/twinId nullable

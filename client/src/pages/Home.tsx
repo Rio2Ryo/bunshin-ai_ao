@@ -35,6 +35,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-md">メインコンテンツへスキップ</a>
       {/* Header */}
       <header
         className="border-b border-border/30 backdrop-blur-xl fixed top-0 w-full z-50 bg-background/60"
@@ -80,11 +81,12 @@ export default function Home() {
       </header>
 
       {/* Hero Section */}
+      <main id="main-content">
       <section className="pt-28 pb-16 relative overflow-hidden">
         {/* Background effects */}
-        <div className="absolute inset-0 bg-grid opacity-10" />
-        <div className="absolute top-20 left-1/4 w-96 h-96 rounded-full bg-primary/8 blur-[100px] animate-pulse" style={{ animationDuration: "6s" }} />
-        <div className="absolute bottom-0 right-1/4 w-80 h-80 rounded-full bg-accent/8 blur-[100px] animate-pulse" style={{ animationDuration: "8s" }} />
+        <div className="absolute inset-0 bg-grid opacity-10" aria-hidden="true" />
+        <div className="absolute top-20 left-1/4 w-96 h-96 rounded-full bg-primary/8 blur-[100px] animate-pulse" style={{ animationDuration: "6s" }} aria-hidden="true" />
+        <div className="absolute bottom-0 right-1/4 w-80 h-80 rounded-full bg-accent/8 blur-[100px] animate-pulse" style={{ animationDuration: "8s" }} aria-hidden="true" />
 
         <div className="container relative">
           <div className="max-w-4xl mx-auto text-center">
@@ -310,9 +312,9 @@ export default function Home() {
             />
             <PricingCard
               name="プロ"
-              price="¥980"
+              price="¥1,480"
               period="/月"
-              yearlyPrice="¥9,800/年（2ヶ月分お得）"
+              yearlyPrice="¥14,800/年（2ヶ月分お得）"
               description="本格的にビジネスマッチングしたい方に"
               features={["分身AI フル機能", "マッチング 月30回", "友達 50人まで", "AIチャット 月500回", "詳細分析レポート", "CSV/PDFエクスポート", "外部AI連携（GPT/Gemini/Claude）", "優先サポート"]}
               cta={isAuthenticated ? "プロプランにアップグレード" : "プロプランを始める"}
@@ -358,9 +360,9 @@ export default function Home() {
             ].map((testimonial, i) => (
               <Card key={i} className="bg-card/80 backdrop-blur-sm border-border/50">
                 <CardContent className="pt-6">
-                  <div className="flex gap-1 mb-3">
+                  <div className="flex gap-1 mb-3" role="img" aria-label={`${testimonial.rating}つ星中5つ星`}>
                     {Array.from({ length: 5 }).map((_, j) => (
-                      <svg key={j} className={`h-4 w-4 ${j < testimonial.rating ? 'text-amber-400' : 'text-muted/30'}`} fill="currentColor" viewBox="0 0 20 20">
+                      <svg key={j} className={`h-4 w-4 ${j < testimonial.rating ? 'text-amber-400' : 'text-muted/30'}`} fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
                         <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
                       </svg>
                     ))}
@@ -419,9 +421,9 @@ export default function Home() {
             </p>
           </div>
           <div className="max-w-4xl mx-auto">
-            <div className="relative aspect-video rounded-2xl border border-border/50 bg-card/60 backdrop-blur-sm overflow-hidden group cursor-pointer">
-              <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-accent/10" />
-              <div className="absolute inset-0 flex items-center justify-center">
+            <div className="relative aspect-video rounded-2xl border border-border/50 bg-card/60 backdrop-blur-sm overflow-hidden group cursor-pointer" role="img" aria-label="分身AIプラットフォーム紹介デモ動画（準備中）">
+              <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-accent/10" aria-hidden="true" />
+              <div className="absolute inset-0 flex items-center justify-center" aria-hidden="true">
                 <div className="w-20 h-20 rounded-full bg-primary/90 flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg shadow-primary/20">
                   <svg className="w-8 h-8 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M8 5v14l11-7z" />
@@ -483,6 +485,8 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      </main>
 
       {/* Footer */}
       <footer className="py-12 border-t border-border/30">

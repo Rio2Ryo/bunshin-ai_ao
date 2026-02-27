@@ -7,10 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
-import { Search, User, Globe, UserPlus, MessageSquare, Sparkles } from "lucide-react";
+import { Search, User, Globe, UserPlus, MessageSquare, Sparkles, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { useState } from "react";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 
 export default function Discover() {
   usePageMeta({ title: "分身AI発見", description: "公開されている分身AIを探索して、新しいつながりを見つけましょう。", ogImage: "https://bunshin-ai.pages.dev/og/discover.svg", path: "/discover" });
@@ -203,6 +203,18 @@ export default function Discover() {
                         </Badge>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {/* Profile link */}
+                {selectedTwin.user?.id && (
+                  <div className="pt-2">
+                    <Link href={`/users/${selectedTwin.user.id}`}>
+                      <Button variant="outline" size="sm" className="w-full gap-2">
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        プロフィールを見る
+                      </Button>
+                    </Link>
                   </div>
                 )}
 

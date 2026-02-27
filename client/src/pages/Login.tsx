@@ -77,11 +77,16 @@ export default function Login() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">パスワード</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">パスワード</Label>
+                <Link href="/forgot-password" className="text-xs text-primary hover:underline">
+                  パスワードを忘れた？
+                </Link>
+              </div>
               <Input
                 id="password"
                 type="password"
-                placeholder="6文字以上"
+                placeholder="8文字以上"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required

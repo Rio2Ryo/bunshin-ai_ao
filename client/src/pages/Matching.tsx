@@ -284,7 +284,9 @@ export default function Matching() {
                           <AvatarCircle name={c.name} />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <p className="font-medium text-sm truncate">{c.name}</p>
+                              <Link href={`/users/${c.userId}`}>
+                                <p className="font-medium text-sm truncate hover:text-primary transition-colors cursor-pointer">{c.name}</p>
+                              </Link>
                               {c.isFriend && <Badge variant="outline" className="text-[10px] px-1.5 py-0">友達</Badge>}
                             </div>
                             {c.company && <p className="text-xs text-muted-foreground truncate">{c.company}{c.industry ? ` / ${c.industry}` : ""}</p>}
