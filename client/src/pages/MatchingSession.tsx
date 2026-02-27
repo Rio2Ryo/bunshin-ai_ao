@@ -6,7 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { usePageMeta } from "@/hooks/usePageMeta";
-import { trpc } from "@/lib/trpc";
+import { trpc, API_BASE } from "@/lib/trpc";
 import { useParams, Link } from "wouter";
 import { useState } from "react";
 import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, Users, Calendar, DollarSign, Target, Rocket, Share2, Link as LinkIcon, ExternalLink, Search, Globe } from "lucide-react";
@@ -199,7 +199,7 @@ export default function MatchingSession() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => window.open(`${window.location.hostname === 'localhost' ? 'http://localhost:8787' : 'https://bunshin-ai-api.common-gifted-tokyo.workers.dev'}/api/export/matching/${sessionId}/csv`, '_blank')}
+              onClick={() => window.open(`${API_BASE}/api/export/matching/${sessionId}/csv`, '_blank')}
             >
               <Download className="h-4 w-4 mr-2" />
               CSV
@@ -207,7 +207,7 @@ export default function MatchingSession() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => window.open(`${window.location.hostname === 'localhost' ? 'http://localhost:8787' : 'https://bunshin-ai-api.common-gifted-tokyo.workers.dev'}/api/export/matching/${sessionId}/pdf`, '_blank')}
+              onClick={() => window.open(`${API_BASE}/api/export/matching/${sessionId}/pdf`, '_blank')}
             >
               <Download className="h-4 w-4 mr-2" />
               レポート

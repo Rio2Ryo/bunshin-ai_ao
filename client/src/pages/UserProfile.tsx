@@ -3,10 +3,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { usePageMeta } from "@/hooks/usePageMeta";
-import { trpc } from "@/lib/trpc";
+import { trpc, API_BASE } from "@/lib/trpc";
 import { useParams, Link, useLocation } from "wouter";
 import { toast } from "sonner";
+import { useState } from "react";
 import {
   ArrowLeft, Bot, Shield, Briefcase, Building2, MapPin,
   UserPlus, Users, Loader2, MessageSquare, Sparkles, Tag,
@@ -43,13 +47,21 @@ export default function UserProfile() {
   const { data: friends } = trpc.friends.list.useQuery();
   const { data: myTwin } = trpc.myTwin.get.useQuery();
 
+  const utils = trpc.useUtils();
   const sendRequest = trpc.friends.sendRequest.useMutation({
-    onSuccess: () => toast.success("友達リクエストを送信しました"),
+    onSuccess: () => {
+      toast.success("友達リクエストを送信しました");
+      utils.friends.list.invalidate();
+    },
     onError: (e) => toast.error(e.message),
   });
 
+  const [matchingDialogOpen, setMatchingDialogOpen] = useState(false);
+  const [matchingTheme, setMatchingTheme] = useState("ビジネス協業の可能性");
+
   const createMatching = trpc.matching.create.useMutation({
     onSuccess: (data) => {
+      setMatchingDialogOpen(false);
       toast.success("マッチングセッションを開始しました");
       navigate(`/matching/${data.id}`);
     },
@@ -65,7 +77,7 @@ export default function UserProfile() {
 
   const isFriend = friends?.some((f) => f.friend.id === userId) ?? false;
   const initial = displayName.charAt(0) || "?";
-  const apiBaseUrl = import.meta.env.VITE_API_URL || "https://bunshin-ai-api.common-gifted-tokyo.workers.dev";
+  const apiBaseUrl = API_BASE;
 
   if (isLoading) {
     return (
@@ -244,12 +256,12 @@ export default function UserProfile() {
             <Button
               className="flex-1"
               onClick={() => {
-                const theme = prompt("対話テーマを入力してください", "ビジネス協業の可能性");
-                if (theme && myTwin) {
-                  createMatching.mutate({ friendId: userId, theme });
-                } else if (!myTwin) {
+                if (!myTwin) {
                   toast.error("まず自分の分身AIを作成してください");
+                  return;
                 }
+                setMatchingTheme("ビジネス協業の可能性");
+                setMatchingDialogOpen(true);
               }}
               disabled={createMatching.isPending}
             >
@@ -264,14 +276,19 @@ export default function UserProfile() {
             <Button
               className="flex-1"
               onClick={() => {
-                // We need the friend code — fetch it from the discover data
-                // Since we don't have it here, use a different approach
-                toast.info("友達コードで友達追加するには、発見ページをご利用ください");
-                navigate("/discover");
+                if (!profile.friendCode) {
+                  toast.error("このユーザーの友達コードが見つかりません");
+                  return;
+                }
+                sendRequest.mutate({ friendCode: profile.friendCode });
               }}
               disabled={sendRequest.isPending}
             >
-              <UserPlus className="h-4 w-4 mr-2" />
+              {sendRequest.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <UserPlus className="h-4 w-4 mr-2" />
+              )}
               友達になる
             </Button>
           )}
@@ -291,6 +308,44 @@ export default function UserProfile() {
           </p>
         )}
       </div>
+
+      {/* Matching Theme Dialog */}
+      <Dialog open={matchingDialogOpen} onOpenChange={setMatchingDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>マッチングを開始</DialogTitle>
+            <DialogDescription>
+              分身AI同士が対話するテーマを入力してください
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="matching-theme">対話テーマ</Label>
+            <Input
+              id="matching-theme"
+              value={matchingTheme}
+              onChange={(e) => setMatchingTheme(e.target.value)}
+              placeholder="例: ビジネス協業の可能性"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && matchingTheme.trim()) {
+                  createMatching.mutate({ friendId: userId, theme: matchingTheme.trim() });
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMatchingDialogOpen(false)}>
+              キャンセル
+            </Button>
+            <Button
+              onClick={() => createMatching.mutate({ friendId: userId, theme: matchingTheme.trim() })}
+              disabled={!matchingTheme.trim() || createMatching.isPending}
+            >
+              {createMatching.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Users className="h-4 w-4 mr-2" />}
+              開始
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

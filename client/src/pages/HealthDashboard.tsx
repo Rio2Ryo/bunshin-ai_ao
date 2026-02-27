@@ -3,12 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { usePageMeta } from "@/hooks/usePageMeta";
+import { API_BASE } from "@/lib/trpc";
 import { Activity, Database, HardDrive, Brain, CreditCard, MessageSquare, RefreshCw, Clock, AlertTriangle, CheckCircle2, XCircle, Users, Zap, Server } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
-
-const API_BASE = typeof window !== "undefined" && window.location.hostname === "localhost"
-  ? "http://localhost:8787"
-  : "https://bunshin-ai-api.common-gifted-tokyo.workers.dev";
 
 type HealthData = {
   ok: boolean;
