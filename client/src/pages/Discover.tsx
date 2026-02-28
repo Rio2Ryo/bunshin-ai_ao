@@ -93,17 +93,18 @@ export default function Discover() {
         </div>
 
         {/* Search */}
-        <form onSubmit={handleSearch} className="flex gap-3">
+        <form onSubmit={handleSearch} className="flex gap-3" role="search">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" aria-hidden="true" />
             <Input
               placeholder="名前、スキル、タグで検索..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-10 bg-gray-900/50 border-gray-700"
+              aria-label="ユーザーを検索"
             />
           </div>
-          <Button type="submit" className="bg-cyan-600 hover:bg-cyan-700">
+          <Button type="submit" className="bg-cyan-600 hover:bg-cyan-700" aria-label="検索">
             検索
           </Button>
         </form>
@@ -114,12 +115,14 @@ export default function Discover() {
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-400"></div>
           </div>
         ) : publicTwins && publicTwins.length > 0 ? (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3" role="list" aria-label="公開分身AI一覧">
             {publicTwins.map(({ twin, user: twinUser }: { twin: any; user: any }) => (
-              <Card 
-                key={twin.id} 
+              <Card
+                key={twin.id}
+                role="listitem"
                 className="bg-gray-900/50 border-gray-700 hover:border-cyan-500/50 transition-colors cursor-pointer"
                 onClick={() => setSelectedTwin({ twin, user: twinUser })}
+                aria-label={`${twin.name} - ${twinUser?.name || "匿名ユーザー"}`}
               >
                 <CardHeader className="pb-3">
                   <div className="flex items-center gap-3">
@@ -215,8 +218,8 @@ export default function Discover() {
                 {selectedTwin.user?.id && (
                   <div className="pt-2">
                     <Link href={`/users/${selectedTwin.user.id}`}>
-                      <Button variant="outline" size="sm" className="w-full gap-2">
-                        <ExternalLink className="h-3.5 w-3.5" />
+                      <Button variant="outline" size="sm" className="w-full gap-2" aria-label="プロフィールを見る">
+                        <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
                         プロフィールを見る
                       </Button>
                     </Link>
@@ -240,8 +243,9 @@ export default function Discover() {
                         }
                       }}
                       disabled={createMatchingMutation.isPending}
+                      aria-label="マッチング開始"
                     >
-                      <MessageSquare className="h-4 w-4 mr-2" />
+                      <MessageSquare className="h-4 w-4 mr-2" aria-hidden="true" />
                       マッチング開始
                     </Button>
                   ) : (
@@ -255,8 +259,9 @@ export default function Discover() {
                         }
                       }}
                       disabled={sendRequestMutation.isPending}
+                      aria-label="友達リクエストを送る"
                     >
-                      <UserPlus className="h-4 w-4 mr-2" />
+                      <UserPlus className="h-4 w-4 mr-2" aria-hidden="true" />
                       友達リクエスト
                     </Button>
                   )}

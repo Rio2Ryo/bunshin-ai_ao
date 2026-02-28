@@ -279,7 +279,7 @@ function DashboardLayoutContent({
             </div>
           </SidebarHeader>
 
-          <SidebarContent className="gap-0">
+          <SidebarContent className="gap-0" role="navigation" aria-label="メインナビゲーション">
             <SidebarMenu className="px-2 py-1">
               {translatedMenuGroups.map((group, gi) => (
                 <div key={group.label}>
@@ -432,6 +432,7 @@ function DashboardLayoutContent({
               <button
                 onClick={() => setLanguage(language === "ja" ? "en" : "ja")}
                 className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent transition-colors w-full group-data-[collapsible=icon]:justify-center"
+                aria-label="言語を切り替え"
               >
                 <Languages className="h-4 w-4 shrink-0" />
                 {!isCollapsed && <span>{language === "ja" ? "English" : "日本語"}</span>}
@@ -439,7 +440,7 @@ function DashboardLayoutContent({
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-3 rounded-lg px-1 py-1 hover:bg-accent/50 transition-colors w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <button className="flex items-center gap-3 rounded-lg px-1 py-1 hover:bg-accent/50 transition-colors w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="ユーザーメニュー">
                   <Avatar className="h-9 w-9 border shrink-0">
                     {(user as any)?.avatarUrl && <AvatarImage src={`${(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "")}${(user as any).avatarUrl}`} />}
                     <AvatarFallback className="text-xs font-medium">
@@ -500,7 +501,7 @@ function DashboardLayoutContent({
               )}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-accent">
+                  <button className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-accent" aria-label="ユーザーメニュー">
                     <Avatar className="h-7 w-7 border">
                       {(user as any)?.avatarUrl && <AvatarImage src={`${(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "")}${(user as any).avatarUrl}`} />}
                       <AvatarFallback className="text-[10px] font-medium">
@@ -579,7 +580,7 @@ function MobileBottomNav({
   );
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-background/95 backdrop-blur border-t safe-area-bottom">
+    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-background/95 backdrop-blur border-t safe-area-bottom" role="navigation" aria-label="モバイルナビゲーション">
       <div className="flex items-center justify-around h-14 max-w-lg mx-auto">
         {bottomNavItems.map((item) => {
           const active = isActive(item.path);
@@ -590,8 +591,10 @@ function MobileBottomNav({
               className={`flex flex-col items-center justify-center gap-0.5 flex-1 h-full relative active:scale-95 transition-transform ${
                 active ? "text-primary" : "text-muted-foreground"
               }`}
+              aria-label={item.label}
+              aria-current={active ? "page" : undefined}
             >
-              <item.icon className="h-5 w-5" />
+              <item.icon className="h-5 w-5" aria-hidden="true" />
               <span className="text-[10px] leading-tight">{item.label}</span>
               {item.path === "/matching" && pendingRequestCount > 0 && (
                 <span className="absolute top-1.5 right-1/4 h-2 w-2 rounded-full bg-destructive" />
@@ -602,8 +605,8 @@ function MobileBottomNav({
         {/* More button */}
         <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
           <SheetTrigger asChild>
-            <button className="flex flex-col items-center justify-center gap-0.5 flex-1 h-full text-muted-foreground active:scale-95 transition-transform">
-              <MoreHorizontal className="h-5 w-5" />
+            <button className="flex flex-col items-center justify-center gap-0.5 flex-1 h-full text-muted-foreground active:scale-95 transition-transform" aria-label="その他のメニュー">
+              <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
               <span className="text-[10px] leading-tight">{t("nav.more")}</span>
             </button>
           </SheetTrigger>
@@ -624,8 +627,10 @@ function MobileBottomNav({
                     className={`flex flex-col items-center gap-1.5 p-3 rounded-xl transition-colors active:scale-95 ${
                       active ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"
                     }`}
+                    aria-label={item.label}
+                    aria-current={active ? "page" : undefined}
                   >
-                    <item.icon className="h-5 w-5" />
+                    <item.icon className="h-5 w-5" aria-hidden="true" />
                     <span className="text-[11px] leading-tight text-center">{item.label}</span>
                   </button>
                 );

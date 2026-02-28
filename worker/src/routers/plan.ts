@@ -19,7 +19,27 @@ export const planRouter = router({
       premium: { requestsPerMin: 120, matchingsPerMonth: 20, maxFriends: 50, chatMessagesPerDay: 500 },
       enterprise: { requestsPerMin: 600, matchingsPerMonth: -1, maxFriends: -1, chatMessagesPerDay: -1 },
     };
-    return { plan, limits: limits[plan] || limits.free };
+
+    // Query current usage
+    const friends = await ctx.env.DB.prepare(
+      `SELECT COUNT(*) as c FROM friendships WHERE (userId=? OR friendId=?) AND status='accepted'`
+    ).bind(ctx.userId, ctx.userId).first<any>();
+
+    const chatToday = await ctx.env.DB.prepare(
+      `SELECT COUNT(*) as c FROM chat_messages WHERE role='user' AND sessionId IN (SELECT id FROM chat_sessions WHERE userId=?) AND createdAt >= date('now')`
+    ).bind(ctx.userId).first<any>();
+
+    const usageRow = await ctx.env.DB.prepare(
+      `SELECT matchingsThisMonth FROM usage_tracking WHERE userId=?`
+    ).bind(ctx.userId).first<any>();
+
+    const usage = {
+      friends: friends?.c ?? 0,
+      chatMessagesToday: chatToday?.c ?? 0,
+      matchingsThisMonth: usageRow?.matchingsThisMonth ?? 0,
+    };
+
+    return { plan, limits: limits[plan] || limits.free, usage };
   }),
   getInfo: protectedProcedure.query(async ({ ctx }) => {
     await ensureSchema(ctx.env.DB);

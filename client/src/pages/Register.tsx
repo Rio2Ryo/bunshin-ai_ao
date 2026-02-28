@@ -46,7 +46,7 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
+    <div className="min-h-screen flex items-center justify-center bg-background p-4" role="main" aria-label="アカウント登録">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
@@ -60,7 +60,7 @@ export default function Register() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" aria-label="アカウント登録フォーム">
             <div className="space-y-2">
               <Label htmlFor="name">お名前</Label>
               <Input
@@ -71,6 +71,7 @@ export default function Register() {
                 onChange={(e) => setName(e.target.value)}
                 required
                 autoComplete="name"
+                aria-label="お名前"
               />
             </div>
             <div className="space-y-2">
@@ -83,6 +84,7 @@ export default function Register() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 autoComplete="email"
+                aria-label="メールアドレス"
               />
             </div>
             <div className="space-y-2">
@@ -96,6 +98,7 @@ export default function Register() {
                 required
                 minLength={6}
                 autoComplete="new-password"
+                aria-label="パスワード"
               />
             </div>
             <div className="space-y-2">
@@ -109,6 +112,7 @@ export default function Register() {
                 required
                 minLength={6}
                 autoComplete="new-password"
+                aria-label="パスワード（確認）"
               />
             </div>
             <div className="flex items-start gap-2">
@@ -128,6 +132,7 @@ export default function Register() {
               type="submit"
               className="w-full"
               disabled={registerMutation.isPending}
+              aria-label="アカウント作成"
             >
               {registerMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />

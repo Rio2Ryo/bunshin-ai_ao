@@ -64,7 +64,7 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
+    <div className="min-h-screen flex items-center justify-center bg-background p-4" role="main" aria-label="ログイン">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
@@ -78,7 +78,7 @@ export default function Login() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" aria-label="ログインフォーム">
             <div className="space-y-2">
               <Label htmlFor="email">メールアドレス</Label>
               <Input
@@ -89,6 +89,7 @@ export default function Login() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 autoComplete="email"
+                aria-label="メールアドレス"
               />
             </div>
             <div className="space-y-2">
@@ -106,12 +107,14 @@ export default function Login() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
+                aria-label="パスワード"
               />
             </div>
             <Button
               type="submit"
               className="w-full"
               disabled={loginMutation.isPending}
+              aria-label="ログイン"
             >
               {loginMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -121,7 +124,7 @@ export default function Login() {
           </form>
 
           {showResend && (
-            <div className="mt-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-sm space-y-2">
+            <div className="mt-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-sm space-y-2" role="alert" id="login-error">
               <p className="text-amber-600 dark:text-amber-400">メールアドレスが未認証です。確認メールを再送信できます。</p>
               <Button
                 variant="outline"

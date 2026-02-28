@@ -419,35 +419,49 @@ export default function Plan() {
 function RateLimitCard() {
   const { data } = trpc.plan.getRateLimits.useQuery(undefined, { staleTime: 60_000 });
   if (!data) return null;
-  const fmt = (v: number) => v === -1 ? "無制限" : v.toLocaleString();
+  const fmt = (v: number) => (v === -1 ? "無制限" : v.toLocaleString());
+  const pct = (cur: number, max: number) => (max === -1 ? 0 : Math.min((cur / max) * 100, 100));
+  const barColor = (cur: number, max: number) => {
+    if (max === -1) return "";
+    const p = (cur / max) * 100;
+    if (p >= 100) return "[&>div]:bg-red-500";
+    if (p >= 80) return "[&>div]:bg-yellow-500";
+    return "";
+  };
+
+  const items = [
+    { icon: Users, label: "友達数", current: data.usage.friends, max: data.limits.maxFriends },
+    { icon: MessageSquare, label: "チャット（今日）", current: data.usage.chatMessagesToday, max: data.limits.chatMessagesPerDay },
+    { icon: Zap, label: "マッチング（今月）", current: data.usage.matchingsThisMonth, max: data.limits.matchingsPerMonth },
+  ];
+
   return (
-    <Card className="mt-6">
+    <Card className="mt-6 bg-gray-900/50 border-gray-700">
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2">
-          <Settings className="h-4 w-4 text-primary" />
-          現在の利用制限
+          <Settings className="h-4 w-4 text-cyan-400" />
+          利用制限と使用状況
         </CardTitle>
-        <CardDescription>プラン: {data.plan}</CardDescription>
+        <CardDescription>プラン: {data.plan} ・ APIリクエスト上限: {fmt(data.limits.requestsPerMin)}/分</CardDescription>
       </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-4">
-          <div className="p-3 bg-muted/50 rounded-lg text-center">
-            <p className="text-xl font-bold">{fmt(data.limits.requestsPerMin)}</p>
-            <p className="text-xs text-muted-foreground">APIリクエスト/分</p>
+      <CardContent className="space-y-4">
+        {items.map((item) => (
+          <div key={item.label}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm flex items-center gap-2">
+                <item.icon className="h-4 w-4 text-cyan-400" />
+                {item.label}
+              </span>
+              <span className="text-sm text-muted-foreground">
+                {item.current} / {fmt(item.max)}
+              </span>
+            </div>
+            <Progress
+              value={pct(item.current, item.max)}
+              className={`h-2 ${barColor(item.current, item.max)}`}
+            />
           </div>
-          <div className="p-3 bg-muted/50 rounded-lg text-center">
-            <p className="text-xl font-bold">{fmt(data.limits.matchingsPerMonth)}</p>
-            <p className="text-xs text-muted-foreground">マッチング/月</p>
-          </div>
-          <div className="p-3 bg-muted/50 rounded-lg text-center">
-            <p className="text-xl font-bold">{fmt(data.limits.maxFriends)}</p>
-            <p className="text-xs text-muted-foreground">友達上限</p>
-          </div>
-          <div className="p-3 bg-muted/50 rounded-lg text-center">
-            <p className="text-xl font-bold">{fmt(data.limits.chatMessagesPerDay)}</p>
-            <p className="text-xs text-muted-foreground">チャット/日</p>
-          </div>
-        </div>
+        ))}
       </CardContent>
     </Card>
   );
