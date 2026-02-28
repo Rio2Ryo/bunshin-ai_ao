@@ -9,7 +9,7 @@ import { useParams, Link, useLocation } from "wouter";
 import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { Bot, Send, Loader2, Plus, MessageSquare, User, MoreVertical, Pencil, Trash2, Check, X, ChevronDown, Clock } from "lucide-react";
-import { Streamdown } from "streamdown";
+import { LazyStreamdown as Streamdown } from "@/components/LazyStreamdown";
 
 function formatTime(dateStr?: string | null) {
   if (!dateStr) return "";

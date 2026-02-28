@@ -19,15 +19,15 @@ export const profileRouter = router({
   }),
   update: protectedProcedure
     .input(z.object({
-      displayName: z.string().optional(),
-      bio: z.string().optional(),
-      skills: z.array(z.string()).optional(),
-      experience: z.string().optional(),
-      businessInfo: z.string().optional(),
-      expertise: z.array(z.string()).optional(),
-      industry: z.string().optional(),
-      company: z.string().optional(),
-      position: z.string().optional(),
+      displayName: z.string().max(50).optional(),
+      bio: z.string().max(500).optional(),
+      skills: z.array(z.string().max(100)).max(20).optional(),
+      experience: z.string().max(2000).optional(),
+      businessInfo: z.string().max(2000).optional(),
+      expertise: z.array(z.string().max(100)).max(20).optional(),
+      industry: z.string().max(100).optional(),
+      company: z.string().max(100).optional(),
+      position: z.string().max(100).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);

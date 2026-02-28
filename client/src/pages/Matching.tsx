@@ -580,8 +580,8 @@ function SchedulerTab() {
   const updateSchedule = trpc.scheduler.update.useMutation({ onSuccess: () => refetch() });
   const deleteSchedule = trpc.scheduler.delete.useMutation({ onSuccess: () => { refetch(); toast.success("スケジュールを削除しました"); } });
 
-  const { data: notifSettings, refetch: refetchNotif } = trpc.notifications.getSettings.useQuery();
-  const updateNotif = trpc.notifications.updateSettings.useMutation({ onSuccess: () => { refetchNotif(); toast.success("通知設定を更新しました"); } });
+  const { data: notifSettings, refetch: refetchNotif } = trpc.notification.getSettings.useQuery();
+  const updateNotif = trpc.notification.updateSettings.useMutation({ onSuccess: () => { refetchNotif(); toast.success("通知設定を更新しました"); } });
 
   const [newFriendId, setNewFriendId] = useState("");
   const [newTheme, setNewTheme] = useState("協業の可能性");

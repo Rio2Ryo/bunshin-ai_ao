@@ -15,6 +15,7 @@ import {
 import { ensureSchema, toJson } from "./db-helpers";
 import { invokeLLM, getUserLLMConfig } from "./llm";
 import { notifyMatchingComplete } from "./notifications";
+import { requestLogger } from "./middleware";
 
 // ============ Router Imports ============
 
@@ -29,12 +30,13 @@ import { matchingRouter } from "./routers/matching";
 import { pointsRouter } from "./routers/points";
 import { questsRouter, growthRouter } from "./routers/quests";
 import { cardsRouter } from "./routers/cards";
-import { clawdbotRouter, lineRouter } from "./routers/integrations";
+import { clawdbotRouter } from "./routers/integrations";
+import { lineRouter, handleLineWebhook } from "./routers/line";
 import { planRouter, stripeRouter } from "./routers/plan";
 import { discoverRouter, userRouter } from "./routers/discover";
 import { aiProviderRouter, adminAiProviderRouter } from "./routers/ai-provider";
 import { analyticsRouter, trustRouter, onboardingRouter } from "./routers/analytics";
-import { schedulerRouter, notificationsRouter } from "./routers/scheduler";
+import { schedulerRouter } from "./routers/scheduler";
 import { adminRouter, reportRouter, marketplaceRouter, notificationRouter } from "./routers/admin";
 
 // ============ Composed tRPC Router ============
@@ -69,7 +71,6 @@ const appRouter = router({
   trust: trustRouter,
   onboarding: onboardingRouter,
   scheduler: schedulerRouter,
-  notifications: notificationsRouter,
   admin: adminRouter,
   report: reportRouter,
   marketplace: marketplaceRouter,
@@ -81,6 +82,9 @@ export type AppRouter = typeof appRouter;
 // ============ Hono App ============
 
 const api = new Hono<{ Bindings: Env }>();
+
+// Structured request logging (outputs JSON for CF Workers Logs)
+api.use("/api/*", requestLogger());
 
 // Allowed origins for CORS (strict whitelist)
 const ALLOWED_ORIGINS = new Set([
@@ -151,10 +155,17 @@ api.use("/api/*", async (c, next) => {
 const rateLimitMap = new Map<string, { count: number; resetAt: number; limit: number }>();
 const RATE_LIMIT_WINDOW = 60_000;
 const PLAN_RATE_LIMITS: Record<string, number> = { free: 30, premium: 120, enterprise: 600 };
-const DEFAULT_RATE_LIMIT = 20;
+const DEFAULT_RATE_LIMIT = 10;
 let lastCleanup = Date.now();
 
+// Paths excluded from rate limiting (server-to-server webhooks with their own signature verification)
+const RATE_LIMIT_EXCLUDED_PATHS = new Set(["/api/stripe/webhook", "/api/line/webhook"]);
+
 api.use("/api/*", async (c, next) => {
+  // Skip rate limiting for webhook endpoints (they have their own signature verification)
+  const path = new URL(c.req.url).pathname;
+  if (RATE_LIMIT_EXCLUDED_PATHS.has(path)) return next();
+
   const ip = c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for") || "unknown";
   const nowMs = Date.now();
   let key = `ip:${ip}`;
@@ -226,6 +237,11 @@ function perEndpointRateLimit(prefix: string, maxPerMin: number) {
 
 // Stricter rate limit for auth endpoints (10 per minute per IP)
 api.use("/api/trpc/auth.*", perEndpointRateLimit("auth", 10));
+// Extra-strict rate limit for brute-force-sensitive auth endpoints (5 per minute per IP)
+api.use("/api/trpc/auth.register*", perEndpointRateLimit("auth_register", 5));
+api.use("/api/trpc/auth.login*", perEndpointRateLimit("auth_login", 5));
+api.use("/api/trpc/auth.requestPasswordReset*", perEndpointRateLimit("auth_pwreset", 5));
+api.use("/api/trpc/auth.resendVerification*", perEndpointRateLimit("auth_resend", 5));
 
 // Stricter rate limit for LLM-heavy endpoints (5 per minute for free tier)
 api.use("/api/trpc/chat.sendMessage*", perEndpointRateLimit("chat_send", 15));
@@ -690,272 +706,15 @@ api.post("/api/billing/checkout", async (c) => {
 
 // ============ LINE Webhook ============
 
-/** Verify LINE signature using HMAC-SHA256 */
-async function verifyLineSignature(body: string, signature: string, channelSecret: string): Promise<boolean> {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey("raw", enc.encode(channelSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(body));
-  const expected = btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(sig))));
-  return expected === signature;
-}
-
-/** Reply to LINE via Messaging API */
-async function replyToLine(replyToken: string, messages: any[], accessToken: string) {
-  await fetch("https://api.line.me/v2/bot/message/reply", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-    body: JSON.stringify({ replyToken, messages }),
-  });
-}
-
-/** Send message to Clawdbot gateway (DB settings > ENV fallback) */
-async function sendToClawdbotGateway(
-  messages: { role: string; content: string }[],
-  opts: { gatewayUrl: string; authToken: string; agentId?: string; sessionKey?: string }
-): Promise<{ success: boolean; response?: string; model?: string; error?: string }> {
-  try {
-    const res = await fetch(`${opts.gatewayUrl}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${opts.authToken}`,
-        "x-clawdbot-agent-id": opts.agentId || "main",
-        "ngrok-skip-browser-warning": "true",
-        ...(opts.sessionKey ? { "x-clawdbot-session-key": opts.sessionKey } : {}),
-      },
-      body: JSON.stringify({ model: "clawdbot", messages, stream: false }),
-    });
-    if (!res.ok) return { success: false, error: `HTTP ${res.status}` };
-    const data = await res.json() as any;
-    return { success: true, response: data.choices?.[0]?.message?.content || "", model: data.model || "clawdbot" };
-  } catch (e: any) {
-    return { success: false, error: e.message };
-  }
-}
-
-/** Detect image generation requests in Japanese/English */
-function detectImageRequest(msg: string): boolean {
-  return /(画像|絵|イラスト|写真|アート)を?(作って|描いて|生成して|作成して|見せて)/i.test(msg)
-    || /(generate|create|draw|make).*(image|picture|illustration|art|photo)/i.test(msg);
-}
-
-/** Parse Clawdbot response: extract text and image URLs */
-function parseClawdbotResp(raw: string): { text: string; images: string[] } {
-  const images: string[] = [];
-  // Extract markdown images: ![alt](url)
-  const imgRegex = /!\[.*?\]\((https?:\/\/[^\s)]+)\)/g;
-  let m: RegExpExecArray | null;
-  while ((m = imgRegex.exec(raw)) !== null) images.push(m[1]);
-  // Remove markdown image syntax from text
-  const text = raw.replace(/!\[.*?\]\(https?:\/\/[^\s)]+\)/g, "").replace(/\n{3,}/g, "\n\n").trim();
-  return { text, images };
-}
-
 api.post("/api/line/webhook", async (c) => {
   const env = c.env as Env;
-  const channelSecret = env.LINE_CHANNEL_SECRET;
-  const accessToken = env.LINE_CHANNEL_ACCESS_TOKEN;
-  if (!channelSecret || !accessToken) return c.json({ error: "LINE not configured" }, 500);
-
   const body = await c.req.text();
-
-  // Verify signature
   const sig = c.req.header("x-line-signature") || "";
-  const valid = await verifyLineSignature(body, sig, channelSecret);
-  if (!valid) return c.json({ error: "Invalid signature" }, 403);
-
-  let webhook: any;
-  try { webhook = JSON.parse(body); } catch { return c.json({ error: "Invalid JSON" }, 400); }
-
-  // Process events asynchronously (return 200 immediately to LINE)
-  const db = env.DB;
-  await ensureSchema(db);
-
-  for (const event of (webhook.events || [])) {
-    try {
-      if (event.type === "follow" && event.replyToken) {
-        // Generate link code for new followers
-        const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-        const lineUserId = event.source?.userId;
-        if (lineUserId) {
-          // Create or update line_connections with link code
-          const existing = await db.prepare(`SELECT id FROM line_connections WHERE lineUserId=?`).bind(lineUserId).first<any>();
-          if (existing) {
-            await db.prepare(`UPDATE line_connections SET settings=json_set(COALESCE(settings,'{}'),'$.linkCode',?), updatedAt=datetime('now') WHERE id=?`).bind(code, existing.id).run();
-          } else {
-            await db.prepare(`INSERT INTO line_connections (lineUserId, lineDisplayName, status, settings) VALUES (?,?,?,?)`).bind(lineUserId, "", "pending", toJson({ linkCode: code })).run();
-          }
-          await replyToLine(event.replyToken, [{ type: "text", text: `友だち追加ありがとうございます！\n\n分身AIとLINEを連携するには、以下の連携コードをWebアプリで入力してください。\n\n連携コード: ${code}\n\n※有効期限: 10分\n※Webアプリ: https://bunshin-ai.pages.dev/line-link` }], accessToken);
-        }
-        continue;
-      }
-
-      if (event.type === "unfollow") {
-        const lineUserId = event.source?.userId;
-        if (lineUserId) {
-          await db.prepare(`UPDATE line_connections SET status='disconnected', disconnectedAt=datetime('now'), updatedAt=datetime('now') WHERE lineUserId=?`).bind(lineUserId).run();
-        }
-        continue;
-      }
-
-      if (event.type !== "message" || event.message?.type !== "text" || !event.replyToken) continue;
-
-      const lineUserId = event.source?.userId;
-      if (!lineUserId) continue;
-
-      const userMessage = event.message.text || "";
-
-      // Find connected user
-      const conn = await db.prepare(
-        `SELECT lc.id as connId, lc.userId, lc.status, dt.id as twinId, dt.name as twinName, dt.personality, dt.description, dt.systemPrompt
-         FROM line_connections lc
-         LEFT JOIN digital_twins dt ON dt.userId = lc.userId
-         WHERE lc.lineUserId=? AND lc.status='active' AND lc.userId IS NOT NULL`
-      ).bind(lineUserId).first<any>();
-
-      if (!conn) {
-        // Not linked yet
-        const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-        const existing = await db.prepare(`SELECT id FROM line_connections WHERE lineUserId=?`).bind(lineUserId).first<any>();
-        if (existing) {
-          await db.prepare(`UPDATE line_connections SET settings=json_set(COALESCE(settings,'{}'),'$.linkCode',?), updatedAt=datetime('now') WHERE id=?`).bind(code, existing.id).run();
-        } else {
-          await db.prepare(`INSERT INTO line_connections (lineUserId, status, settings) VALUES (?,?,?)`).bind(lineUserId, "pending", toJson({ linkCode: code })).run();
-        }
-        await replyToLine(event.replyToken, [{ type: "text", text: `まだLINE連携が完了していません。\n\nWebアプリで以下の連携コードを入力してください。\n\n連携コード: ${code}\n\n※有効期限: 10分` }], accessToken);
-        continue;
-      }
-
-      if (!conn.twinId) {
-        await replyToLine(event.replyToken, [{ type: "text", text: "分身AIが見つかりません。Webアプリで分身AIを作成してください。" }], accessToken);
-        continue;
-      }
-
-      // Build system prompt from twin data
-      const sysParts: string[] = [
-        `あなたは「${conn.twinName || "分身AI"}」という名前の分身AIです。`,
-        "ユーザーの代わりに会話し、ユーザーの人格・価値観・話し方を再現してください。",
-      ];
-      if (conn.personality) sysParts.push(`\n【性格・人格】\n${conn.personality}`);
-      if (conn.description) sysParts.push(`\n【説明】\n${conn.description}`);
-      sysParts.push("\nLINEでの会話なので、簡潔で親しみやすい返答を心がけてください。1-3文程度で返答してください。");
-      if (detectImageRequest(userMessage)) {
-        sysParts.push("\n【画像生成の指示】\n画像生成を求められたら、execツールで画像生成スクリプトを実行し、アップロード後にMarkdown形式 ![image](url) で出力してください。");
-      }
-      const systemPrompt = sysParts.join("\n");
-
-      // Get recent conversation history
-      const lineSessionRow = await db.prepare(
-        `SELECT id FROM chat_sessions WHERE userId=? AND twinId=? AND title='LINE会話' LIMIT 1`
-      ).bind(conn.userId, conn.twinId).first<any>();
-
-      let conversationHistory: { role: "user" | "assistant" | "system"; content: string }[] = [];
-      if (lineSessionRow) {
-        const msgs = await db.prepare(
-          `SELECT role, content FROM chat_messages WHERE sessionId=? ORDER BY id DESC LIMIT 10`
-        ).bind(lineSessionRow.id).all<any>();
-        conversationHistory = (msgs.results || []).reverse().map((m: any) => ({ role: m.role as "user" | "assistant" | "system", content: m.content }));
-      }
-
-      const allMessages: { role: "user" | "assistant" | "system"; content: string }[] = [
-        { role: "system" as const, content: systemPrompt },
-        ...conversationHistory,
-        { role: "user" as const, content: userMessage },
-      ];
-
-      // === Clawdbot: DB settings first, then ENV fallback ===
-      const clawdbotConn = await db.prepare(
-        `SELECT gatewayUrl, authToken, agentId FROM clawdbot_connections WHERE userId=?`
-      ).bind(conn.userId).first<any>();
-
-      const gatewayUrl = clawdbotConn?.gatewayUrl || env.CLAWDBOT_GATEWAY_URL || "";
-      const authToken = clawdbotConn?.authToken || env.CLAWDBOT_AUTH_TOKEN || "";
-      const agentId = clawdbotConn?.agentId || env.CLAWDBOT_AGENT_ID || "main";
-      const clawdbotSource = clawdbotConn?.gatewayUrl ? "db" : (env.CLAWDBOT_GATEWAY_URL ? "env" : "none");
-
-      let responseText = "";
-      let responseModel = "unknown";
-      let apiSource = "none";
-      let responseImages: string[] = [];
-      const startTime = Date.now();
-
-      if (gatewayUrl && authToken) {
-        // Try Clawdbot
-        const result = await sendToClawdbotGateway(allMessages, {
-          gatewayUrl, authToken, agentId, sessionKey: `line_${lineUserId}`,
-        });
-        if (result.success && result.response) {
-          const parsed = parseClawdbotResp(result.response);
-          responseText = parsed.text;
-          responseImages = parsed.images;
-          responseModel = result.model || "clawdbot";
-          apiSource = `clawdbot(${clawdbotSource})`;
-        }
-      }
-
-      // Fallback to LLM if Clawdbot failed
-      if (!responseText) {
-        const llmConfig = await getUserLLMConfig(env.DB, conn.userId, "chat", env);
-        if (llmConfig) {
-          try {
-            const result = await invokeLLM(llmConfig, allMessages, { maxTokens: 512, temperature: 0.8 });
-            if (result.content) {
-              responseText = result.content;
-              responseModel = result.model || "llm-fallback";
-              apiSource = "llm-fallback";
-            }
-          } catch { /* ignore */ }
-        }
-      }
-
-      if (!responseText) responseText = "申し訳ありません、応答を生成できませんでした。";
-
-      const elapsed = Date.now() - startTime;
-
-      // Save conversation to DB
-      let sessionId = lineSessionRow?.id;
-      if (!sessionId) {
-        await db.prepare(
-          `INSERT INTO chat_sessions (userId, twinId, title, mode) VALUES (?,?,?,?)`
-        ).bind(conn.userId, conn.twinId, "LINE会話", "casual").run();
-        const newSession = await db.prepare(
-          `SELECT id FROM chat_sessions WHERE userId=? AND twinId=? AND title='LINE会話' ORDER BY id DESC LIMIT 1`
-        ).bind(conn.userId, conn.twinId).first<any>();
-        sessionId = newSession?.id;
-      }
-      if (sessionId) {
-        await db.prepare(
-          `INSERT INTO chat_messages (sessionId, userId, twinId, role, content) VALUES (?,?,?,?,?)`
-        ).bind(sessionId, conn.userId, conn.twinId, "user", userMessage).run();
-        await db.prepare(
-          `INSERT INTO chat_messages (sessionId, userId, twinId, role, content) VALUES (?,?,?,?,?)`
-        ).bind(sessionId, conn.userId, conn.twinId, "assistant", responseText).run();
-      }
-
-      // Build LINE reply messages
-      const lineMessages: any[] = [];
-      if (responseText) lineMessages.push({ type: "text", text: responseText });
-      for (const imgUrl of responseImages.slice(0, 3)) {
-        if (/^https:\/\/.+\.(png|jpg|jpeg|gif|webp)/i.test(imgUrl)) {
-          lineMessages.push({ type: "image", originalContentUrl: imgUrl, previewImageUrl: imgUrl });
-        }
-      }
-      if (lineMessages.length === 0) lineMessages.push({ type: "text", text: "応答を生成できませんでした。" });
-
-      // Debug mode
-      if (env.LINE_DEBUG_MODE === "true") {
-        lineMessages.push({
-          type: "text",
-          text: `🔧 Debug:\n• AI: ${responseModel}\n• ソース: ${apiSource}\n• Clawdbot設定: ${clawdbotSource}\n• 応答時間: ${elapsed}ms\n• 画像: ${responseImages.length}件`,
-        });
-      }
-
-      await replyToLine(event.replyToken, lineMessages.slice(0, 5), accessToken);
-    } catch (eventError: any) {
-      console.error("[LINE] Event error:", eventError?.message || eventError);
-    }
+  const result = await handleLineWebhook(env, body, sig);
+  if (!result.success) {
+    const status = result.error === "Invalid signature" ? 403 : result.error === "Invalid JSON" ? 400 : 500;
+    return c.json({ error: result.error }, status);
   }
-
   return c.json({ success: true });
 });
 
@@ -963,8 +722,8 @@ api.post("/api/line/webhook", async (c) => {
 api.get("/api/line/webhook", (c) => {
   return c.json({
     status: "active",
-    version: "1.0.0",
-    supportedEvents: ["follow", "unfollow", "message"],
+    version: "2.0.0",
+    supportedEvents: ["follow", "unfollow", "message", "join"],
     supportedMessageTypes: ["text"],
   });
 });

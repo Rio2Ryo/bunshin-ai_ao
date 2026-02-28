@@ -9,8 +9,6 @@ import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { toast } from "sonner";
 
-const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
-
 export default function Register() {
   usePageMeta({ title: "新規登録", description: "分身AIアカウントを作成して、あなたのデジタルツインを始めましょう。無料で登録できます。", path: "/register" });
   const [, navigate] = useLocation();
@@ -19,24 +17,11 @@ export default function Register() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [tosAccepted, setTosAccepted] = useState(false);
-  const utils = trpc.useUtils();
 
   const registerMutation = trpc.auth.register.useMutation({
-    onSuccess: async (data) => {
-      // Set session cookie
-      await fetch(`${API_BASE}/api/auth/set-session`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ token: data.token }),
-      });
-      await utils.auth.me.invalidate();
-      // Store onboarding session ID and redirect to onboarding
-      if ((data as any).onboardingSessionId) {
-        sessionStorage.setItem("onboardingSessionId", String((data as any).onboardingSessionId));
-      }
-      toast.success("アカウントを作成しました！");
-      navigate("/onboarding");
+    onSuccess: () => {
+      toast.success("確認メールを送信しました");
+      navigate(`/verify-email?email=${encodeURIComponent(email)}`);
     },
     onError: (error) => {
       toast.error(error.message);

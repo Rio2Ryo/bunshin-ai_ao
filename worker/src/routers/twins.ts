@@ -522,12 +522,12 @@ ${isLastQuestion ? `
 これが最後の質問への回答です。診断結果を以下のJSON形式で出力してください:
 ---MBTI_RESULT---
 {
-  "type": "XXXX",
+  "type": "ENFP",
   "dimensions": {"EI": -100〜100, "SN": -100〜100, "TF": -100〜100, "JP": -100〜100},
   "description": "タイプの説明",
   "strengths": ["強み1", "強み2", "強み3"],
   "weaknesses": ["課題1", "課題2"],
-  "compatibleTypes": ["XXXX", "XXXX"],
+  "compatibleTypes": ["INTJ", "INFJ"],
   "careerSuggestions": ["キャリア1", "キャリア2", "キャリア3"]
 }
 ---END_MBTI_RESULT---

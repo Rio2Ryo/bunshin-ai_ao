@@ -26,7 +26,7 @@ export const chatRouter = router({
       return { session, messages: (msgs.results ?? []).map(m => ({ ...m, metadata: parseJson<any>(m.metadata) })), totalMessages: totalCount };
     }),
   createSession: protectedProcedure
-    .input(z.object({ title: z.string().optional() }))
+    .input(z.object({ title: z.string().max(200).optional() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       const twin = await getMyTwin(ctx.env.DB, ctx.userId);
@@ -35,7 +35,7 @@ export const chatRouter = router({
       return { id: Number(res.meta.last_row_id) };
     }),
   sendMessage: protectedProcedure
-    .input(z.object({ sessionId: z.number(), content: z.string().min(1) }))
+    .input(z.object({ sessionId: z.number(), content: z.string().min(1).max(5000) }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
 
@@ -191,7 +191,7 @@ export const chatRouter = router({
       return { success: true };
     }),
   renameSession: protectedProcedure
-    .input(z.object({ id: z.number(), title: z.string().min(1) }))
+    .input(z.object({ id: z.number(), title: z.string().min(1).max(200) }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       const session = await ctx.env.DB.prepare(`SELECT id FROM chat_sessions WHERE id=? AND userId=?`).bind(input.id, ctx.userId).first<any>();

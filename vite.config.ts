@@ -11,11 +11,13 @@ const plugins = [react(), tailwindcss(), jsxLocPlugin()];
 export default defineConfig({
   plugins,
   resolve: {
-    alias: {
-      "@": path.resolve(import.meta.dirname, "client", "src"),
-      "@shared": path.resolve(import.meta.dirname, "shared"),
-      "@assets": path.resolve(import.meta.dirname, "attached_assets"),
-    },
+    alias: [
+      { find: "@", replacement: path.resolve(import.meta.dirname, "client", "src") },
+      { find: "@shared", replacement: path.resolve(import.meta.dirname, "shared") },
+      { find: "@assets", replacement: path.resolve(import.meta.dirname, "attached_assets") },
+      // Exact match only — custom shiki shim with ~25 common languages instead of 232
+      { find: /^shiki$/, replacement: path.resolve(import.meta.dirname, "client", "src", "lib", "shiki-shim.ts") },
+    ],
   },
   envDir: path.resolve(import.meta.dirname),
   root: path.resolve(import.meta.dirname, "client"),

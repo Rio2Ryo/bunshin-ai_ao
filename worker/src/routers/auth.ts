@@ -5,7 +5,7 @@ import { ensureSchema, parseJson, normalizeTwin, ensureNpcFriends, addTrustActio
 
 export const authRouter = router({
     register: publicProcedure
-      .input(z.object({ email: z.string().email().max(255), password: z.string().min(8).max(128), name: z.string().min(1).max(100), tosAccepted: z.boolean().optional() }))
+      .input(z.object({ email: z.string().email().max(255), password: z.string().min(8).max(100), name: z.string().min(1).max(100), tosAccepted: z.boolean().optional() }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         // Check if email already exists
@@ -104,7 +104,7 @@ Step 5完了時に以下を出力:
         return { success: true, requiresVerification: true, email: input.email };
       }),
     login: publicProcedure
-      .input(z.object({ email: z.string().email(), password: z.string().min(1) }))
+      .input(z.object({ email: z.string().email(), password: z.string().min(1).max(100) }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         const user = await ctx.env.DB.prepare(`SELECT * FROM users WHERE email=?`).bind(input.email).first<any>();
@@ -225,7 +225,7 @@ Step 5完了時に以下を出力:
 
     // ---- GDPR: Account Deletion ----
     deleteAccount: protectedProcedure
-      .input(z.object({ password: z.string().min(1), confirmation: z.literal("DELETE") }))
+      .input(z.object({ password: z.string().min(1).max(100), confirmation: z.literal("DELETE") }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
 
@@ -384,7 +384,7 @@ Step 5完了時に以下を出力:
 
     // ---- Password Reset: Execute ----
     resetPassword: publicProcedure
-      .input(z.object({ token: z.string().min(1), newPassword: z.string().min(8).max(128) }))
+      .input(z.object({ token: z.string().min(1), newPassword: z.string().min(8).max(100) }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
         const tokenRow = await ctx.env.DB.prepare(

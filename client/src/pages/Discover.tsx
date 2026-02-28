@@ -3,11 +3,12 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
-import { Search, User, Globe, UserPlus, MessageSquare, Sparkles, ExternalLink } from "lucide-react";
+import { Search, User, Globe, UserPlus, MessageSquare, Sparkles, ExternalLink, Loader2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { useState } from "react";
 import { useLocation, Link } from "wouter";
@@ -18,6 +19,9 @@ export default function Discover() {
   const [, navigate] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTwin, setSelectedTwin] = useState<{ twin: any; user: any } | null>(null);
+  const [matchingDialogOpen, setMatchingDialogOpen] = useState(false);
+  const [matchingTheme, setMatchingTheme] = useState("ビジネス協業の可能性");
+  const [matchingTargetUserId, setMatchingTargetUserId] = useState<number | null>(null);
 
   const { data: publicTwins, isLoading, refetch } = trpc.myTwin.searchPublic.useQuery({
     query: searchQuery || undefined,
@@ -39,6 +43,7 @@ export default function Discover() {
 
   const createMatchingMutation = trpc.matching.create.useMutation({
     onSuccess: (data) => {
+      setMatchingDialogOpen(false);
       toast.success("マッチングセッションを開始しました");
       navigate(`/matching/${data.id}`);
     },
@@ -224,9 +229,14 @@ export default function Discover() {
                     <Button
                       className="flex-1 bg-cyan-600 hover:bg-cyan-700"
                       onClick={() => {
-                        const theme = prompt("対話テーマを入力してください", "ビジネス協業の可能性");
-                        if (theme && selectedTwin.user?.id) {
-                          handleStartMatching(selectedTwin.user.id, theme);
+                        if (!myTwin) {
+                          toast.error("まず自分の分身AIを作成してください");
+                          return;
+                        }
+                        if (selectedTwin.user?.id) {
+                          setMatchingTargetUserId(selectedTwin.user.id);
+                          setMatchingTheme("ビジネス協業の可能性");
+                          setMatchingDialogOpen(true);
                         }
                       }}
                       disabled={createMatchingMutation.isPending}
@@ -260,6 +270,48 @@ export default function Discover() {
               </div>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Matching Theme Dialog */}
+      <Dialog open={matchingDialogOpen} onOpenChange={setMatchingDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>マッチングを開始</DialogTitle>
+            <DialogDescription>
+              分身AI同士が対話するテーマを入力してください
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="discover-matching-theme">対話テーマ</Label>
+            <Input
+              id="discover-matching-theme"
+              value={matchingTheme}
+              onChange={(e) => setMatchingTheme(e.target.value)}
+              placeholder="例: ビジネス協業の可能性"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && matchingTheme.trim() && matchingTargetUserId) {
+                  handleStartMatching(matchingTargetUserId, matchingTheme.trim());
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMatchingDialogOpen(false)}>
+              キャンセル
+            </Button>
+            <Button
+              onClick={() => {
+                if (matchingTargetUserId) {
+                  handleStartMatching(matchingTargetUserId, matchingTheme.trim());
+                }
+              }}
+              disabled={!matchingTheme.trim() || createMatchingMutation.isPending}
+            >
+              {createMatchingMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Users className="h-4 w-4 mr-2" />}
+              開始
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </DashboardLayout>

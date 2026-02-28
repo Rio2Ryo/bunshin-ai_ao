@@ -4,7 +4,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { Loader2, Send, User, Sparkles } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
-import { Streamdown } from "streamdown";
+import { LazyStreamdown as Streamdown } from "@/components/LazyStreamdown";
 
 /**
  * Message type matching server-side LLM Message interface

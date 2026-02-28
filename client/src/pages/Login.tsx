@@ -18,6 +18,18 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const utils = trpc.useUtils();
 
+  const [showResend, setShowResend] = useState(false);
+
+  const resendMutation = trpc.auth.resendVerification.useMutation({
+    onSuccess: () => {
+      toast.success("確認メールを再送信しました");
+      setShowResend(false);
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
   const loginMutation = trpc.auth.login.useMutation({
     onSuccess: async (data) => {
       // Set session cookie
@@ -38,6 +50,9 @@ export default function Login() {
       }
     },
     onError: (error) => {
+      if (error.message.includes("未認証")) {
+        setShowResend(true);
+      }
       toast.error(error.message);
     },
   });
@@ -104,6 +119,22 @@ export default function Login() {
               ログイン
             </Button>
           </form>
+
+          {showResend && (
+            <div className="mt-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-sm space-y-2">
+              <p className="text-amber-600 dark:text-amber-400">メールアドレスが未認証です。確認メールを再送信できます。</p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                disabled={resendMutation.isPending}
+                onClick={() => resendMutation.mutate({ email })}
+              >
+                {resendMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                確認メールを再送信
+              </Button>
+            </div>
+          )}
 
           <div className="mt-6 text-center text-sm">
             <span className="text-muted-foreground">アカウントをお持ちでない方は</span>{" "}

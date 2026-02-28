@@ -61,7 +61,7 @@ export const friendsRouter = router({
       return rows.results ?? [];
     }),
   sendRequest: protectedProcedure
-    .input(z.object({ friendCode: z.string().min(1) }))
+    .input(z.object({ friendCode: z.string().min(1).max(20).regex(/^[A-Za-z0-9]+$/, "フレンドコードは英数字のみです") }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
 

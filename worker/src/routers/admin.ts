@@ -109,6 +109,29 @@ export const adminRouter = router({
       return rows.results ?? [];
     }),
 
+    // Error statistics (last 24 hours)
+    getErrorStats: protectedProcedure.use(async ({ ctx, next }) => {
+      if (ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "管理者権限が必要です" });
+      return next();
+    }).query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      try {
+        // Try to read from error_logs table if it exists
+        const rows = await ctx.env.DB.prepare(
+          `SELECT level, path, message, COUNT(*) as count
+           FROM error_logs
+           WHERE createdAt >= datetime('now', '-24 hours')
+           GROUP BY level, path, message
+           ORDER BY count DESC
+           LIMIT 100`
+        ).all<any>();
+        return rows.results ?? [];
+      } catch {
+        // Table does not exist — return empty array
+        return [];
+      }
+    }),
+
     // Revenue dashboard
     revenue: protectedProcedure.use(async ({ ctx, next }) => {
       if (ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "管理者権限が必要です" });
@@ -359,6 +382,41 @@ export const marketplaceRouter = router({
 });
 
 export const notificationRouter = router({
+    // --- Notification settings (merged from notificationsRouter) ---
+    getSettings: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(`SELECT * FROM notification_settings WHERE userId=?`).bind(ctx.userId).first<any>();
+      return row || { slackWebhookUrl: null, lineNotify: 1, emailNotify: 0, matchingComplete: 1, scheduledMatching: 1 };
+    }),
+    updateSettings: protectedProcedure
+      .input(z.object({
+        slackWebhookUrl: z.string().nullable().optional(),
+        lineNotify: z.number().min(0).max(1).optional(),
+        emailNotify: z.number().min(0).max(1).optional(),
+        matchingComplete: z.number().min(0).max(1).optional(),
+        scheduledMatching: z.number().min(0).max(1).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        const existing = await ctx.env.DB.prepare(`SELECT id FROM notification_settings WHERE userId=?`).bind(ctx.userId).first<any>();
+        if (existing) {
+          const sets: string[] = ["updatedAt=datetime('now')"];
+          const vals: any[] = [];
+          if (input.slackWebhookUrl !== undefined) { sets.push("slackWebhookUrl=?"); vals.push(input.slackWebhookUrl); }
+          if (input.lineNotify !== undefined) { sets.push("lineNotify=?"); vals.push(input.lineNotify); }
+          if (input.emailNotify !== undefined) { sets.push("emailNotify=?"); vals.push(input.emailNotify); }
+          if (input.matchingComplete !== undefined) { sets.push("matchingComplete=?"); vals.push(input.matchingComplete); }
+          if (input.scheduledMatching !== undefined) { sets.push("scheduledMatching=?"); vals.push(input.scheduledMatching); }
+          vals.push(existing.id);
+          await ctx.env.DB.prepare(`UPDATE notification_settings SET ${sets.join(",")} WHERE id=?`).bind(...vals).run();
+        } else {
+          await ctx.env.DB.prepare(
+            `INSERT INTO notification_settings (userId, slackWebhookUrl, lineNotify, emailNotify, matchingComplete, scheduledMatching) VALUES (?,?,?,?,?,?)`
+          ).bind(ctx.userId, input.slackWebhookUrl ?? null, input.lineNotify ?? 1, input.emailNotify ?? 0, input.matchingComplete ?? 1, input.scheduledMatching ?? 1).run();
+        }
+        return { success: true };
+      }),
+    // --- Notification inbox ---
     list: protectedProcedure
       .input(z.object({ limit: z.number().optional(), unreadOnly: z.boolean().optional() }).optional())
       .query(async ({ ctx, input }) => {

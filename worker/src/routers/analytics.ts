@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, publicProcedure, protectedProcedure } from "../trpc";
 import { ensureSchema, toJson, addTrustAction, getTrustRank, getMyTwin } from "../db-helpers";
+import { cachedQuery } from "../cache";
 
 export const analyticsRouter = router({
   dashboard: protectedProcedure.query(async ({ ctx }) => {
@@ -9,77 +10,79 @@ export const analyticsRouter = router({
     const db = ctx.env.DB;
     const uid = ctx.userId;
 
-    // Matching stats
-    const totalMatching = await db.prepare(`SELECT COUNT(*) as cnt FROM matching_sessions WHERE initiatorUserId=?`).bind(uid).first<any>();
-    const completedMatching = await db.prepare(`SELECT COUNT(*) as cnt FROM matching_sessions WHERE initiatorUserId=? AND status='completed'`).bind(uid).first<any>();
-    const avgScore = await db.prepare(
-      `SELECT AVG(CAST(mr.compatibilityScore AS REAL)) as avg FROM matching_results mr JOIN matching_sessions ms ON ms.id=mr.sessionId WHERE ms.initiatorUserId=?`
-    ).bind(uid).first<any>();
-    const highScoreCount = await db.prepare(
-      `SELECT COUNT(*) as cnt FROM matching_results mr JOIN matching_sessions ms ON ms.id=mr.sessionId WHERE ms.initiatorUserId=? AND CAST(mr.compatibilityScore AS REAL)>=70`
-    ).bind(uid).first<any>();
+    return cachedQuery(`analytics:dashboard:${uid}`, 120, async () => {
+      // Matching stats
+      const totalMatching = await db.prepare(`SELECT COUNT(*) as cnt FROM matching_sessions WHERE initiatorUserId=?`).bind(uid).first<any>();
+      const completedMatching = await db.prepare(`SELECT COUNT(*) as cnt FROM matching_sessions WHERE initiatorUserId=? AND status='completed'`).bind(uid).first<any>();
+      const avgScore = await db.prepare(
+        `SELECT AVG(CAST(mr.compatibilityScore AS REAL)) as avg FROM matching_results mr JOIN matching_sessions ms ON ms.id=mr.sessionId WHERE ms.initiatorUserId=?`
+      ).bind(uid).first<any>();
+      const highScoreCount = await db.prepare(
+        `SELECT COUNT(*) as cnt FROM matching_results mr JOIN matching_sessions ms ON ms.id=mr.sessionId WHERE ms.initiatorUserId=? AND CAST(mr.compatibilityScore AS REAL)>=70`
+      ).bind(uid).first<any>();
 
-    // Monthly matching trend (last 6 months)
-    const monthlyTrend = await db.prepare(
-      `SELECT strftime('%Y-%m', ms.createdAt) as month, COUNT(*) as count, AVG(CAST(mr.compatibilityScore AS REAL)) as avgScore
-       FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id
-       WHERE ms.initiatorUserId=? AND ms.createdAt >= datetime('now','-6 months')
-       GROUP BY month ORDER BY month`
-    ).bind(uid).all<any>();
+      // Monthly matching trend (last 6 months)
+      const monthlyTrend = await db.prepare(
+        `SELECT strftime('%Y-%m', ms.createdAt) as month, COUNT(*) as count, AVG(CAST(mr.compatibilityScore AS REAL)) as avgScore
+         FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id
+         WHERE ms.initiatorUserId=? AND ms.createdAt >= datetime('now','-6 months')
+         GROUP BY month ORDER BY month`
+      ).bind(uid).all<any>();
 
-    // Chat engagement
-    const totalChats = await db.prepare(`SELECT COUNT(*) as cnt FROM chat_sessions WHERE userId=?`).bind(uid).first<any>();
-    const totalMessages = await db.prepare(
-      `SELECT COUNT(*) as cnt FROM chat_messages cm JOIN chat_sessions cs ON cs.id=cm.sessionId WHERE cs.userId=?`
-    ).bind(uid).first<any>();
+      // Chat engagement
+      const totalChats = await db.prepare(`SELECT COUNT(*) as cnt FROM chat_sessions WHERE userId=?`).bind(uid).first<any>();
+      const totalMessages = await db.prepare(
+        `SELECT COUNT(*) as cnt FROM chat_messages cm JOIN chat_sessions cs ON cs.id=cm.sessionId WHERE cs.userId=?`
+      ).bind(uid).first<any>();
 
-    // Weekly message trend (last 8 weeks)
-    const weeklyMessages = await db.prepare(
-      `SELECT strftime('%Y-W%W', cm.createdAt) as week, COUNT(*) as count
-       FROM chat_messages cm JOIN chat_sessions cs ON cs.id=cm.sessionId
-       WHERE cs.userId=? AND cm.createdAt >= datetime('now','-8 weeks')
-       GROUP BY week ORDER BY week`
-    ).bind(uid).all<any>();
+      // Weekly message trend (last 8 weeks)
+      const weeklyMessages = await db.prepare(
+        `SELECT strftime('%Y-W%W', cm.createdAt) as week, COUNT(*) as count
+         FROM chat_messages cm JOIN chat_sessions cs ON cs.id=cm.sessionId
+         WHERE cs.userId=? AND cm.createdAt >= datetime('now','-8 weeks')
+         GROUP BY week ORDER BY week`
+      ).bind(uid).all<any>();
 
-    // Friends + Trust
-    const friendCount = await db.prepare(
-      `SELECT COUNT(*) as cnt FROM friendships WHERE (userId=? OR friendId=?) AND status='accepted'`
-    ).bind(uid, uid).first<any>();
-    const trustRow = await db.prepare(`SELECT score FROM trust_scores WHERE userId=?`).bind(uid).first<any>();
+      // Friends + Trust
+      const friendCount = await db.prepare(
+        `SELECT COUNT(*) as cnt FROM friendships WHERE (userId=? OR friendId=?) AND status='accepted'`
+      ).bind(uid, uid).first<any>();
+      const trustRow = await db.prepare(`SELECT score FROM trust_scores WHERE userId=?`).bind(uid).first<any>();
 
-    // Score distribution
-    const scoreDist = await db.prepare(
-      `SELECT
-        SUM(CASE WHEN CAST(mr.compatibilityScore AS REAL) >= 80 THEN 1 ELSE 0 END) as excellent,
-        SUM(CASE WHEN CAST(mr.compatibilityScore AS REAL) >= 60 AND CAST(mr.compatibilityScore AS REAL) < 80 THEN 1 ELSE 0 END) as good,
-        SUM(CASE WHEN CAST(mr.compatibilityScore AS REAL) >= 40 AND CAST(mr.compatibilityScore AS REAL) < 60 THEN 1 ELSE 0 END) as fair,
-        SUM(CASE WHEN CAST(mr.compatibilityScore AS REAL) < 40 THEN 1 ELSE 0 END) as low
-       FROM matching_results mr JOIN matching_sessions ms ON ms.id=mr.sessionId WHERE ms.initiatorUserId=?`
-    ).bind(uid).first<any>();
+      // Score distribution
+      const scoreDist = await db.prepare(
+        `SELECT
+          SUM(CASE WHEN CAST(mr.compatibilityScore AS REAL) >= 80 THEN 1 ELSE 0 END) as excellent,
+          SUM(CASE WHEN CAST(mr.compatibilityScore AS REAL) >= 60 AND CAST(mr.compatibilityScore AS REAL) < 80 THEN 1 ELSE 0 END) as good,
+          SUM(CASE WHEN CAST(mr.compatibilityScore AS REAL) >= 40 AND CAST(mr.compatibilityScore AS REAL) < 60 THEN 1 ELSE 0 END) as fair,
+          SUM(CASE WHEN CAST(mr.compatibilityScore AS REAL) < 40 THEN 1 ELSE 0 END) as low
+         FROM matching_results mr JOIN matching_sessions ms ON ms.id=mr.sessionId WHERE ms.initiatorUserId=?`
+      ).bind(uid).first<any>();
 
-    return {
-      matching: {
-        total: totalMatching?.cnt ?? 0,
-        completed: completedMatching?.cnt ?? 0,
-        avgScore: Math.round((avgScore?.avg ?? 0) * 10) / 10,
-        highScoreCount: highScoreCount?.cnt ?? 0,
-        successRate: totalMatching?.cnt > 0 ? Math.round(((highScoreCount?.cnt ?? 0) / totalMatching.cnt) * 100) : 0,
-      },
-      scoreDist: {
-        excellent: scoreDist?.excellent ?? 0,
-        good: scoreDist?.good ?? 0,
-        fair: scoreDist?.fair ?? 0,
-        low: scoreDist?.low ?? 0,
-      },
-      monthlyTrend: (monthlyTrend.results ?? []).map((r: any) => ({ month: r.month, count: r.count, avgScore: Math.round((r.avgScore ?? 0) * 10) / 10 })),
-      engagement: {
-        totalChats: totalChats?.cnt ?? 0,
-        totalMessages: totalMessages?.cnt ?? 0,
-        friendCount: friendCount?.cnt ?? 0,
-        trustScore: trustRow?.score ?? 0,
-      },
-      weeklyMessages: (weeklyMessages.results ?? []).map((r: any) => ({ week: r.week, count: r.count })),
-    };
+      return {
+        matching: {
+          total: totalMatching?.cnt ?? 0,
+          completed: completedMatching?.cnt ?? 0,
+          avgScore: Math.round((avgScore?.avg ?? 0) * 10) / 10,
+          highScoreCount: highScoreCount?.cnt ?? 0,
+          successRate: totalMatching?.cnt > 0 ? Math.round(((highScoreCount?.cnt ?? 0) / totalMatching.cnt) * 100) : 0,
+        },
+        scoreDist: {
+          excellent: scoreDist?.excellent ?? 0,
+          good: scoreDist?.good ?? 0,
+          fair: scoreDist?.fair ?? 0,
+          low: scoreDist?.low ?? 0,
+        },
+        monthlyTrend: (monthlyTrend.results ?? []).map((r: any) => ({ month: r.month, count: r.count, avgScore: Math.round((r.avgScore ?? 0) * 10) / 10 })),
+        engagement: {
+          totalChats: totalChats?.cnt ?? 0,
+          totalMessages: totalMessages?.cnt ?? 0,
+          friendCount: friendCount?.cnt ?? 0,
+          trustScore: trustRow?.score ?? 0,
+        },
+        weeklyMessages: (weeklyMessages.results ?? []).map((r: any) => ({ week: r.week, count: r.count })),
+      };
+    });
   }),
 });
 

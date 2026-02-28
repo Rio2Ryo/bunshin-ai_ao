@@ -11,7 +11,7 @@ import { useParams, Link } from "wouter";
 import { useState } from "react";
 import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, Users, Calendar, DollarSign, Target, Rocket, Share2, Link as LinkIcon, ExternalLink, Search, Globe } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Streamdown } from "streamdown";
+import { LazyStreamdown as Streamdown } from "@/components/LazyStreamdown";
 import { toast } from "sonner";
 
 export default function MatchingSession() {

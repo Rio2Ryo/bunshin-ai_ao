@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, generateCode } from "../trpc";
 import { ensureSchema } from "../db-helpers";
+import { cachedQuery, invalidateCache } from "../cache";
 
 export const planRouter = router({
   getCurrent: protectedProcedure.query(async ({ ctx }) => {
@@ -64,20 +65,22 @@ export const planRouter = router({
     const user = await ctx.env.DB.prepare(`SELECT email, stripeCustomerId FROM users WHERE id=?`).bind(ctx.userId).first<any>();
     if (!user?.stripeCustomerId) return null;
 
-    try {
-      const res = await fetch(`https://api.stripe.com/v1/subscriptions?customer=${user.stripeCustomerId}&status=active&limit=1`, {
-        headers: { Authorization: `Bearer ${ctx.env.STRIPE_SECRET_KEY}` },
-      });
-      const data = await res.json() as any;
-      const sub = data.data?.[0];
-      if (!sub) return null;
-      return {
-        cancelAtPeriodEnd: sub.cancel_at_period_end,
-        currentPeriodEnd: new Date(sub.current_period_end * 1000).toISOString(),
-      };
-    } catch {
-      return null;
-    }
+    return cachedQuery(`plan:subscription:${ctx.userId}`, 300, async () => {
+      try {
+        const res = await fetch(`https://api.stripe.com/v1/subscriptions?customer=${user.stripeCustomerId}&status=active&limit=1`, {
+          headers: { Authorization: `Bearer ${ctx.env.STRIPE_SECRET_KEY}` },
+        });
+        const data = await res.json() as any;
+        const sub = data.data?.[0];
+        if (!sub) return null;
+        return {
+          cancelAtPeriodEnd: sub.cancel_at_period_end as boolean,
+          currentPeriodEnd: new Date(sub.current_period_end * 1000).toISOString(),
+        };
+      } catch {
+        return null;
+      }
+    });
   }),
   createCheckoutSession: protectedProcedure
     .input(z.object({ planId: z.string().optional(), plan: z.string().optional(), billingCycle: z.string().optional(), interval: z.string().optional() }))
@@ -180,6 +183,7 @@ export const planRouter = router({
     });
     const data = await res.json() as any;
     if (data.error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: data.error.message });
+    await invalidateCache(`plan:subscription:${ctx.userId}`);
     return { success: true, cancelAt: new Date(data.current_period_end * 1000).toISOString() };
   }),
   getFriendCode: protectedProcedure.query(async ({ ctx }) => {

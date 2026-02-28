@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS users (
   lastSignedIn TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
 CREATE TABLE IF NOT EXISTS user_profiles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   userId INTEGER NOT NULL UNIQUE,
@@ -105,6 +107,7 @@ CREATE TABLE IF NOT EXISTS knowledge_base (
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_knowledge_twinId ON knowledge_base(twinId);
+CREATE INDEX IF NOT EXISTS idx_knowledge_twin_source ON knowledge_base(twinId, sourceType);
 
 CREATE TABLE IF NOT EXISTS uploaded_files (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -166,6 +169,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_sessionId ON chat_messages(sessionId);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created ON chat_messages(sessionId, createdAt);
 
 CREATE TABLE IF NOT EXISTS matching_sessions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -178,6 +182,7 @@ CREATE TABLE IF NOT EXISTS matching_sessions (
   completedAt TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_matching_sessions_initiator ON matching_sessions(initiatorUserId);
+CREATE INDEX IF NOT EXISTS idx_matching_sessions_initiator_created ON matching_sessions(initiatorUserId, createdAt);
 CREATE INDEX IF NOT EXISTS idx_matching_sessions_twin1 ON matching_sessions(twin1Id);
 CREATE INDEX IF NOT EXISTS idx_matching_sessions_twin2 ON matching_sessions(twin2Id);
 
@@ -307,6 +312,7 @@ CREATE TABLE IF NOT EXISTS point_transactions (
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_point_transactions_userId ON point_transactions(userId);
+CREATE INDEX IF NOT EXISTS idx_point_transactions_user_created ON point_transactions(userId, createdAt);
 
 CREATE TABLE IF NOT EXISTS redeemable_products (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -368,6 +374,8 @@ CREATE TABLE IF NOT EXISTS line_connections (
   createdAt TEXT NOT NULL DEFAULT (datetime('now')),
   updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_line_connections_lineuser_status ON line_connections(lineUserId, status);
 
 CREATE TABLE IF NOT EXISTS clawdbot_connections (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -634,6 +642,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_userId_read ON notifications(userId, isRead);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(userId, createdAt);
 
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -644,6 +653,16 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_password_reset_token ON password_reset_tokens(token);
+
+CREATE TABLE IF NOT EXISTS email_verification_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  token TEXT NOT NULL UNIQUE,
+  expiresAt TEXT NOT NULL,
+  usedAt TEXT,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_email_verification_token ON email_verification_tokens(token);
 `;
 
 // Migrations to run after schema creation (ALTER TABLE etc.)
@@ -672,31 +691,7 @@ ALTER TABLE users ADD COLUMN tosVersion TEXT;
 ALTER TABLE digital_twins ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public';
 ALTER TABLE digital_twins ADD COLUMN allowedViewerIds TEXT;
 ALTER TABLE user_profiles ADD COLUMN avatarUrl TEXT;
-`;
-
-// Separate migration for line_connections: make userId/twinId nullable
-const LINE_CONNECTIONS_MIGRATION = `
-CREATE TABLE IF NOT EXISTS line_connections_new (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  userId INTEGER,
-  twinId INTEGER,
-  lineUserId TEXT NOT NULL UNIQUE,
-  lineDisplayName TEXT,
-  linePictureUrl TEXT,
-  status TEXT NOT NULL DEFAULT 'pending',
-  settings TEXT,
-  clawdbotAgentId TEXT,
-  clawdbotAgentCreatedAt TEXT,
-  totalMessages INTEGER NOT NULL DEFAULT 0,
-  lastMessageAt TEXT,
-  connectedAt TEXT,
-  disconnectedAt TEXT,
-  createdAt TEXT NOT NULL DEFAULT (datetime('now')),
-  updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
-);
-INSERT OR IGNORE INTO line_connections_new SELECT * FROM line_connections;
-DROP TABLE IF EXISTS line_connections;
-ALTER TABLE line_connections_new RENAME TO line_connections;
+ALTER TABLE users ADD COLUMN emailVerified INTEGER;
 `;
 
 let schemaReady = false;
@@ -728,22 +723,6 @@ export async function ensureSchema(db: D1Database) {
       // Column already exists or migration already applied
     }
   }
-
-  // Migrate line_connections to allow nullable userId/twinId
-  try {
-    const hasNewTable = await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='line_connections_new'`).first<any>();
-    if (!hasNewTable) {
-      // Only run if not already migrated — check if userId is nullable
-      const tableInfo = await db.prepare(`PRAGMA table_info(line_connections)`).all<any>();
-      const userIdCol = (tableInfo.results || []).find((c: any) => c.name === "userId");
-      if (userIdCol && userIdCol.notnull === 1) {
-        const migStmts = splitStatements(LINE_CONNECTIONS_MIGRATION);
-        for (const s of migStmts) {
-          try { await db.prepare(s).run(); } catch { /* ignore */ }
-        }
-      }
-    }
-  } catch { /* migration already done or table doesn't exist yet */ }
 
   // Seed default redeemable products
   try {

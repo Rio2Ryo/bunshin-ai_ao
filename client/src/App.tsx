@@ -49,7 +49,11 @@ const Blog = lazy(() => import("./pages/Blog"));
 const HealthDashboard = lazy(() => import("./pages/HealthDashboard"));
 const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const VerifyEmail = lazy(() => import("./pages/VerifyEmail"));
 const UserProfile = lazy(() => import("./pages/UserProfile"));
+const ComponentShowcase = lazy(() => import("./pages/ComponentShowcase"));
+const Presentation = lazy(() => import("./pages/Presentation"));
+const NanoBananaSlides = lazy(() => import("./pages/NanoBananaSlides"));
 
 function PageLoader() {
   return (
@@ -69,6 +73,7 @@ function Router() {
         <Route path="/register" component={Register} />
         <Route path="/forgot-password" component={ForgotPassword} />
         <Route path="/reset-password" component={ResetPassword} />
+        <Route path="/verify-email" component={VerifyEmail} />
         <Route path="/onboarding" component={Onboarding} />
         <Route path="/dashboard" component={Dashboard} />
         <Route path="/profile" component={Profile} />
@@ -103,6 +108,9 @@ function Router() {
         <Route path="/blog" component={Blog} />
         <Route path="/health-dashboard" component={HealthDashboard} />
         <Route path="/users/:id" component={UserProfile} />
+        <Route path="/presentation/:id" component={Presentation} />
+        <Route path="/slides/:id" component={NanoBananaSlides} />
+        <Route path="/dev/showcase" component={ComponentShowcase} />
 
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />

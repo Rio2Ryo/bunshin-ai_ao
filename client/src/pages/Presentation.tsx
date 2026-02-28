@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { ArrowLeft, ChevronLeft, ChevronRight, Download, Loader2 } from "lucide-react";
-import { Streamdown } from "streamdown";
+import { LazyStreamdown as Streamdown } from "@/components/LazyStreamdown";
 
 interface PresentationData {
   markdown: string;

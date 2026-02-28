@@ -12,7 +12,7 @@ export const knowledgeRouter = router({
     return (rows.results ?? []).map(r => ({ ...r, metadata: parseJson<any>(r.metadata) }));
   }),
   add: protectedProcedure
-    .input(z.object({ sourceType: z.enum(["upload", "api", "manual"]), sourceId: z.string().optional(), title: z.string().optional(), content: z.string().optional(), summary: z.string().optional(), metadata: z.record(z.string(), z.unknown()).optional() }))
+    .input(z.object({ sourceType: z.enum(["upload", "api", "manual"]), sourceId: z.string().max(255).optional(), title: z.string().max(200).optional(), content: z.string().max(50000).optional(), summary: z.string().max(1000).optional(), metadata: z.record(z.string(), z.unknown()).optional() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       const twin = await getMyTwin(ctx.env.DB, ctx.userId);

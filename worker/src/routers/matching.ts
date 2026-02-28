@@ -264,7 +264,7 @@ export const matchingRouter = router({
     return candidates;
   }),
   create: protectedProcedure
-    .input(z.object({ friendId: z.number(), theme: z.string().min(1), turns: z.number().min(1).max(30).default(5) }))
+    .input(z.object({ friendId: z.number(), theme: z.string().min(1).max(500), turns: z.number().min(1).max(20).default(5) }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
 
