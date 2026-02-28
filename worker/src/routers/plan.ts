@@ -15,8 +15,8 @@ export const planRouter = router({
     const user = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
     const plan = user?.plan || "free";
     const limits: Record<string, { requestsPerMin: number; matchingsPerMonth: number; maxFriends: number; chatMessagesPerDay: number }> = {
-      free: { requestsPerMin: 30, matchingsPerMonth: 3, maxFriends: 5, chatMessagesPerDay: 50 },
-      premium: { requestsPerMin: 120, matchingsPerMonth: 20, maxFriends: 50, chatMessagesPerDay: 500 },
+      free: { requestsPerMin: 60, matchingsPerMonth: 3, maxFriends: 5, chatMessagesPerDay: 50 },
+      premium: { requestsPerMin: 120, matchingsPerMonth: 30, maxFriends: 50, chatMessagesPerDay: 500 },
       enterprise: { requestsPerMin: 600, matchingsPerMonth: -1, maxFriends: -1, chatMessagesPerDay: -1 },
     };
 

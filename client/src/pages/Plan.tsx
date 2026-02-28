@@ -7,7 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
-import { Crown, Users, MessageSquare, Database, FileUp, Zap, Check, Sparkles, CreditCard, Settings } from "lucide-react";
+import { Crown, Users, MessageSquare, Database, FileUp, Zap, Check, Sparkles, CreditCard, Settings, AlertTriangle, Shield } from "lucide-react";
 import { toast } from "sonner";
 import { useState, useEffect } from "react";
 import { useSearch } from "wouter";
@@ -171,44 +171,11 @@ export default function Plan() {
           </CardHeader>
         </Card>
 
-        {/* Usage Stats */}
+        {/* Rate Limits & Usage - powered by getRateLimits */}
+        <RateLimitCard />
+
+        {/* Storage Usage Stats */}
         <div className="grid gap-4 md:grid-cols-2">
-          <Card className="bg-gray-900/50 border-gray-700">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <Users className="h-4 w-4 text-cyan-400" />
-                友達数
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {stats.usage.friends} / {formatLimit(stats.limits.maxFriends)}
-              </div>
-              <Progress 
-                value={getUsagePercent(stats.usage.friends, stats.limits.maxFriends)} 
-                className="mt-2 h-2"
-              />
-            </CardContent>
-          </Card>
-
-          <Card className="bg-gray-900/50 border-gray-700">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <MessageSquare className="h-4 w-4 text-cyan-400" />
-                今月のマッチング
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {stats.usage.matchingsThisMonth} / {formatLimit(stats.limits.maxMatchingsPerMonth)}
-              </div>
-              <Progress 
-                value={getUsagePercent(stats.usage.matchingsThisMonth, stats.limits.maxMatchingsPerMonth)} 
-                className="mt-2 h-2"
-              />
-            </CardContent>
-          </Card>
-
           <Card className="bg-gray-900/50 border-gray-700">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
@@ -220,8 +187,8 @@ export default function Plan() {
               <div className="text-2xl font-bold">
                 {stats.usage.knowledgeEntries} / {formatLimit(stats.limits.maxKnowledgeEntries)}
               </div>
-              <Progress 
-                value={getUsagePercent(stats.usage.knowledgeEntries, stats.limits.maxKnowledgeEntries)} 
+              <Progress
+                value={getUsagePercent(stats.usage.knowledgeEntries, stats.limits.maxKnowledgeEntries)}
                 className="mt-2 h-2"
               />
             </CardContent>
@@ -238,8 +205,8 @@ export default function Plan() {
               <div className="text-2xl font-bold">
                 {stats.usage.fileUploads} / {formatLimit(stats.limits.maxFileUploads)}
               </div>
-              <Progress 
-                value={getUsagePercent(stats.usage.fileUploads, stats.limits.maxFileUploads)} 
+              <Progress
+                value={getUsagePercent(stats.usage.fileUploads, stats.limits.maxFileUploads)}
                 className="mt-2 h-2"
               />
             </CardContent>
@@ -343,9 +310,6 @@ export default function Plan() {
         </Card>
       </div>
 
-      {/* Rate Limits */}
-      <RateLimitCard />
-
       {/* Upgrade Dialog */}
       <Dialog open={showUpgradeDialog} onOpenChange={setShowUpgradeDialog}>
         <DialogContent className="bg-gray-900 border-gray-700">
@@ -417,51 +381,162 @@ export default function Plan() {
 }
 
 function RateLimitCard() {
-  const { data } = trpc.plan.getRateLimits.useQuery(undefined, { staleTime: 60_000 });
+  const { data, isLoading } = trpc.plan.getRateLimits.useQuery(undefined, { staleTime: 60_000 });
+
+  if (isLoading) {
+    return (
+      <Card className="bg-gray-900/50 border-gray-700">
+        <CardContent className="py-8 flex items-center justify-center">
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-cyan-400" />
+        </CardContent>
+      </Card>
+    );
+  }
   if (!data) return null;
+
   const fmt = (v: number) => (v === -1 ? "無制限" : v.toLocaleString());
-  const pct = (cur: number, max: number) => (max === -1 ? 0 : Math.min((cur / max) * 100, 100));
-  const barColor = (cur: number, max: number) => {
-    if (max === -1) return "";
+  const pct = (cur: number, max: number) =>
+    max === -1 ? 0 : Math.min((cur / max) * 100, 100);
+
+  const statusOf = (cur: number, max: number) => {
+    if (max === -1) return "ok" as const;
     const p = (cur / max) * 100;
-    if (p >= 100) return "[&>div]:bg-red-500";
-    if (p >= 80) return "[&>div]:bg-yellow-500";
+    if (p >= 100) return "over" as const;
+    if (p >= 80) return "warn" as const;
+    return "ok" as const;
+  };
+
+  const barColor = (s: "ok" | "warn" | "over") => {
+    if (s === "over") return "[&>div]:bg-red-500";
+    if (s === "warn") return "[&>div]:bg-yellow-500";
     return "";
   };
 
   const items = [
-    { icon: Users, label: "友達数", current: data.usage.friends, max: data.limits.maxFriends },
-    { icon: MessageSquare, label: "チャット（今日）", current: data.usage.chatMessagesToday, max: data.limits.chatMessagesPerDay },
-    { icon: Zap, label: "マッチング（今月）", current: data.usage.matchingsThisMonth, max: data.limits.matchingsPerMonth },
+    {
+      icon: Users,
+      label: "友達数",
+      sub: "上限",
+      current: data.usage.friends,
+      max: data.limits.maxFriends,
+    },
+    {
+      icon: MessageSquare,
+      label: "チャット回数",
+      sub: "今日 / 1日あたり上限",
+      current: data.usage.chatMessagesToday,
+      max: data.limits.chatMessagesPerDay,
+    },
+    {
+      icon: Zap,
+      label: "マッチング回数",
+      sub: "今月 / 月間上限",
+      current: data.usage.matchingsThisMonth,
+      max: data.limits.matchingsPerMonth,
+    },
   ];
 
+  const hasWarning = items.some(
+    (i) => statusOf(i.current, i.max) !== "ok"
+  );
+
   return (
-    <Card className="mt-6 bg-gray-900/50 border-gray-700">
-      <CardHeader>
-        <CardTitle className="text-base flex items-center gap-2">
-          <Settings className="h-4 w-4 text-cyan-400" />
-          利用制限と使用状況
-        </CardTitle>
-        <CardDescription>プラン: {data.plan} ・ APIリクエスト上限: {fmt(data.limits.requestsPerMin)}/分</CardDescription>
+    <Card
+      className={`bg-gray-900/50 ${
+        hasWarning ? "border-yellow-500/50" : "border-gray-700"
+      }`}
+      role="region"
+      aria-label="API利用制限"
+    >
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Shield className="h-4 w-4 text-cyan-400" />
+            API利用制限
+          </CardTitle>
+          <Badge
+            variant="outline"
+            className="text-xs border-cyan-500/50 text-cyan-400"
+          >
+            {fmt(data.limits.requestsPerMin)} リクエスト/分
+          </Badge>
+        </div>
       </CardHeader>
-      <CardContent className="space-y-4">
-        {items.map((item) => (
-          <div key={item.label}>
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-sm flex items-center gap-2">
-                <item.icon className="h-4 w-4 text-cyan-400" />
-                {item.label}
-              </span>
-              <span className="text-sm text-muted-foreground">
-                {item.current} / {fmt(item.max)}
-              </span>
+      <CardContent className="space-y-5">
+        {items.map((item) => {
+          const status = statusOf(item.current, item.max);
+          const percent = pct(item.current, item.max);
+          const isUnlimited = item.max === -1;
+          return (
+            <div key={item.label}>
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-2">
+                  <item.icon
+                    className={`h-4 w-4 ${
+                      status === "over"
+                        ? "text-red-400"
+                        : status === "warn"
+                        ? "text-yellow-400"
+                        : "text-cyan-400"
+                    }`}
+                    aria-hidden="true"
+                  />
+                  <span className="text-sm font-medium">{item.label}</span>
+                  {status === "over" && (
+                    <Badge
+                      variant="destructive"
+                      className="text-[10px] px-1.5 py-0 h-4"
+                    >
+                      上限
+                    </Badge>
+                  )}
+                  {status === "warn" && (
+                    <Badge className="bg-yellow-600 text-[10px] px-1.5 py-0 h-4">
+                      <AlertTriangle className="h-2.5 w-2.5 mr-0.5" />
+                      残りわずか
+                    </Badge>
+                  )}
+                </div>
+                <span
+                  className={`text-sm tabular-nums ${
+                    status === "over"
+                      ? "text-red-400 font-semibold"
+                      : status === "warn"
+                      ? "text-yellow-400"
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  {item.current.toLocaleString()}
+                  <span className="text-muted-foreground">
+                    {" "}
+                    / {fmt(item.max)}
+                  </span>
+                </span>
+              </div>
+              {!isUnlimited ? (
+                <div className="relative">
+                  <Progress
+                    value={percent}
+                    className={`h-2.5 ${barColor(status)}`}
+                    aria-label={`${item.label}: ${Math.round(percent)}%使用`}
+                  />
+                  <span className="absolute right-0 -top-5 text-[10px] text-muted-foreground">
+                    {Math.round(percent)}%
+                  </span>
+                </div>
+              ) : (
+                <div className="h-2.5 rounded-full bg-muted/30 flex items-center justify-center">
+                  <span className="text-[10px] text-muted-foreground">
+                    無制限
+                  </span>
+                </div>
+              )}
+              <p className="text-[11px] text-muted-foreground mt-1">
+                {item.sub}
+              </p>
             </div>
-            <Progress
-              value={pct(item.current, item.max)}
-              className={`h-2 ${barColor(item.current, item.max)}`}
-            />
-          </div>
-        ))}
+          );
+        })}
       </CardContent>
     </Card>
   );
