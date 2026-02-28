@@ -663,6 +663,17 @@ CREATE TABLE IF NOT EXISTS email_verification_tokens (
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_email_verification_token ON email_verification_tokens(token);
+
+CREATE TABLE IF NOT EXISTS user_blocks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  blockedUserId INTEGER NOT NULL,
+  reason TEXT,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(userId, blockedUserId)
+);
+CREATE INDEX IF NOT EXISTS idx_user_blocks_userId ON user_blocks(userId);
+CREATE INDEX IF NOT EXISTS idx_user_blocks_blockedUserId ON user_blocks(blockedUserId);
 `;
 
 // Migrations to run after schema creation (ALTER TABLE etc.)

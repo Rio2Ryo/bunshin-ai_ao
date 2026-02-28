@@ -418,19 +418,51 @@ export const notificationRouter = router({
       }),
     // --- Notification inbox ---
     list: protectedProcedure
-      .input(z.object({ limit: z.number().optional(), unreadOnly: z.boolean().optional() }).optional())
+      .input(z.object({
+        limit: z.number().min(1).max(100).optional(),
+        cursor: z.number().optional(),
+        unreadOnly: z.boolean().optional(),
+      }).optional())
       .query(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
-        const limit = input?.limit ?? 50;
-        const where = input?.unreadOnly ? `AND isRead=0` : '';
-        const rows = await ctx.env.DB.prepare(
-          `SELECT * FROM notifications WHERE userId=? ${where} ORDER BY createdAt DESC LIMIT ?`
-        ).bind(ctx.userId, limit).all<any>();
+        const limit = input?.limit ?? 20;
+        const cursor = input?.cursor;
+        const unreadFilter = input?.unreadOnly ? `AND isRead=0` : '';
+        const cursorFilter = cursor ? `AND id < ?` : '';
+
+        const sql = `SELECT * FROM notifications WHERE userId=? ${unreadFilter} ${cursorFilter} ORDER BY id DESC LIMIT ?`;
+        const binds: any[] = [ctx.userId];
+        if (cursor) binds.push(cursor);
+        binds.push(limit + 1);
+
+        const rows = await ctx.env.DB.prepare(sql).bind(...binds).all<any>();
+        const results = rows.results ?? [];
+        const hasMore = results.length > limit;
+        const items = hasMore ? results.slice(0, limit) : results;
+        const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].id : undefined;
+
         const unreadCount = (await ctx.env.DB.prepare(
           `SELECT COUNT(*) as c FROM notifications WHERE userId=? AND isRead=0`
         ).bind(ctx.userId).first<any>())?.c ?? 0;
-        return { notifications: rows.results ?? [], unreadCount };
+
+        return { notifications: items, unreadCount, nextCursor, hasMore };
       }),
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        await ctx.env.DB.prepare(
+          `DELETE FROM notifications WHERE id=? AND userId=?`
+        ).bind(input.id, ctx.userId).run();
+        return { success: true };
+      }),
+    deleteAll: protectedProcedure.mutation(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(
+        `DELETE FROM notifications WHERE userId=? AND isRead=1`
+      ).bind(ctx.userId).run();
+      return { success: true };
+    }),
     markRead: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ ctx, input }) => {

@@ -20,7 +20,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, Activity } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, Activity, X } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -161,6 +161,8 @@ function DashboardLayoutContent({
   const utils = trpc.useUtils();
   const { data: notifData } = trpc.notification.list.useQuery({ unreadOnly: true, limit: 10 }, { refetchInterval: 30_000, staleTime: 10_000 });
   const markAllReadMut = trpc.notification.markAllRead.useMutation({ onSuccess: () => utils.notification.list.invalidate() });
+  const markReadMut = trpc.notification.markRead.useMutation({ onSuccess: () => utils.notification.list.invalidate() });
+  const deleteNotifMut = trpc.notification.delete.useMutation({ onSuccess: () => utils.notification.list.invalidate() });
   const unreadCount = notifData?.unreadCount ?? 0;
 
   useEffect(() => {
@@ -388,16 +390,40 @@ function DashboardLayoutContent({
                       <div className="px-3 py-4 text-center text-xs text-muted-foreground">通知はありません</div>
                     ) : (
                       (notifData?.notifications ?? []).map((n: any) => (
-                        <DropdownMenuItem key={n.id} className="flex flex-col items-start gap-0.5 py-2 cursor-pointer" onClick={() => {
+                        <DropdownMenuItem key={n.id} className="group relative py-2 cursor-pointer" onClick={() => {
+                          if (!n.isRead) markReadMut.mutate({ id: n.id });
                           if (n.data) { try { const d = JSON.parse(n.data); if (d.link) setLocation(d.link); } catch {} }
                         }}>
-                          <span className="text-xs font-medium">{n.title}</span>
-                          {n.message && <span className="text-[11px] text-muted-foreground line-clamp-2">{n.message}</span>}
-                          <span className="text-[10px] text-muted-foreground">{new Date(n.createdAt).toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                          <div className="flex items-start gap-2 w-full">
+                            {!n.isRead && <span className="h-2 w-2 rounded-full bg-primary mt-1.5 shrink-0" />}
+                            <div className="flex-1 min-w-0">
+                              <span className="text-xs font-medium">{n.title}</span>
+                              {n.message && <span className="text-[11px] text-muted-foreground line-clamp-2 block">{n.message}</span>}
+                              <span className="text-[10px] text-muted-foreground block">{new Date(n.createdAt).toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); deleteNotifMut.mutate({ id: n.id }); }}
+                            className="absolute top-1 right-1 h-4 w-4 flex items-center justify-center rounded-full hover:bg-destructive/10 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                            aria-label="通知を削除"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
                         </DropdownMenuItem>
                       ))
                     )}
                   </div>
+                  {(notifData?.notifications ?? []).length > 0 && (
+                    <div className="px-3 py-2 border-t">
+                      <button
+                        onClick={() => markAllReadMut.mutate()}
+                        className="text-xs text-muted-foreground hover:text-foreground w-full text-center"
+                        disabled={unreadCount === 0}
+                      >
+                        {markAllReadMut.isPending ? "処理中..." : `すべて既読にする (${unreadCount}件)`}
+                      </button>
+                    </div>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

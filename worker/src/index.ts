@@ -38,6 +38,7 @@ import { aiProviderRouter, adminAiProviderRouter } from "./routers/ai-provider";
 import { analyticsRouter, trustRouter, onboardingRouter } from "./routers/analytics";
 import { schedulerRouter } from "./routers/scheduler";
 import { adminRouter, reportRouter, marketplaceRouter, notificationRouter } from "./routers/admin";
+import { blocksRouter } from "./routers/blocks";
 
 // ============ Composed tRPC Router ============
 
@@ -75,6 +76,7 @@ const appRouter = router({
   report: reportRouter,
   marketplace: marketplaceRouter,
   notification: notificationRouter,
+  blocks: blocksRouter,
 });
 
 export type AppRouter = typeof appRouter;

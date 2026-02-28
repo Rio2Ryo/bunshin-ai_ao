@@ -47,6 +47,10 @@ export function usePageMeta({ title, description, ogImage, path }: PageMeta) {
     setMetaTag("og:image", image);
     setMetaTag("twitter:image", image);
 
+    setMetaTag("twitter:card", ogImage ? "summary_large_image" : "summary");
+    setMetaTag("og:type", "profile");
+    setMetaTag("og:site_name", SITE_NAME);
+
     if (path) {
       setMetaTag("og:url", `${BASE_URL}${path}`);
       const canonical = document.querySelector("link[rel='canonical']");

@@ -12,7 +12,7 @@ import { trpc } from "@/lib/trpc";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { useState } from "react";
 import { toast } from "sonner";
-import { UserPlus, Users, Loader2, Check, X, Bot, Copy, Share2, QrCode, Link as LinkIcon, Heart, Sparkles, TrendingUp, ExternalLink } from "lucide-react";
+import { UserPlus, Users, Loader2, Check, X, Bot, Copy, Share2, QrCode, Link as LinkIcon, Heart, Sparkles, TrendingUp, ExternalLink, Ban, ShieldOff } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Link } from "wouter";
 import { QRCodeSVG } from "qrcode.react";
@@ -44,6 +44,21 @@ export default function Friends() {
   const sendRequest = trpc.friends.sendRequest.useMutation();
   const acceptRequest = trpc.friends.acceptRequest.useMutation();
   const rejectRequest = trpc.friends.rejectRequest.useMutation();
+
+  const { data: blockedUsers, refetch: refetchBlocked } = trpc.blocks.list.useQuery();
+  const blockMut = trpc.blocks.block.useMutation({
+    onSuccess: () => {
+      refetch();
+      refetchBlocked();
+      toast.success("ブロックしました");
+    },
+  });
+  const unblockMut = trpc.blocks.unblock.useMutation({
+    onSuccess: () => {
+      refetchBlocked();
+      toast.success("ブロックを解除しました");
+    },
+  });
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
@@ -280,6 +295,7 @@ export default function Friends() {
             <TabsTrigger value="requests">
               リクエスト {pendingCount > 0 && `(${pendingCount})`}
             </TabsTrigger>
+            <TabsTrigger value="blocked">ブロック ({blockedUsers?.length || 0})</TabsTrigger>
           </TabsList>
 
           <TabsContent value="friends" className="mt-4">
@@ -395,6 +411,26 @@ export default function Friends() {
                             )}
                           </div>
                         )}
+
+                        {/* ブロックボタン */}
+                        {!friend.friend.isNpc && (
+                          <div className="mt-3 pt-3 border-t">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => {
+                                if (confirm(`${friend.friend.name}さんをブロックしますか？友達関係も解除されます。`)) {
+                                  blockMut.mutate({ userId: friend.friend.id });
+                                }
+                              }}
+                              disabled={blockMut.isPending}
+                            >
+                              <Ban className="h-3.5 w-3.5 mr-1" />
+                              ブロック
+                            </Button>
+                          </div>
+                        )}
                       </CardContent>
                     </Card>
                   );
@@ -466,6 +502,40 @@ export default function Friends() {
                   <p className="text-muted-foreground">
                     友達コードを共有すると、リクエストが届きます
                   </p>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+
+          <TabsContent value="blocked" className="mt-4">
+            {blockedUsers && blockedUsers.length > 0 ? (
+              <div className="space-y-3">
+                {blockedUsers.map((b: any) => (
+                  <Card key={b.blockedUserId}>
+                    <CardContent className="py-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-medium">{b.name || "名前未設定"}</p>
+                          <p className="text-xs text-muted-foreground">{new Date(b.createdAt).toLocaleDateString('ja-JP')}</p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => unblockMut.mutate({ userId: b.blockedUserId })}
+                          disabled={unblockMut.isPending}
+                        >
+                          <ShieldOff className="h-3.5 w-3.5 mr-1" />
+                          解除
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <Card>
+                <CardContent className="py-12 text-center">
+                  <p className="text-muted-foreground">ブロックしているユーザーはいません</p>
                 </CardContent>
               </Card>
             )}

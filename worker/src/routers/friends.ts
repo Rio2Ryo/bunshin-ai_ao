@@ -55,8 +55,8 @@ export const friendsRouter = router({
     .query(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB
-        .prepare(`SELECT id, name, email, friendCode FROM users WHERE id!=? AND (name LIKE ? OR friendCode=?) LIMIT 20`)
-        .bind(ctx.userId, `%${input.query}%`, input.query.toUpperCase())
+        .prepare(`SELECT id, name, email, friendCode FROM users WHERE id!=? AND (name LIKE ? OR friendCode=?) AND id NOT IN (SELECT blockedUserId FROM user_blocks WHERE userId=?) AND id NOT IN (SELECT userId FROM user_blocks WHERE blockedUserId=?) LIMIT 20`)
+        .bind(ctx.userId, `%${input.query}%`, input.query.toUpperCase(), ctx.userId, ctx.userId)
         .all<any>();
       return rows.results ?? [];
     }),
@@ -82,6 +82,11 @@ export const friendsRouter = router({
       const friend = await ctx.env.DB.prepare(`SELECT * FROM users WHERE friendCode=?`).bind(input.friendCode.toUpperCase()).first<any>();
       if (!friend) throw new TRPCError({ code: "NOT_FOUND", message: "ユーザーが見つかりません" });
       if (friend.id === ctx.userId) throw new TRPCError({ code: "BAD_REQUEST", message: "自分にはリクエストを送れません" });
+      // ブロックチェック
+      const blocked = await ctx.env.DB.prepare(
+        `SELECT id FROM user_blocks WHERE (userId=? AND blockedUserId=?) OR (userId=? AND blockedUserId=?)`
+      ).bind(ctx.userId, friend.id, friend.id, ctx.userId).first<any>();
+      if (blocked) throw new TRPCError({ code: "FORBIDDEN", message: "このユーザーとの交流はブロックされています" });
       const res = await ctx.env.DB.prepare(`INSERT INTO friendships (userId, friendId, status) VALUES (?,?,'pending')`).bind(ctx.userId, friend.id).run();
       // Notify receiver
       const senderName = ctx.user?.name || "ユーザー";

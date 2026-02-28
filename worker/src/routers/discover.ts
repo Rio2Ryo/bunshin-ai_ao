@@ -23,8 +23,10 @@ export const discoverRouter = router({
              ))
              OR (dt.isPublic=1 AND (dt.visibility IS NULL OR dt.visibility = ''))
            )
+           AND dt.userId NOT IN (SELECT blockedUserId FROM user_blocks WHERE userId=?)
+           AND dt.userId NOT IN (SELECT userId FROM user_blocks WHERE blockedUserId=?)
            LIMIT 20`
-        ).bind(ctx.userId, ctx.userId, ctx.userId, ctx.userId).all<any>();
+        ).bind(ctx.userId, ctx.userId, ctx.userId, ctx.userId, ctx.userId, ctx.userId).all<any>();
         return (rows.results ?? []).map((r: any) => ({
           ...normalizeTwin(r),
           ownerId: r.ownerId,

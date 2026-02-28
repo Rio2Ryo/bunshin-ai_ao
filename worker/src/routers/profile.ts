@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure } from "../trpc";
+import { router, protectedProcedure, publicProcedure } from "../trpc";
 import { ensureSchema, parseJson, toJson, addTrustAction } from "../db-helpers";
 
 export const profileRouter = router({
@@ -145,6 +145,42 @@ export const profileRouter = router({
         trustScore: trust?.score ?? 0,
         trustRank: trust?.rank ?? "beginner",
         twin: twin ? { name: twin.name, description: twin.description, tags: parseJson<string[]>(twin.tags) ?? [] } : null,
+      };
+    }),
+  getPublicOgp: publicProcedure
+    .input(z.object({ userId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const user = await ctx.env.DB.prepare(
+        `SELECT name FROM users WHERE id=?`
+      ).bind(input.userId).first<any>();
+      if (!user) return null;
+      const profile = await ctx.env.DB.prepare(
+        `SELECT displayName, bio, company, position, avatarUrl FROM user_profiles WHERE userId=?`
+      ).bind(input.userId).first<any>();
+      const twin = await ctx.env.DB.prepare(
+        `SELECT name, description, tags FROM digital_twins WHERE userId=? AND isPublic=1 LIMIT 1`
+      ).bind(input.userId).first<any>();
+      const trust = await ctx.env.DB.prepare(
+        `SELECT score, rank FROM trust_scores WHERE userId=?`
+      ).bind(input.userId).first<any>();
+
+      const displayName = profile?.displayName || user.name || "ユーザー";
+      const description = profile?.bio
+        || (twin ? `${twin.name} - ${twin.description || ""}`.slice(0, 150) : "")
+        || `${displayName}のプロフィール`;
+
+      return {
+        displayName,
+        description: description.slice(0, 200),
+        company: profile?.company ?? null,
+        position: profile?.position ?? null,
+        avatarUrl: profile?.avatarUrl ?? null,
+        twinName: twin?.name ?? null,
+        twinDescription: twin?.description ?? null,
+        twinTags: twin?.tags ? (JSON.parse(twin.tags) as string[]) : [],
+        trustScore: trust?.score ?? 0,
+        trustRank: trust?.rank ?? "beginner",
       };
     }),
 });
