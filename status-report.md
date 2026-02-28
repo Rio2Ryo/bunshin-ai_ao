@@ -122,3 +122,80 @@ echo "<resend-api-key>" | npx wrangler secret put RESEND_API_KEY --config wrangl
 # Tavily (Web検索)
 echo "<tavily-api-key>" | npx wrangler secret put TAVILY_API_KEY --config wrangler.toml
 ```
+
+## 5. 本番環境チェック (2026-02-28)
+
+### API ヘルスチェック: ✅ 正常
+- **Root** (`/`): 200 OK — `{"message":"Bunshin AI API v2. Use /api/* endpoints."}`
+- **Health** (`/api/health`): 200 OK — DB, R2, LLM 全て正常 (v2.3.0, DB latency 22ms)
+- **tRPC system.health**: 200 OK — `{"ok":true}`
+- **tRPC auth.me** (未ログイン): 200 OK — `null` (正常動作)
+- **tRPC plan.getSubscription** (未ログイン): 401 UNAUTHORIZED — `"ログインが必要です"` (正常動作)
+- **tRPC notification.list** (未ログイン): 401 UNAUTHORIZED — `"ログインが必要です"` (正常動作)
+
+### フロントエンドページ: ✅ 全ルート正常
+全13ルートがHTTP 200を返し、SPA (index.html) が正しく配信されている。
+| パス          | ステータス |
+|--------------|-----------|
+| /            | 200 ✅    |
+| /login       | 200 ✅    |
+| /register    | 200 ✅    |
+| /dashboard   | 200 ✅    |
+| /profile     | 200 ✅    |
+| /twins       | 200 ✅    |
+| /chat        | 200 ✅    |
+| /matching    | 200 ✅    |
+| /friends     | 200 ✅    |
+| /plan        | 200 ✅    |
+| /discover    | 200 ✅    |
+| /terms       | 200 ✅    |
+| /privacy     | 200 ✅    |
+
+追加ルートも全て正常:
+- /verify-email => 200 ✅
+- /forgot-password => 200 ✅
+- /reset-password => 200 ✅
+- /onboarding => 200 ✅
+- /users/100 => 200 ✅
+
+### 静的アセット: ✅ 全て正常
+| アセット                      | ステータス |
+|------------------------------|-----------|
+| /manifest.json               | 200 ✅    |
+| /sw.js                       | 200 ✅    |
+| /icons/icon-192x192.png      | 200 ✅    |
+| /icons/icon-512x512.png      | 200 ✅    |
+| /icons/apple-touch-icon.png  | 200 ✅    |
+| /icons/icon-96x96.png        | 200 ✅    |
+| /icons/icon-72x72.png        | 200 ✅    |
+
+### CORSヘッダー: ✅ 正常
+- `access-control-allow-origin: https://bunshin-ai.pages.dev` ✅
+- `access-control-allow-credentials: true` ✅
+- `strict-transport-security: max-age=31536000; includeSubDomains` ✅
+- `content-security-policy`: 適切に設定済み ✅
+- `x-frame-options: DENY` ✅
+- `x-content-type-options: nosniff` ✅
+- `referrer-policy: strict-origin-when-cross-origin` ✅
+- `permissions-policy: camera=(), microphone=(), geolocation=()` ✅
+
+### レートリミット: ✅ 正常
+- `x-ratelimit-limit: 10`
+- `x-ratelimit-remaining: 9`
+- `x-ratelimit-reset`: タイムスタンプ付き
+
+### 404エラー: なし
+テストした全てのURL (API + フロントエンド + 静的アセット) で404は検出されなかった。
+
+### APIエラー: なし
+認証が必要なエンドポイントは正しく401を返し、公開エンドポイントは正しくデータを返している。
+スタックトレースが401レスポンスに含まれている点は本番環境では情報漏洩リスクがある（低優先度の改善候補）。
+
+### 既知の問題 (修正中)
+- **メール認証バグ**: 発見済み、修正作業中
+- **レートリミットの問題**: 発見済み、修正作業中
+
+### LINE Webhook状態
+LINE_CHANNEL_SECRET および LINE_CHANNEL_ACCESS_TOKEN は Cloudflare Worker に**未設定**。
+現在設定済みのシークレットは3つのみ: AZURE_FOUNDRY_API_KEY, AZURE_FOUNDRY_RESOURCE, JWT_SECRET。
+設定手順はセクション4に記載済み。

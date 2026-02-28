@@ -253,8 +253,8 @@ export const pointsRouter = router({
     for (const def of milestoneDefinitions) {
       if (def.condition && !existingIds.has(def.id)) {
         await ctx.env.DB.prepare(
-          `INSERT INTO twin_milestones (userId, milestoneId, name, description, achievedAt) VALUES (?,?,?,?,datetime('now'))`
-        ).bind(ctx.userId, def.id, def.name, def.description).run();
+          `INSERT INTO twin_milestones (twinId, userId, milestoneId, name, description, achievedAt) VALUES (?,?,?,?,?,datetime('now'))`
+        ).bind(twin?.id ?? 0, ctx.userId, def.id, def.name, def.description).run();
         newMilestones.push({ milestoneId: def.id, name: def.name, description: def.description, points: def.points });
         awarded.push({ name: def.name, points: def.points });
 

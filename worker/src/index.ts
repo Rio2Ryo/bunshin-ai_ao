@@ -156,8 +156,8 @@ api.use("/api/*", async (c, next) => {
 // Plan-aware rate limiter (user-specific with plan tiers)
 const rateLimitMap = new Map<string, { count: number; resetAt: number; limit: number }>();
 const RATE_LIMIT_WINDOW = 60_000;
-const PLAN_RATE_LIMITS: Record<string, number> = { free: 30, premium: 120, enterprise: 600 };
-const DEFAULT_RATE_LIMIT = 10;
+const PLAN_RATE_LIMITS: Record<string, number> = { free: 60, premium: 120, enterprise: 600 };
+const DEFAULT_RATE_LIMIT = 30;
 let lastCleanup = Date.now();
 
 // Paths excluded from rate limiting (server-to-server webhooks with their own signature verification)
@@ -237,8 +237,8 @@ function perEndpointRateLimit(prefix: string, maxPerMin: number) {
   };
 }
 
-// Stricter rate limit for auth endpoints (10 per minute per IP)
-api.use("/api/trpc/auth.*", perEndpointRateLimit("auth", 10));
+// Stricter rate limit for auth endpoints (20 per minute per IP)
+api.use("/api/trpc/auth.*", perEndpointRateLimit("auth", 20));
 // Extra-strict rate limit for brute-force-sensitive auth endpoints (5 per minute per IP)
 api.use("/api/trpc/auth.register*", perEndpointRateLimit("auth_register", 5));
 api.use("/api/trpc/auth.login*", perEndpointRateLimit("auth_login", 5));

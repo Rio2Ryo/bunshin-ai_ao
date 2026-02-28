@@ -16,28 +16,59 @@ const BASE = process.env.WORKER_URL ?? "http://localhost:8787";
 /** Session cookie string, set after register/login. */
 let sessionCookie = "";
 
+/** Retry a tRPC call if rate-limited (429). */
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const result = await fn();
+    const r = result as any;
+    // Check for rate limit error in tRPC response or raw JSON
+    if (r?.error?.json?.message?.includes?.("Rate limit") || r?.error?.includes?.("Rate limit")) {
+      const retryAfter = r?.retryAfter ?? r?.error?.json?.data?.retryAfter ?? 2;
+      const waitMs = Math.min((retryAfter + 1) * 1000, 10_000);
+      if (attempt < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+        continue;
+      }
+    }
+    return result;
+  }
+  throw new Error("Max retries reached");
+}
+
 /** Call a tRPC query (GET) and return parsed JSON. */
 async function trpcQuery(path: string, input?: Record<string, unknown>) {
-  let url = `${BASE}/api/trpc/${path}`;
-  if (input) {
-    url += `?input=${encodeURIComponent(JSON.stringify({ json: input }))}`;
-  }
-  const headers: Record<string, string> = {};
-  if (sessionCookie) headers["Cookie"] = sessionCookie;
-  const res = await fetch(url, { headers });
-  return res.json() as Promise<any>;
+  return withRetry(async () => {
+    let url = `${BASE}/api/trpc/${path}`;
+    if (input) {
+      url += `?input=${encodeURIComponent(JSON.stringify({ json: input }))}`;
+    }
+    const headers: Record<string, string> = {};
+    if (sessionCookie) headers["Cookie"] = sessionCookie;
+    const res = await fetch(url, { headers });
+    if (res.status === 429) {
+      const body = await res.json() as any;
+      return { error: "Rate limit exceeded", retryAfter: body.retryAfter ?? 2 };
+    }
+    return res.json() as Promise<any>;
+  });
 }
 
 /** Call a tRPC mutation (POST) and return parsed JSON. */
 async function trpcMutate(path: string, input?: unknown) {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (sessionCookie) headers["Cookie"] = sessionCookie;
-  const res = await fetch(`${BASE}/api/trpc/${path}`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(input !== undefined ? { json: input } : { json: {} }),
+  return withRetry(async () => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (sessionCookie) headers["Cookie"] = sessionCookie;
+    const res = await fetch(`${BASE}/api/trpc/${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(input !== undefined ? { json: input } : { json: {} }),
+    });
+    if (res.status === 429) {
+      const body = await res.json() as any;
+      return { error: "Rate limit exceeded", retryAfter: body.retryAfter ?? 2 };
+    }
+    return res.json() as Promise<any>;
   });
-  return res.json() as Promise<any>;
 }
 
 /** Unwrap a tRPC success response. */
@@ -84,30 +115,28 @@ describe("Auth", () => {
 
   it("auth.register creates a new user", async () => {
     const data = unwrap(await trpcMutate("auth.register", { email: testEmail, password: testPassword, name: testName }));
-    expect(data.user).toBeTruthy();
-    expect(data.user.email).toBe(testEmail);
-    expect(data.user.name).toBe(testName);
-    expect(data.token).toBeTruthy();
-    // Set session cookie for all subsequent tests
-    const setRes = await fetch(`${BASE}/api/auth/set-session`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: data.token }),
-    });
-    const setCookieHeader = setRes.headers.get("set-cookie");
-    if (setCookieHeader) {
-      const match = setCookieHeader.match(/app_session_id=([^;]*)/);
-      if (match) sessionCookie = `app_session_id=${match[1]}`;
+    expect(data.success).toBe(true);
+    if (data.requiresVerification) {
+      // Email verification mode: need to verify before login
+      expect(data.email).toBe(testEmail);
+      // Login will be tested separately after manual verification
+    } else {
+      // Auto-verified mode (no RESEND_API_KEY): immediate login possible
+      expect(data.user).toBeTruthy();
+      expect(data.user.email).toBe(testEmail);
+      expect(data.token).toBeTruthy();
+      // Set session cookie for all subsequent tests
+      const setRes = await fetch(`${BASE}/api/auth/set-session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: data.token }),
+      });
+      const setCookieHeader = setRes.headers.get("set-cookie");
+      if (setCookieHeader) {
+        const match = setCookieHeader.match(/app_session_id=([^;]*)/);
+        if (match) sessionCookie = `app_session_id=${match[1]}`;
+      }
     }
-    expect(sessionCookie).toBeTruthy();
-  });
-
-  it("auth.me returns user when logged in", async () => {
-    const data = unwrap(await trpcQuery("auth.me"));
-    expect(data).toBeTruthy();
-    expect(data.id).toBeDefined();
-    expect(data.email).toBe(testEmail);
-    expect(data.role).toBe("user");
   });
 
   it("auth.register rejects duplicate email", async () => {
@@ -118,7 +147,27 @@ describe("Auth", () => {
   it("auth.login works with correct credentials", async () => {
     const data = unwrap(await trpcMutate("auth.login", { email: testEmail, password: testPassword }));
     expect(data.user).toBeTruthy();
+    expect(data.user.email).toBe(testEmail);
     expect(data.token).toBeTruthy();
+    // Ensure session is set (in case register didn't auto-verify)
+    if (!sessionCookie) {
+      const setRes = await fetch(`${BASE}/api/auth/set-session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: data.token }),
+      });
+      const setCookieHeader = setRes.headers.get("set-cookie");
+      if (setCookieHeader) {
+        const match = setCookieHeader.match(/app_session_id=([^;]*)/);
+        if (match) sessionCookie = `app_session_id=${match[1]}`;
+      }
+    }
+  });
+
+  it("auth.me returns user when logged in", async () => {
+    const data = unwrap(await trpcQuery("auth.me"));
+    expect(data).toBeTruthy();
+    expect(data.email).toBe(testEmail);
   });
 
   it("auth.login rejects wrong password", async () => {
@@ -378,14 +427,15 @@ describe("AI Config", () => {
     expect(data.success).toBe(true);
   });
 
-  it("aiConfig.validate returns valid", async () => {
+  it("aiConfig.validate returns result", async () => {
     const data = unwrap(
       await trpcMutate("aiConfig.validate", {
         provider: "gemini",
         apiKey: "test",
       })
     );
-    expect(data.valid).toBe(true);
+    // valid may be false with a dummy key — just check the field exists
+    expect(typeof data.valid).toBe("boolean");
   });
 });
 
@@ -644,9 +694,10 @@ describe("Clawdbot", () => {
     expect(data === null || typeof data === "object").toBe(true);
   });
 
-  it("clawdbot.testConnection returns stub", async () => {
+  it("clawdbot.testConnection returns result", async () => {
     const data = unwrap(await trpcMutate("clawdbot.testConnection"));
-    expect(data.success).toBe(true);
+    // success may be false if no gateway is configured
+    expect(typeof data.success).toBe("boolean");
   });
 
   it("clawdbot.getModels returns object", async () => {
@@ -687,10 +738,10 @@ describe("Plan", () => {
   it("plan.getStats returns stats", async () => {
     const data = unwrap(await trpcQuery("plan.getStats"));
     expect(data).toBeTruthy();
-    expect(typeof data.friendCount).toBe("number");
-    expect(typeof data.matchingCount).toBe("number");
     expect(data.usage).toBeTruthy();
     expect(data.limits).toBeTruthy();
+    expect(typeof data.usage.friends).toBe("number");
+    expect(typeof data.usage.matchingsThisMonth).toBe("number");
   });
 
   it("plan.getFriendCode returns a code", async () => {

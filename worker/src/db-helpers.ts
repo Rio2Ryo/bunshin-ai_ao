@@ -434,6 +434,8 @@ CREATE TABLE IF NOT EXISTS twin_milestones (
   twinId INTEGER NOT NULL,
   userId INTEGER NOT NULL,
   milestoneId TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
   achievedAt TEXT NOT NULL DEFAULT (datetime('now')),
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -703,6 +705,8 @@ ALTER TABLE digital_twins ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public';
 ALTER TABLE digital_twins ADD COLUMN allowedViewerIds TEXT;
 ALTER TABLE user_profiles ADD COLUMN avatarUrl TEXT;
 ALTER TABLE users ADD COLUMN emailVerified INTEGER;
+ALTER TABLE twin_milestones ADD COLUMN name TEXT NOT NULL DEFAULT '';
+ALTER TABLE twin_milestones ADD COLUMN description TEXT NOT NULL DEFAULT '';
 `;
 
 let schemaReady = false;

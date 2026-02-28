@@ -73,20 +73,21 @@ Step 5完了時に以下を出力:
           await ctx.env.DB.prepare(`UPDATE users SET tosAcceptedAt=datetime('now'), tosVersion='1.0' WHERE email=?`).bind(input.email).run();
         }
 
-        // Mark as unverified (emailVerified=0)
-        await ctx.env.DB.prepare(`UPDATE users SET emailVerified=0 WHERE id=?`).bind(user.id).run();
-
-        // Generate email verification token (24-hour expiry)
-        const verifyTokenBytes = crypto.getRandomValues(new Uint8Array(32));
-        const verifyToken = Array.from(verifyTokenBytes).map(b => b.toString(16).padStart(2, "0")).join("");
-        await ctx.env.DB.prepare(
-          `INSERT INTO email_verification_tokens (userId, token, expiresAt) VALUES (?, ?, datetime('now', '+24 hours'))`
-        ).bind(user.id, verifyToken).run();
-
-        // Send verification email via Resend API (if configured)
-        const frontendUrl = ctx.env.FRONTEND_URL || "https://bunshin-ai.pages.dev";
-        const verifyUrl = `${frontendUrl}/verify-email?token=${verifyToken}`;
+        // Email verification flow
         if (ctx.env.RESEND_API_KEY) {
+          // Email service configured: require verification
+          await ctx.env.DB.prepare(`UPDATE users SET emailVerified=0 WHERE id=?`).bind(user.id).run();
+
+          // Generate email verification token (24-hour expiry)
+          const verifyTokenBytes = crypto.getRandomValues(new Uint8Array(32));
+          const verifyToken = Array.from(verifyTokenBytes).map(b => b.toString(16).padStart(2, "0")).join("");
+          await ctx.env.DB.prepare(
+            `INSERT INTO email_verification_tokens (userId, token, expiresAt) VALUES (?, ?, datetime('now', '+24 hours'))`
+          ).bind(user.id, verifyToken).run();
+
+          // Send verification email via Resend API
+          const frontendUrl = ctx.env.FRONTEND_URL || "https://bunshin-ai.pages.dev";
+          const verifyUrl = `${frontendUrl}/verify-email?token=${verifyToken}`;
           try {
             await fetch("https://api.resend.com/emails", {
               method: "POST",
@@ -99,9 +100,19 @@ Step 5完了時に以下を出力:
               }),
             });
           } catch { /* email send failed, but token is still valid */ }
-        }
 
-        return { success: true, requiresVerification: true, email: input.email };
+          return { success: true, requiresVerification: true, email: input.email };
+        } else {
+          // No email service: auto-verify and allow immediate login
+          await ctx.env.DB.prepare(`UPDATE users SET emailVerified=1 WHERE id=?`).bind(user.id).run();
+          const token = await createSessionToken(user.id, ctx.env);
+          return {
+            user: { id: user.id, name: user.name, email: user.email, role: user.role, plan: user.plan, onboardingCompleted: user.onboardingCompleted ?? 0 },
+            token,
+            success: true,
+            requiresVerification: false,
+          };
+        }
       }),
     login: publicProcedure
       .input(z.object({ email: z.string().email(), password: z.string().min(1).max(100) }))
