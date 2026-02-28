@@ -127,7 +127,7 @@ Step 5完了時に以下を出力:
         // Get trust score
         const trustRow = await ctx.env.DB.prepare(`SELECT score, rank FROM trust_scores WHERE userId=?`).bind(ctx.user.id).first<any>();
         const trustScore = trustRow?.score ?? 0;
-        const trustRank = trustRow?.rank ?? "bronze";
+        const trustRank = trustRow?.rank ?? "beginner";
 
         // Award daily login trust bonus (once per day)
         const today = new Date().toISOString().slice(0, 10);

@@ -1,10 +1,9 @@
 // Service Worker for 分身AI PWA
-const CACHE_NAME = 'bunshin-ai-v3';
+const CACHE_NAME = 'bunshin-ai-v4';
 const OFFLINE_URL = '/offline.html';
 
-// キャッシュするリソース
+// キャッシュする静的アセット
 const STATIC_ASSETS = [
-  '/',
   '/offline.html',
   '/manifest.json',
   '/icons/icon-192x192.png',
@@ -16,29 +15,30 @@ const STATIC_ASSETS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      console.log('[SW] Caching static assets');
-      return cache.addAll(STATIC_ASSETS);
+      return cache.addAll(STATIC_ASSETS).catch((err) => {
+        console.warn('[SW] Some static assets failed to cache:', err);
+      });
     })
   );
-  // 新しいService Workerをすぐにアクティブにする
   self.skipWaiting();
 });
 
-// アクティベート時に古いキャッシュを削除
+// アクティベート時に古いキャッシュを削除 + Navigation Preload有効化
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames
-          .filter((cacheName) => cacheName !== CACHE_NAME)
-          .map((cacheName) => {
-            console.log('[SW] Deleting old cache:', cacheName);
-            return caches.delete(cacheName);
-          })
-      );
-    })
+    Promise.all([
+      // 古いキャッシュ削除
+      caches.keys().then((cacheNames) =>
+        Promise.all(
+          cacheNames
+            .filter((name) => name !== CACHE_NAME)
+            .map((name) => caches.delete(name))
+        )
+      ),
+      // Navigation Preload 有効化（対応ブラウザのみ）
+      self.registration.navigationPreload?.enable().catch(() => {}),
+    ])
   );
-  // すべてのクライアントを制御下に置く
   self.clients.claim();
 });
 
@@ -47,70 +47,100 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // API呼び出しはネットワーク優先
+  // Chrome拡張等の非HTTP(S)リクエストは無視
+  if (!url.protocol.startsWith('http')) return;
+
+  // API呼び出し: ネットワーク優先（5秒タイムアウトでキャッシュフォールバック）
   if (url.pathname.startsWith('/api/')) {
-    event.respondWith(networkFirst(request));
+    event.respondWith(networkFirstWithTimeout(request, 5000));
     return;
   }
 
-  // 静的アセットはキャッシュ優先
-  if (request.destination === 'image' || 
-      request.destination === 'style' || 
+  // 静的アセット（JS/CSS/画像/フォント）: stale-while-revalidate
+  if (request.destination === 'image' ||
+      request.destination === 'style' ||
       request.destination === 'script' ||
       request.destination === 'font') {
-    event.respondWith(cacheFirst(request));
+    event.respondWith(staleWhileRevalidate(request));
     return;
   }
 
-  // ナビゲーションリクエストはネットワーク優先、オフライン時はオフラインページ
+  // ナビゲーション: ネットワーク優先、オフライン時はオフラインページ
   if (request.mode === 'navigate') {
-    event.respondWith(
-      networkFirst(request).catch(() => {
-        return caches.match(OFFLINE_URL);
-      })
-    );
+    event.respondWith(handleNavigate(event));
     return;
   }
 
-  // その他はネットワーク優先
+  // その他: ネットワーク優先
   event.respondWith(networkFirst(request));
 });
 
-// キャッシュ優先戦略
-async function cacheFirst(request) {
-  const cachedResponse = await caches.match(request);
-  if (cachedResponse) {
-    return cachedResponse;
-  }
-  
+// ナビゲーション処理（Navigation Preload対応）
+async function handleNavigate(event) {
   try {
-    const networkResponse = await fetch(request);
-    if (networkResponse.ok) {
-      const cache = await caches.open(CACHE_NAME);
-      cache.put(request, networkResponse.clone());
-    }
-    return networkResponse;
-  } catch (error) {
-    console.log('[SW] Network request failed:', error);
-    throw error;
+    // Navigation Preloadレスポンスがあればそれを使用
+    const preloadResponse = await event.preloadResponse;
+    if (preloadResponse) return preloadResponse;
+
+    return await fetch(event.request);
+  } catch {
+    // オフライン時: キャッシュ or オフラインページ
+    const cached = await caches.match(event.request);
+    if (cached) return cached;
+    const offlinePage = await caches.match(OFFLINE_URL);
+    return offlinePage || new Response('Offline', { status: 503 });
   }
 }
 
-// ネットワーク優先戦略
-async function networkFirst(request) {
-  try {
-    const networkResponse = await fetch(request);
+// Stale-while-revalidate: キャッシュから即返却＋バックグラウンドで更新
+async function staleWhileRevalidate(request) {
+  const cache = await caches.open(CACHE_NAME);
+  const cachedResponse = await cache.match(request);
+
+  const fetchPromise = fetch(request).then((networkResponse) => {
     if (networkResponse.ok) {
-      const cache = await caches.open(CACHE_NAME);
       cache.put(request, networkResponse.clone());
     }
     return networkResponse;
-  } catch (error) {
-    const cachedResponse = await caches.match(request);
-    if (cachedResponse) {
-      return cachedResponse;
+  }).catch(() => null);
+
+  return cachedResponse || await fetchPromise || new Response('', { status: 503 });
+}
+
+// ネットワーク優先（タイムアウト付き）
+async function networkFirstWithTimeout(request, timeoutMs) {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const response = await fetch(request, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(request, response.clone());
     }
-    throw error;
+    return response;
+  } catch {
+    const cached = await caches.match(request);
+    return cached || new Response(JSON.stringify({ error: 'Offline' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// ネットワーク優先
+async function networkFirst(request) {
+  try {
+    const response = await fetch(request);
+    if (response.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch {
+    const cached = await caches.match(request);
+    return cached || new Response('', { status: 503 });
   }
 }
 
@@ -118,42 +148,36 @@ async function networkFirst(request) {
 self.addEventListener('push', (event) => {
   if (!event.data) return;
 
-  const data = event.data.json();
-  const options = {
-    body: data.body || '新しい通知があります',
-    icon: '/icons/icon-192x192.png',
-    badge: '/icons/icon-72x72.png',
-    vibrate: [100, 50, 100],
-    data: {
-      url: data.url || '/'
-    },
-    actions: data.actions || []
-  };
+  try {
+    const data = event.data.json();
+    const options = {
+      body: data.body || '新しい通知があります',
+      icon: '/icons/icon-192x192.png',
+      badge: '/icons/icon-72x72.png',
+      vibrate: [100, 50, 100],
+      data: { url: data.url || '/' },
+      actions: data.actions || [],
+    };
 
-  event.waitUntil(
-    self.registration.showNotification(data.title || '分身AI', options)
-  );
+    event.waitUntil(
+      self.registration.showNotification(data.title || '分身AI', options)
+    );
+  } catch {
+    // malformed push data
+  }
 });
 
 // 通知クリック時の処理
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-
   const url = event.notification.data?.url || '/';
-  
+
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true })
-      .then((clientList) => {
-        // 既存のウィンドウがあればフォーカス
-        for (const client of clientList) {
-          if (client.url === url && 'focus' in client) {
-            return client.focus();
-          }
-        }
-        // なければ新しいウィンドウを開く
-        if (clients.openWindow) {
-          return clients.openWindow(url);
-        }
-      })
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url === url && 'focus' in client) return client.focus();
+      }
+      if (clients.openWindow) return clients.openWindow(url);
+    })
   );
 });

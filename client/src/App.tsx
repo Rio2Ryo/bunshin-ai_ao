@@ -5,6 +5,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { LanguageProvider } from "./contexts/LanguageContext";
 import { PWAInstallPrompt } from "./components/PWAInstallPrompt";
+import { OfflineIndicator } from "./components/OfflineIndicator";
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 
@@ -122,6 +123,7 @@ function Router() {
 function App() {
   return (
     <ErrorBoundary>
+      <OfflineIndicator />
       <ThemeProvider defaultTheme="dark">
         <LanguageProvider>
           <TooltipProvider>

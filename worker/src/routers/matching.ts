@@ -514,6 +514,23 @@ JSONのみ出力し、他の説明は不要です。`;
         } catch { analysis = null; }
 
         if (analysis) {
+          // Validate and fix score consistency: 5 sub-scores (0-20 each) must sum to compatibilityScore
+          if (analysis.scoreBreakdown) {
+            const dims = ["skillMatch", "valueAlignment", "communicationStyle", "businessGoalFit", "complementaryStrengths"];
+            let computedTotal = 0;
+            for (const dim of dims) {
+              const sub = analysis.scoreBreakdown[dim];
+              if (sub && typeof sub.score === "number") {
+                sub.score = Math.max(0, Math.min(20, Math.round(sub.score)));
+                computedTotal += sub.score;
+              }
+            }
+            // Use computed sum (more reliable than LLM self-reported total)
+            if (computedTotal > 0) {
+              analysis.compatibilityScore = computedTotal;
+            }
+          }
+
           await ctx.env.DB.prepare(
             `INSERT INTO matching_results (sessionId, compatibilityScore, scoreBreakdown, collaborationPotential, strengths, challenges, recommendations, summary, detailedAnalysis, roleDistribution, timeline, resources, kpis, nextSteps) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
           ).bind(
