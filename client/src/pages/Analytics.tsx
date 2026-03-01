@@ -3,15 +3,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
 import { BarChart3, MessageSquare, Users, TrendingUp, Target, UserPlus, Shield, Loader2 } from "lucide-react";
-
-function MiniBar({ value, max, color = "bg-primary" }: { value: number; max: number; color?: string }) {
-  const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
-  return (
-    <div className="h-full w-full flex items-end">
-      <div className={`w-full rounded-t ${color} transition-all`} style={{ height: `${Math.max(pct, 4)}%` }} />
-    </div>
-  );
-}
+import {
+  BarChart, Bar, LineChart, Line,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie,
+} from "recharts";
 
 export default function Analytics() {
   usePageMeta({ title: "分析ダッシュボード", description: "マッチング成功率やエンゲージメントの推移を確認", path: "/analytics" });
@@ -28,8 +23,13 @@ export default function Analytics() {
   }
 
   const { matching, scoreDist, monthlyTrend, engagement, weeklyMessages } = data;
-  const maxMonthly = Math.max(...monthlyTrend.map((m: any) => m.count), 1);
-  const maxWeekly = Math.max(...weeklyMessages.map((w: any) => w.count), 1);
+
+  const scoreDistData = [
+    { name: "80-100 (優秀)", value: scoreDist.excellent, fill: "#22c55e" },
+    { name: "60-79 (良好)", value: scoreDist.good, fill: "#3b82f6" },
+    { name: "40-59 (普通)", value: scoreDist.fair, fill: "#eab308" },
+    { name: "0-39 (低い)", value: scoreDist.low, fill: "#f87171" },
+  ].filter((d) => d.value > 0);
 
   return (
     <DashboardLayout>
@@ -60,17 +60,18 @@ export default function Analytics() {
             </CardHeader>
             <CardContent>
               {monthlyTrend.length > 0 ? (
-                <div className="flex items-end gap-2 h-40">
-                  {monthlyTrend.map((m: any) => (
-                    <div key={m.month} className="flex-1 flex flex-col items-center gap-1 h-full">
-                      <span className="text-[10px] text-muted-foreground font-medium">{m.count}</span>
-                      <div className="flex-1 w-full">
-                        <MiniBar value={m.count} max={maxMonthly} />
-                      </div>
-                      <span className="text-[10px] text-muted-foreground">{m.month.slice(5)}</span>
-                    </div>
-                  ))}
-                </div>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={monthlyTrend}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis dataKey="month" tick={{ fontSize: 11 }} tickFormatter={(v) => v.slice(5)} />
+                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                    <Tooltip
+                      labelFormatter={(v) => `${v}`}
+                      formatter={(v: number, name: string) => [v, name === "count" ? "マッチング数" : "平均スコア"]}
+                    />
+                    <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
               ) : (
                 <p className="text-sm text-muted-foreground text-center py-8">データなし</p>
               )}
@@ -87,12 +88,39 @@ export default function Analytics() {
               <CardDescription>相性スコアの分布</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
-                <DistBar label="80-100 (優秀)" value={scoreDist.excellent} total={matching.completed} color="bg-green-500" />
-                <DistBar label="60-79 (良好)" value={scoreDist.good} total={matching.completed} color="bg-blue-500" />
-                <DistBar label="40-59 (普通)" value={scoreDist.fair} total={matching.completed} color="bg-yellow-500" />
-                <DistBar label="0-39 (低い)" value={scoreDist.low} total={matching.completed} color="bg-red-400" />
-              </div>
+              {scoreDistData.length > 0 ? (
+                <div className="flex items-center gap-4">
+                  <ResponsiveContainer width="50%" height={200}>
+                    <PieChart>
+                      <Pie
+                        data={scoreDistData}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={80}
+                        innerRadius={40}
+                      >
+                        {scoreDistData.map((entry, i) => (
+                          <Cell key={i} fill={entry.fill} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(v: number, name: string) => [`${v}件`, name]} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="space-y-2 text-sm flex-1">
+                    {scoreDistData.map((d) => (
+                      <div key={d.name} className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: d.fill }} />
+                        <span className="text-muted-foreground">{d.name}</span>
+                        <span className="ml-auto font-medium">{d.value}件</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-8">データなし</p>
+              )}
             </CardContent>
           </Card>
 
@@ -107,17 +135,18 @@ export default function Analytics() {
             </CardHeader>
             <CardContent>
               {weeklyMessages.length > 0 ? (
-                <div className="flex items-end gap-2 h-40">
-                  {weeklyMessages.map((w: any) => (
-                    <div key={w.week} className="flex-1 flex flex-col items-center gap-1 h-full">
-                      <span className="text-[10px] text-muted-foreground font-medium">{w.count}</span>
-                      <div className="flex-1 w-full">
-                        <MiniBar value={w.count} max={maxWeekly} color="bg-indigo-500" />
-                      </div>
-                      <span className="text-[10px] text-muted-foreground">{w.week.slice(-3)}</span>
-                    </div>
-                  ))}
-                </div>
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart data={weeklyMessages}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis dataKey="week" tick={{ fontSize: 11 }} tickFormatter={(v) => v.replace(/^\d{4}-/, "")} />
+                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                    <Tooltip
+                      labelFormatter={(v) => `週: ${v}`}
+                      formatter={(v: number) => [`${v}件`, "メッセージ"]}
+                    />
+                    <Line type="monotone" dataKey="count" stroke="#6366f1" strokeWidth={2} dot={{ r: 3, fill: "#6366f1" }} />
+                  </LineChart>
+                </ResponsiveContainer>
               ) : (
                 <p className="text-sm text-muted-foreground text-center py-8">データなし</p>
               )}
@@ -175,20 +204,5 @@ function KPICard({ icon: Icon, label, value, sub }: { icon: React.ElementType; l
         <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>
       </CardContent>
     </Card>
-  );
-}
-
-function DistBar({ label, value, total, color }: { label: string; value: number; total: number; color: string }) {
-  const pct = total > 0 ? Math.round((value / total) * 100) : 0;
-  return (
-    <div>
-      <div className="flex justify-between text-sm mb-1">
-        <span>{label}</span>
-        <span className="text-muted-foreground">{value}件 ({pct}%)</span>
-      </div>
-      <div className="h-2 bg-muted rounded-full overflow-hidden">
-        <div className={`h-full ${color} rounded-full transition-all`} style={{ width: `${pct}%` }} />
-      </div>
-    </div>
   );
 }

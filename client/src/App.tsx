@@ -44,6 +44,7 @@ const ApiDocs = lazy(() => import("./pages/ApiDocs"));
 const Terms = lazy(() => import("./pages/Terms"));
 const Recommendations = lazy(() => import("./pages/Recommendations"));
 const AdminReview = lazy(() => import("./pages/AdminReview"));
+const AdminAnalytics = lazy(() => import("./pages/AdminAnalytics"));
 const Marketplace = lazy(() => import("./pages/Marketplace"));
 const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
 const Blog = lazy(() => import("./pages/Blog"));
@@ -101,6 +102,7 @@ function Router() {
         <Route path="/analytics" component={Analytics} />
         <Route path="/admin/ai-provider" component={AdminAIProvider} />
         <Route path="/admin/review" component={AdminReview} />
+        <Route path="/admin/analytics" component={AdminAnalytics} />
         <Route path="/api-docs" component={ApiDocs} />
         <Route path="/terms" component={Terms} />
         <Route path="/recommendations" component={Recommendations} />

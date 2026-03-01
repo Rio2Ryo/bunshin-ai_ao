@@ -45,6 +45,7 @@ type MenuGroup = { label: string; items: MenuItem[] };
 // 管理者専用メニュー (includes items hidden from regular users)
 const adminMenuItems: MenuItem[] = [
   { icon: ShieldAlert, label: "審査", path: "/admin/review" },
+  { icon: BarChart3, label: "分析", path: "/admin/analytics" },
   { icon: Activity, label: "ヘルスチェック", path: "/health-dashboard" },
   { icon: Cpu, label: "AIプロバイダー", path: "/admin/ai-provider" },
   { icon: Settings2, label: "AI API設定", path: "/ai-config" },

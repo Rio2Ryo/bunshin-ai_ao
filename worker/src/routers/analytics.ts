@@ -84,6 +84,102 @@ export const analyticsRouter = router({
       };
     });
   }),
+
+  /** Admin-only aggregate analytics: DAU/MAU, retention, matching success, signups */
+  adminDashboard: protectedProcedure.query(async ({ ctx }) => {
+    if (ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "管理者権限が必要です" });
+    await ensureSchema(ctx.env.DB);
+    const db = ctx.env.DB;
+
+    return cachedQuery("analytics:admin", 300, async () => {
+      // Total counts
+      const totalUsers = (await db.prepare(`SELECT COUNT(*) as c FROM users`).first<any>())?.c ?? 0;
+      const totalMatchings = (await db.prepare(`SELECT COUNT(*) as c FROM matching_sessions`).first<any>())?.c ?? 0;
+      const totalChats = (await db.prepare(`SELECT COUNT(*) as c FROM chat_sessions`).first<any>())?.c ?? 0;
+      const totalMessages = (await db.prepare(`SELECT COUNT(*) as c FROM chat_messages`).first<any>())?.c ?? 0;
+
+      // DAU: daily distinct users who logged in (last 30 days)
+      const dauRows = await db.prepare(
+        `SELECT date(lastSignedIn) as day, COUNT(DISTINCT id) as count
+         FROM users WHERE lastSignedIn >= datetime('now', '-30 days') AND lastSignedIn IS NOT NULL
+         GROUP BY day ORDER BY day`
+      ).all<any>();
+
+      // MAU: monthly distinct users (last 12 months)
+      const mauRows = await db.prepare(
+        `SELECT strftime('%Y-%m', lastSignedIn) as month, COUNT(DISTINCT id) as count
+         FROM users WHERE lastSignedIn >= datetime('now', '-12 months') AND lastSignedIn IS NOT NULL
+         GROUP BY month ORDER BY month`
+      ).all<any>();
+
+      // New signups per day (last 30 days)
+      const signupRows = await db.prepare(
+        `SELECT date(createdAt) as day, COUNT(*) as count
+         FROM users WHERE createdAt >= datetime('now', '-30 days')
+         GROUP BY day ORDER BY day`
+      ).all<any>();
+
+      // User retention: % of users from each weekly cohort who returned within 7 days
+      // Cohorts from last 8 weeks
+      const retentionRows = await db.prepare(
+        `SELECT
+           strftime('%Y-W%W', u.createdAt) as cohort,
+           COUNT(*) as cohortSize,
+           SUM(CASE WHEN u.lastSignedIn > datetime(u.createdAt, '+7 days') THEN 1 ELSE 0 END) as retained7d,
+           SUM(CASE WHEN u.lastSignedIn > datetime(u.createdAt, '+30 days') THEN 1 ELSE 0 END) as retained30d
+         FROM users u
+         WHERE u.createdAt >= datetime('now', '-8 weeks')
+         GROUP BY cohort ORDER BY cohort`
+      ).all<any>();
+
+      // Matching success rate by month (last 12 months)
+      const matchSuccessRows = await db.prepare(
+        `SELECT
+           strftime('%Y-%m', ms.createdAt) as month,
+           COUNT(*) as total,
+           SUM(CASE WHEN ms.status='completed' THEN 1 ELSE 0 END) as completed,
+           SUM(CASE WHEN CAST(mr.compatibilityScore AS REAL) >= 70 THEN 1 ELSE 0 END) as highScore,
+           AVG(CAST(mr.compatibilityScore AS REAL)) as avgScore
+         FROM matching_sessions ms
+         LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+         WHERE ms.createdAt >= datetime('now', '-12 months')
+         GROUP BY month ORDER BY month`
+      ).all<any>();
+
+      // Active users today
+      const activeToday = (await db.prepare(
+        `SELECT COUNT(*) as c FROM users WHERE lastSignedIn >= date('now')`
+      ).first<any>())?.c ?? 0;
+
+      // Active users this month
+      const activeMonth = (await db.prepare(
+        `SELECT COUNT(*) as c FROM users WHERE lastSignedIn >= datetime('now', 'start of month')`
+      ).first<any>())?.c ?? 0;
+
+      return {
+        overview: { totalUsers, totalMatchings, totalChats, totalMessages, activeToday, activeMonth },
+        dau: (dauRows.results ?? []).map((r: any) => ({ day: r.day, count: r.count })),
+        mau: (mauRows.results ?? []).map((r: any) => ({ month: r.month, count: r.count })),
+        signups: (signupRows.results ?? []).map((r: any) => ({ day: r.day, count: r.count })),
+        retention: (retentionRows.results ?? []).map((r: any) => ({
+          cohort: r.cohort,
+          cohortSize: r.cohortSize,
+          retained7d: r.retained7d ?? 0,
+          retained30d: r.retained30d ?? 0,
+          rate7d: r.cohortSize > 0 ? Math.round(((r.retained7d ?? 0) / r.cohortSize) * 100) : 0,
+          rate30d: r.cohortSize > 0 ? Math.round(((r.retained30d ?? 0) / r.cohortSize) * 100) : 0,
+        })),
+        matchingSuccess: (matchSuccessRows.results ?? []).map((r: any) => ({
+          month: r.month,
+          total: r.total,
+          completed: r.completed ?? 0,
+          highScore: r.highScore ?? 0,
+          avgScore: Math.round((r.avgScore ?? 0) * 10) / 10,
+          successRate: r.total > 0 ? Math.round(((r.highScore ?? 0) / r.total) * 100) : 0,
+        })),
+      };
+    });
+  }),
 });
 
 export const trustRouter = router({
