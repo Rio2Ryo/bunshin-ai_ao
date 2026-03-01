@@ -214,7 +214,7 @@ export default function Plan() {
         </div>
 
         {/* Plan Comparison */}
-        <h2 className="text-xl font-bold mt-8">プラン比較</h2>
+        <h2 id="pricing-section" className="text-xl font-bold mt-8 scroll-mt-20">プラン比較</h2>
         <div className="grid gap-4 md:grid-cols-3">
           {(["free", "premium", "enterprise"] as const).map((plan) => {
             const details = planDetails[plan];
@@ -409,7 +409,26 @@ function RateLimitCard() {
   const barColor = (s: "ok" | "warn" | "over") => {
     if (s === "over") return "[&>div]:bg-red-500";
     if (s === "warn") return "[&>div]:bg-yellow-500";
-    return "";
+    return "[&>div]:bg-cyan-500";
+  };
+
+  const remaining = (cur: number, max: number) => {
+    if (max === -1) return -1;
+    return Math.max(max - cur, 0);
+  };
+
+  // Calculate hours until midnight JST for daily reset
+  const hoursUntilDailyReset = () => {
+    const now = new Date();
+    const jst = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
+    return 24 - jst.getHours();
+  };
+
+  // Days until end of month for monthly reset
+  const daysUntilMonthlyReset = () => {
+    const now = new Date();
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    return lastDay - now.getDate();
   };
 
   const items = [
@@ -419,6 +438,7 @@ function RateLimitCard() {
       sub: "上限",
       current: data.usage.friends,
       max: data.limits.maxFriends,
+      resetLabel: null as string | null,
     },
     {
       icon: MessageSquare,
@@ -426,6 +446,7 @@ function RateLimitCard() {
       sub: "今日 / 1日あたり上限",
       current: data.usage.chatMessagesToday,
       max: data.limits.chatMessagesPerDay,
+      resetLabel: `リセットまで約${hoursUntilDailyReset()}時間`,
     },
     {
       icon: Zap,
@@ -433,111 +454,189 @@ function RateLimitCard() {
       sub: "今月 / 月間上限",
       current: data.usage.matchingsThisMonth,
       max: data.limits.matchingsPerMonth,
+      resetLabel: `月末リセットまで${daysUntilMonthlyReset()}日`,
     },
   ];
 
   const hasWarning = items.some(
     (i) => statusOf(i.current, i.max) !== "ok"
   );
+  const hasOver = items.some(
+    (i) => statusOf(i.current, i.max) === "over"
+  );
+  const isFree = data.plan === "free";
 
   return (
-    <Card
-      className={`bg-gray-900/50 ${
-        hasWarning ? "border-yellow-500/50" : "border-gray-700"
-      }`}
-      role="region"
-      aria-label="API利用制限"
-    >
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Shield className="h-4 w-4 text-cyan-400" />
-            API利用制限
-          </CardTitle>
-          <Badge
-            variant="outline"
-            className="text-xs border-cyan-500/50 text-cyan-400"
-          >
-            {fmt(data.limits.requestsPerMin)} リクエスト/分
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-5">
-        {items.map((item) => {
-          const status = statusOf(item.current, item.max);
-          const percent = pct(item.current, item.max);
-          const isUnlimited = item.max === -1;
-          return (
-            <div key={item.label}>
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="flex items-center gap-2">
-                  <item.icon
-                    className={`h-4 w-4 ${
-                      status === "over"
-                        ? "text-red-400"
-                        : status === "warn"
-                        ? "text-yellow-400"
-                        : "text-cyan-400"
-                    }`}
-                    aria-hidden="true"
-                  />
-                  <span className="text-sm font-medium">{item.label}</span>
-                  {status === "over" && (
-                    <Badge
-                      variant="destructive"
-                      className="text-[10px] px-1.5 py-0 h-4"
-                    >
-                      上限
-                    </Badge>
-                  )}
-                  {status === "warn" && (
-                    <Badge className="bg-yellow-600 text-[10px] px-1.5 py-0 h-4">
-                      <AlertTriangle className="h-2.5 w-2.5 mr-0.5" />
-                      残りわずか
-                    </Badge>
-                  )}
-                </div>
-                <span
-                  className={`text-sm tabular-nums ${
-                    status === "over"
-                      ? "text-red-400 font-semibold"
-                      : status === "warn"
-                      ? "text-yellow-400"
-                      : "text-muted-foreground"
-                  }`}
-                >
-                  {item.current.toLocaleString()}
-                  <span className="text-muted-foreground">
-                    {" "}
-                    / {fmt(item.max)}
-                  </span>
-                </span>
-              </div>
-              {!isUnlimited ? (
-                <div className="relative">
-                  <Progress
-                    value={percent}
-                    className={`h-2.5 ${barColor(status)}`}
-                    aria-label={`${item.label}: ${Math.round(percent)}%使用`}
-                  />
-                  <span className="absolute right-0 -top-5 text-[10px] text-muted-foreground">
-                    {Math.round(percent)}%
-                  </span>
-                </div>
-              ) : (
-                <div className="h-2.5 rounded-full bg-muted/30 flex items-center justify-center">
-                  <span className="text-[10px] text-muted-foreground">
-                    無制限
-                  </span>
-                </div>
-              )}
-              <p className="text-[11px] text-muted-foreground mt-1">
-                {item.sub}
+    <div className="space-y-3">
+      {/* Top-level warning banner */}
+      {hasOver && (
+        <Card className="border-red-500/50 bg-red-950/30" role="alert">
+          <CardContent className="py-3 flex items-center gap-3">
+            <div className="p-2 rounded-full bg-red-500/10">
+              <AlertTriangle className="h-5 w-5 text-red-400" />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-red-400">利用制限に達しました</p>
+              <p className="text-xs text-red-400/70">
+                一部の機能が制限されています。{isFree ? "プランをアップグレードするとすぐに制限が解除されます。" : "リセットまでお待ちください。"}
               </p>
             </div>
-          );
-        })}
-      </CardContent>
-    </Card>
+            {isFree && (
+              <a href="#pricing-section">
+                <Button size="sm" className="bg-red-600 hover:bg-red-700 text-white gap-1.5">
+                  <Crown className="h-3.5 w-3.5" />
+                  アップグレード
+                </Button>
+              </a>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      {!hasOver && hasWarning && (
+        <Card className="border-yellow-500/40 bg-yellow-950/20" role="alert">
+          <CardContent className="py-3 flex items-center gap-3">
+            <div className="p-2 rounded-full bg-yellow-500/10">
+              <AlertTriangle className="h-5 w-5 text-yellow-400" />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-yellow-400">利用制限が近づいています</p>
+              <p className="text-xs text-yellow-400/70">
+                上限の80%以上を使用しています。{isFree ? "アップグレードで上限を大幅に増やせます。" : "リセットまでの残量をご確認ください。"}
+              </p>
+            </div>
+            {isFree && (
+              <a href="#pricing-section">
+                <Button size="sm" variant="outline" className="border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/10 gap-1.5">
+                  <Crown className="h-3.5 w-3.5" />
+                  プラン確認
+                </Button>
+              </a>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Main rate limit card */}
+      <Card
+        className={`bg-gray-900/50 ${
+          hasOver ? "border-red-500/50" : hasWarning ? "border-yellow-500/50" : "border-gray-700"
+        }`}
+        role="region"
+        aria-label="API利用制限"
+      >
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Shield className="h-4 w-4 text-cyan-400" />
+              API利用制限
+            </CardTitle>
+            <Badge
+              variant="outline"
+              className="text-xs border-cyan-500/50 text-cyan-400"
+            >
+              {fmt(data.limits.requestsPerMin)} リクエスト/分
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {items.map((item) => {
+            const status = statusOf(item.current, item.max);
+            const percent = pct(item.current, item.max);
+            const isUnlimited = item.max === -1;
+            const rem = remaining(item.current, item.max);
+            return (
+              <div key={item.label}>
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <item.icon
+                      className={`h-4 w-4 ${
+                        status === "over"
+                          ? "text-red-400"
+                          : status === "warn"
+                          ? "text-yellow-400"
+                          : "text-cyan-400"
+                      }`}
+                      aria-hidden="true"
+                    />
+                    <span className="text-sm font-medium">{item.label}</span>
+                    {status === "over" && (
+                      <Badge
+                        variant="destructive"
+                        className="text-[10px] px-1.5 py-0 h-4"
+                      >
+                        上限到達
+                      </Badge>
+                    )}
+                    {status === "warn" && (
+                      <Badge className="bg-yellow-600 text-[10px] px-1.5 py-0 h-4">
+                        <AlertTriangle className="h-2.5 w-2.5 mr-0.5" />
+                        残りわずか
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {!isUnlimited && (
+                      <span
+                        className={`text-xs px-2 py-0.5 rounded-full ${
+                          status === "over"
+                            ? "bg-red-500/10 text-red-400"
+                            : status === "warn"
+                            ? "bg-yellow-500/10 text-yellow-400"
+                            : "bg-cyan-500/10 text-cyan-400"
+                        }`}
+                      >
+                        残り {rem.toLocaleString()}
+                      </span>
+                    )}
+                    <span
+                      className={`text-sm tabular-nums ${
+                        status === "over"
+                          ? "text-red-400 font-semibold"
+                          : status === "warn"
+                          ? "text-yellow-400"
+                          : "text-muted-foreground"
+                      }`}
+                    >
+                      {item.current.toLocaleString()}
+                      <span className="text-muted-foreground">
+                        {" "}/ {fmt(item.max)}
+                      </span>
+                    </span>
+                  </div>
+                </div>
+                {!isUnlimited ? (
+                  <div className="relative">
+                    <Progress
+                      value={percent}
+                      className={`h-2.5 ${barColor(status)}`}
+                      aria-label={`${item.label}: ${Math.round(percent)}%使用`}
+                    />
+                    <span className="absolute right-0 -top-5 text-[10px] text-muted-foreground">
+                      {Math.round(percent)}%
+                    </span>
+                  </div>
+                ) : (
+                  <div className="h-2.5 rounded-full bg-muted/30 flex items-center justify-center">
+                    <span className="text-[10px] text-muted-foreground">
+                      無制限
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between mt-1">
+                  <p className="text-[11px] text-muted-foreground">
+                    {item.sub}
+                  </p>
+                  {item.resetLabel && !isUnlimited && (
+                    <p className="text-[11px] text-muted-foreground">
+                      {item.resetLabel}
+                    </p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
