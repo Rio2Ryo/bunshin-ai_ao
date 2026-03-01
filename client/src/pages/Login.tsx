@@ -8,10 +8,12 @@ import { Bot, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { toast } from "sonner";
+import { useTranslation } from "@/contexts/LanguageContext";
 
 const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
 
 export default function Login() {
+  const { t } = useTranslation();
   usePageMeta({ title: "ログイン", description: "分身AIにログインして、デジタルツインの管理やビジネスマッチングを開始しましょう。", path: "/login" });
   const [, navigate] = useLocation();
   const [email, setEmail] = useState("");
@@ -72,15 +74,15 @@ export default function Login() {
               <Bot className="h-8 w-8 text-primary" />
             </div>
           </div>
-          <CardTitle className="text-2xl">分身AIにログイン</CardTitle>
+          <CardTitle className="text-2xl">{t("login.title")}</CardTitle>
           <CardDescription>
-            メールアドレスとパスワードでログインしてください
+            {t("login.desc")}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4" aria-label="ログインフォーム">
             <div className="space-y-2">
-              <Label htmlFor="email">メールアドレス</Label>
+              <Label htmlFor="email">{t("login.email")}</Label>
               <Input
                 id="email"
                 type="email"
@@ -94,9 +96,9 @@ export default function Login() {
             </div>
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label htmlFor="password">パスワード</Label>
+                <Label htmlFor="password">{t("login.password")}</Label>
                 <Link href="/forgot-password" className="text-xs text-primary hover:underline">
-                  パスワードを忘れた？
+                  {t("login.forgotPassword")}
                 </Link>
               </div>
               <Input
@@ -119,13 +121,13 @@ export default function Login() {
               {loginMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
               ) : null}
-              ログイン
+              {t("login.submit")}
             </Button>
           </form>
 
           {showResend && (
             <div className="mt-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-sm space-y-2" role="alert" id="login-error">
-              <p className="text-amber-600 dark:text-amber-400">メールアドレスが未認証です。確認メールを再送信できます。</p>
+              <p className="text-amber-600 dark:text-amber-400">{t("login.unverified")}</p>
               <Button
                 variant="outline"
                 size="sm"
@@ -134,21 +136,21 @@ export default function Login() {
                 onClick={() => resendMutation.mutate({ email })}
               >
                 {resendMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                確認メールを再送信
+                {t("login.resend")}
               </Button>
             </div>
           )}
 
           <div className="mt-6 text-center text-sm">
-            <span className="text-muted-foreground">アカウントをお持ちでない方は</span>{" "}
+            <span className="text-muted-foreground">{t("login.noAccount")}</span>{" "}
             <Link href="/register" className="text-primary hover:underline">
-              新規登録
+              {t("login.register")}
             </Link>
           </div>
 
           <div className="mt-4 text-center">
             <Link href="/" className="text-sm text-muted-foreground hover:underline">
-              トップページに戻る
+              {t("login.backToTop")}
             </Link>
           </div>
         </CardContent>

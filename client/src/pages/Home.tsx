@@ -2,6 +2,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { usePageMeta } from "@/hooks/usePageMeta";
+import { useTranslation } from "@/contexts/LanguageContext";
 import { Link } from "wouter";
 import {
   Bot,
@@ -25,6 +26,7 @@ import {
 
 export default function Home() {
   const { user, loading, isAuthenticated } = useAuth();
+  const { t } = useTranslation();
   usePageMeta({
     title: "デジタルツインでビジネスマッチング",
     description:
@@ -35,7 +37,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-md">メインコンテンツへスキップ</a>
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-md">{t("home.skipToMain")}</a>
       {/* Header */}
       <header
         className="border-b border-border/30 backdrop-blur-xl fixed top-0 w-full z-50 bg-background/60"
@@ -50,14 +52,14 @@ export default function Home() {
             <span className="text-xl font-bold text-gradient">分身AI</span>
           </div>
           <nav className="flex items-center gap-4" aria-label="メインナビゲーション">
-            <a href="#features" className="text-sm text-muted-foreground hover:text-foreground hidden md:block">機能</a>
-            <a href="#pricing" className="text-sm text-muted-foreground hover:text-foreground hidden md:block">料金</a>
+            <a href="#features" className="text-sm text-muted-foreground hover:text-foreground hidden md:block">{t("home.navFeatures")}</a>
+            <a href="#pricing" className="text-sm text-muted-foreground hover:text-foreground hidden md:block">{t("home.navPricing")}</a>
             {loading ? (
               <div className="h-9 w-20 bg-muted animate-pulse rounded-md" />
             ) : isAuthenticated ? (
               <Link href="/dashboard">
                 <Button className="gap-2">
-                  ダッシュボード
+                  {t("home.ctaDashboard")}
                   <ChevronRight className="h-4 w-4" />
                 </Button>
               </Link>
@@ -65,12 +67,12 @@ export default function Home() {
               <div className="flex items-center gap-3">
                 <Link href="/login">
                   <Button variant="ghost" className="text-muted-foreground hover:text-foreground">
-                    ログイン
+                    {t("home.navLogin")}
                   </Button>
                 </Link>
                 <Link href="/register">
                   <Button className="glow-primary gap-2">
-                    無料で始める
+                    {t("home.ctaStart")}
                     <ArrowRight className="h-4 w-4" />
                   </Button>
                 </Link>
@@ -93,31 +95,29 @@ export default function Home() {
             {/* Badge */}
             <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-primary/30 bg-primary/5 text-sm text-primary mb-8">
               <Sparkles className="h-4 w-4" />
-              AI時代の新しいビジネスマッチング
+              {t("home.badge")}
             </div>
 
             <h1 className="text-5xl md:text-7xl font-bold mb-6 leading-tight tracking-tight">
-              <span className="text-gradient">5分で作れる、</span>
+              <span className="text-gradient">{t("home.heroTitle1")}</span>
               <br />
-              あなたのデジタル分身
+              {t("home.heroTitle2")}
             </h1>
             <p className="text-lg md:text-xl text-muted-foreground mb-10 max-w-2xl mx-auto leading-relaxed">
-              プロフィールを入力するだけで、あなたの知識・経験・スキルを学習したAIが誕生。
-              <br className="hidden sm:block" />
-              24時間あなたの代わりにビジネスパートナーを探し、マッチングします。
+              {t("home.heroDesc")}
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               {isAuthenticated ? (
                 <Link href="/dashboard">
                   <Button size="lg" className="glow-primary text-base px-8 h-12 gap-2">
-                    ダッシュボードへ
+                    {t("home.ctaDashboard")}
                     <ArrowRight className="h-5 w-5" />
                   </Button>
                 </Link>
               ) : (
                 <Link href="/register">
                   <Button size="lg" className="glow-primary text-base px-8 h-12 gap-2">
-                    無料で始める
+                    {t("home.ctaStart")}
                     <ArrowRight className="h-5 w-5" />
                   </Button>
                 </Link>
@@ -129,12 +129,12 @@ export default function Home() {
               >
                 <Button size="lg" className="text-base px-8 h-12 gap-2 text-white border-0" style={{ backgroundColor: "#06C755" }}>
                   <MessageSquare className="h-5 w-5" />
-                  LINEで始める
+                  {t("home.ctaLine")}
                 </Button>
               </a>
               <a href="#features">
                 <Button size="lg" variant="outline" className="text-base px-8 h-12">
-                  詳しく見る
+                  {t("home.ctaLearnMore")}
                 </Button>
               </a>
             </div>
@@ -176,9 +176,9 @@ export default function Home() {
           {/* Stats row */}
           <div className="mt-12 max-w-3xl mx-auto">
             <div className="grid grid-cols-3 gap-4">
-              <StatPill icon={<Shield className="h-4 w-4" />} value="安全" label="エンドツーエンド暗号化" />
-              <StatPill icon={<Globe className="h-4 w-4" />} value="5+" label="AI プロバイダー対応" />
-              <StatPill icon={<Zap className="h-4 w-4" />} value="即時" label="マッチング分析" />
+              <StatPill icon={<Shield className="h-4 w-4" />} value={t("home.statSafe")} label={t("home.statSafeDesc")} />
+              <StatPill icon={<Globe className="h-4 w-4" />} value={t("home.statProviders")} label={t("home.statProvidersDesc")} />
+              <StatPill icon={<Zap className="h-4 w-4" />} value={t("home.statInstant")} label={t("home.statInstantDesc")} />
             </div>
           </div>
         </div>
@@ -193,53 +193,53 @@ export default function Home() {
         <div className="container relative">
           <div className="text-center mb-16">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-muted/50 text-xs text-muted-foreground mb-4 uppercase tracking-wider">
-              機能一覧
+              {t("home.featuresLabel")}
             </div>
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">主な機能</h2>
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">{t("home.featuresTitle")}</h2>
             <p className="text-muted-foreground max-w-xl mx-auto">
-              分身AIプラットフォームの全機能で、あなたのビジネスを加速させます。
+              {t("home.featuresDesc")}
             </p>
           </div>
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
             <FeatureCard
               icon={<Bot className="h-6 w-6" />}
-              title="分身AI作成"
-              description="あなたのプロフィール、スキル、経験を学習した分身AIを作成。ドキュメントやデータをアップロードして知識を拡張できます。"
+              title={t("home.featureTwinTitle")}
+              description={t("home.featureTwinDesc")}
               gradient="from-cyan-500/20 to-blue-500/20"
               iconBg="bg-cyan-500/10 text-cyan-400"
             />
             <FeatureCard
               icon={<MessageSquare className="h-6 w-6" />}
-              title="1対1チャット"
-              description="作成した分身AIと対話して、学習内容を確認。あなたの代わりに質問に答えられるか検証できます。"
+              title={t("home.featureChatTitle")}
+              description={t("home.featureChatDesc")}
               gradient="from-violet-500/20 to-purple-500/20"
               iconBg="bg-violet-500/10 text-violet-400"
             />
             <FeatureCard
               icon={<Users className="h-6 w-6" />}
-              title="分身AI同士の対話"
-              description="異なるユーザーの分身AI同士が自動で対話。ビジネステーマに沿って協業の可能性を探ります。"
+              title={t("home.featureDialogueTitle")}
+              description={t("home.featureDialogueDesc")}
               gradient="from-emerald-500/20 to-green-500/20"
               iconBg="bg-emerald-500/10 text-emerald-400"
             />
             <FeatureCard
               icon={<BarChart3 className="h-6 w-6" />}
-              title="マッチング分析"
-              description="AI同士の対話を分析し、相性スコア、協業可能性、具体的な提案を自動生成します。"
+              title={t("home.featureAnalysisTitle")}
+              description={t("home.featureAnalysisDesc")}
               gradient="from-amber-500/20 to-orange-500/20"
               iconBg="bg-amber-500/10 text-amber-400"
             />
             <FeatureCard
               icon={<Zap className="h-6 w-6" />}
-              title="外部AI連携"
-              description="ChatGPT、Gemini、Claudeなど複数のAIモデルを連携。タスクに応じて最適なAIを自動選択します。"
+              title={t("home.featureAITitle")}
+              description={t("home.featureAIDesc")}
               gradient="from-rose-500/20 to-pink-500/20"
               iconBg="bg-rose-500/10 text-rose-400"
             />
             <FeatureCard
               icon={<Settings2 className="h-6 w-6" />}
-              title="AIオーケストレーション"
-              description="複数のAIに役割を割り当て、全体をプロジェクトマネジメント。効率的なAI活用を実現します。"
+              title={t("home.featureOrchTitle")}
+              description={t("home.featureOrchDesc")}
               gradient="from-indigo-500/20 to-blue-500/20"
               iconBg="bg-indigo-500/10 text-indigo-400"
             />

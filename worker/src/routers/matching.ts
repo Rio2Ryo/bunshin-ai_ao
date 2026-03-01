@@ -587,6 +587,48 @@ JSONのみ出力し、他の説明は不要です。`;
 
       return { id: sessionId, dialogues: dialogueHistory };
     }),
+  /** Create a streaming session — returns immediately with sessionId. Client then connects to SSE endpoint. */
+  startStreaming: protectedProcedure
+    .input(z.object({ friendId: z.number(), theme: z.string().min(1).max(500), turns: z.number().min(1).max(20).default(5) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      // Check plan limits (same as matching.create)
+      const userRow = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      const userPlan = userRow?.plan || "free";
+      const monthlyLimits: Record<string, number> = { free: 3, premium: 30, enterprise: -1 };
+      const maxMatchings = monthlyLimits[userPlan] ?? 3;
+      if (maxMatchings !== -1) {
+        const usageRow = await ctx.env.DB.prepare(`SELECT matchingsThisMonth FROM usage_tracking WHERE userId=?`).bind(ctx.userId).first<any>();
+        if ((usageRow?.matchingsThisMonth ?? 0) >= maxMatchings) {
+          throw new TRPCError({ code: "FORBIDDEN", message: `月間マッチング上限（${maxMatchings}回）に達しました。プランをアップグレードしてください。` });
+        }
+      }
+
+      const myTwin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!myTwin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIを作成してください" });
+      const friendTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.friendId).first<any>();
+      if (!friendTwin) throw new TRPCError({ code: "NOT_FOUND", message: "友達の分身AIがありません" });
+
+      // Trust score check
+      const friendUser = await ctx.env.DB.prepare(`SELECT isNpc FROM users WHERE id=?`).bind(input.friendId).first<any>();
+      const isNpcMatch = friendUser?.isNpc === 1;
+      if (!isNpcMatch) {
+        const trustRow = await ctx.env.DB.prepare(`SELECT score FROM trust_scores WHERE userId=?`).bind(ctx.userId).first<any>();
+        const trustScore = trustRow?.score ?? 0;
+        if (trustScore < 30) {
+          throw new TRPCError({ code: "FORBIDDEN", message: `マッチングには信頼度スコア30以上が必要です（現在: ${trustScore}）。` });
+        }
+      }
+
+      // Create session in 'running' state with turns/friendId in settings
+      const sessionRes = await ctx.env.DB.prepare(
+        `INSERT INTO matching_sessions (initiatorUserId, twin1Id, twin2Id, theme, status, settings) VALUES (?,?,?,?,'running',?)`
+      ).bind(ctx.userId, myTwin.id, friendTwin.id, input.theme, toJson({ turns: input.turns, friendId: input.friendId })).run();
+      const sessionId = Number(sessionRes.meta.last_row_id);
+
+      return { sessionId };
+    }),
   runDialogue: protectedProcedure
     .input(z.object({ sessionId: z.number(), turns: z.number().optional() }))
     .mutation(async ({ ctx, input }) => {

@@ -8,10 +8,12 @@ import { Bot, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { toast } from "sonner";
+import { useTranslation } from "@/contexts/LanguageContext";
 
 const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
 
 export default function Register() {
+  const { t } = useTranslation();
   usePageMeta({ title: "新規登録", description: "分身AIアカウントを作成して、あなたのデジタルツインを始めましょう。無料で登録できます。", path: "/register" });
   const [, navigate] = useLocation();
   const [name, setName] = useState("");
@@ -54,7 +56,7 @@ export default function Register() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (password !== confirmPassword) {
-      toast.error("パスワードが一致しません");
+      toast.error(t("register.passwordMismatch"));
       return;
     }
     if (password.length < 6) {
@@ -62,7 +64,7 @@ export default function Register() {
       return;
     }
     if (!tosAccepted) {
-      toast.error("利用規約に同意してください");
+      toast.error(t("register.tosRequired"));
       return;
     }
     registerMutation.mutate({ name, email, password, tosAccepted: true });
@@ -77,15 +79,15 @@ export default function Register() {
               <Bot className="h-8 w-8 text-primary" />
             </div>
           </div>
-          <CardTitle className="text-2xl">新規アカウント作成</CardTitle>
+          <CardTitle className="text-2xl">{t("register.title")}</CardTitle>
           <CardDescription>
-            分身AIを始めるためにアカウントを作成してください
+            {t("register.desc")}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4" aria-label="アカウント登録フォーム">
             <div className="space-y-2">
-              <Label htmlFor="name">お名前</Label>
+              <Label htmlFor="name">{t("register.name")}</Label>
               <Input
                 id="name"
                 type="text"
@@ -98,7 +100,7 @@ export default function Register() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="email">メールアドレス</Label>
+              <Label htmlFor="email">{t("register.email")}</Label>
               <Input
                 id="email"
                 type="email"
@@ -111,7 +113,7 @@ export default function Register() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">パスワード</Label>
+              <Label htmlFor="password">{t("register.password")}</Label>
               <Input
                 id="password"
                 type="password"
@@ -125,7 +127,7 @@ export default function Register() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="confirmPassword">パスワード（確認）</Label>
+              <Label htmlFor="confirmPassword">{t("register.confirmPassword")}</Label>
               <Input
                 id="confirmPassword"
                 type="password"
@@ -160,20 +162,20 @@ export default function Register() {
               {registerMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
               ) : null}
-              アカウント作成
+              {t("register.submit")}
             </Button>
           </form>
 
           <div className="mt-6 text-center text-sm">
-            <span className="text-muted-foreground">既にアカウントをお持ちの方は</span>{" "}
+            <span className="text-muted-foreground">{t("register.hasAccount")}</span>{" "}
             <Link href="/login" className="text-primary hover:underline">
-              ログイン
+              {t("register.login")}
             </Link>
           </div>
 
           <div className="mt-4 text-center">
             <Link href="/" className="text-sm text-muted-foreground hover:underline">
-              トップページに戻る
+              {t("register.backToTop")}
             </Link>
           </div>
         </CardContent>

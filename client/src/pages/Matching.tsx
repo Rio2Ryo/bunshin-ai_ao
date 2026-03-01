@@ -9,7 +9,7 @@ import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -77,7 +77,9 @@ export default function Matching() {
   const { data: receivedReqs, isLoading: recvLoading, refetch: refetchRecv } = trpc.matching.receivedRequests.useQuery();
   const { data: sentReqs, isLoading: sentLoading, refetch: refetchSent } = trpc.matching.sentRequests.useQuery();
 
+  const [, navigate] = useLocation();
   const createSession = trpc.matching.create.useMutation();
+  const startStreaming = trpc.matching.startStreaming.useMutation();
   const runDialogue = trpc.matching.runDialogue.useMutation();
   const completeTutorial = trpc.onboarding.completeTutorial.useMutation();
   const sendRequestMut = trpc.matching.sendRequest.useMutation();
@@ -97,11 +99,10 @@ export default function Matching() {
     const friend = friends?.find(f => f.friend.id === parseInt(selectedFriendId));
     if (!friend?.twin) { toast.error("この友達はまだ分身AIを作成していません"); return; }
     try {
-      toast.info(`分身AI同士の対話を開始しています（${turns}ターン）...`);
-      await createSession.mutateAsync({ friendId: friend.friend.id, theme, turns });
-      toast.success("対話と分析が完了しました！");
+      // Use streaming mode — creates session, then navigates to session page where SSE streaming begins
+      const result = await startStreaming.mutateAsync({ friendId: friend.friend.id, theme, turns });
       setIsCreateOpen(false); setSelectedFriendId(""); setTheme(""); setTurns(5);
-      refetchSessions();
+      navigate(`/matching/${result.sessionId}`);
     } catch (error: any) { toast.error(error?.message || "作成に失敗しました"); }
   };
 
@@ -219,8 +220,8 @@ export default function Matching() {
                 </div>
                 <div className="flex justify-end gap-2">
                   <Button variant="outline" onClick={() => setIsCreateOpen(false)}>キャンセル</Button>
-                  <Button onClick={handleCreate} disabled={createSession.isPending || friendsWithTwin.length === 0}>
-                    {createSession.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  <Button onClick={handleCreate} disabled={startStreaming.isPending || friendsWithTwin.length === 0}>
+                    {startStreaming.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                     作成して対話開始
                   </Button>
                 </div>

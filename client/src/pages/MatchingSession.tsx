@@ -8,21 +8,73 @@ import { Input } from "@/components/ui/input";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc, API_BASE } from "@/lib/trpc";
 import { useParams, Link } from "wouter";
-import { useState } from "react";
-import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, Users, Calendar, DollarSign, Target, Rocket, Share2, Link as LinkIcon, ExternalLink, Search, Globe } from "lucide-react";
+import { useState, useCallback, useRef, useEffect } from "react";
+import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, Users, Calendar, DollarSign, Target, Rocket, Share2, Link as LinkIcon, ExternalLink, Search, Globe, Zap } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { LazyStreamdown as Streamdown } from "@/components/LazyStreamdown";
 import { toast } from "sonner";
+import { useMatchingStream, type MatchingTurn, type MatchingAnalysis } from "@/hooks/useMatchingStream";
 
 export default function MatchingSession() {
   const { id } = useParams<{ id: string }>();
   const sessionId = parseInt(id || "0");
   usePageMeta({ title: `マッチングセッション #${sessionId}`, description: "マッチング結果の詳細を確認。スコア、対話履歴、分析レポートを閲覧できます。", ogImage: "https://bunshin-ai.pages.dev/og/matching.svg", path: `/matching/${id}` });
 
-  const { data, isLoading, isError } = trpc.matching.getSession.useQuery(
+  // Streaming state
+  const [streamingTurns, setStreamingTurns] = useState<MatchingTurn[]>([]);
+  const [streamingAnalysis, setStreamingAnalysis] = useState<MatchingAnalysis | null>(null);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const { data, isLoading, isError, refetch } = trpc.matching.getSession.useQuery(
     { id: sessionId },
     { enabled: sessionId > 0 }
   );
+
+  // Determine if we should stream (session is in 'running' state)
+  const shouldStream = data?.session?.status === "running" && !streamingAnalysis;
+
+  const onTurn = useCallback((turn: MatchingTurn) => {
+    setStreamingTurns((prev) => [...prev, turn]);
+    setIsStreaming(true);
+  }, []);
+
+  const onAnalysisStart = useCallback(() => {
+    // Analysis is being generated
+  }, []);
+
+  const onAnalysisComplete = useCallback((analysis: MatchingAnalysis) => {
+    setStreamingAnalysis(analysis);
+  }, []);
+
+  const onComplete = useCallback(() => {
+    setIsStreaming(false);
+    // Refetch to get the final persisted data
+    refetch();
+    toast.success("対話と分析が完了しました！");
+  }, [refetch]);
+
+  const onError = useCallback((message: string) => {
+    setIsStreaming(false);
+    toast.error(message);
+  }, []);
+
+  const { phase } = useMatchingStream({
+    sessionId,
+    enabled: shouldStream,
+    onTurn,
+    onAnalysisStart,
+    onAnalysisComplete,
+    onComplete,
+    onError,
+  });
+
+  // Auto-scroll streaming dialogue
+  useEffect(() => {
+    if (streamingTurns.length > 0 && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [streamingTurns]);
 
   const { data: reportData, refetch: fetchReport, isFetching: isExporting } = trpc.matching.exportReport.useQuery(
     { sessionId },
@@ -134,6 +186,12 @@ export default function MatchingSession() {
   const { session, twin1, twin2, dialogues, result } = data;
   const compatibilityScore = result?.compatibilityScore ? parseFloat(result.compatibilityScore) : 0;
 
+  // Use streaming data if available, otherwise use persisted data
+  const displayDialogues = streamingTurns.length > 0 ? streamingTurns : dialogues;
+  const displayResult = streamingAnalysis || result;
+  const displayScore = streamingAnalysis?.compatibilityScore ?? compatibilityScore;
+  const isRunning = session.status === "running" && phase !== "complete";
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -146,7 +204,15 @@ export default function MatchingSession() {
               </Button>
             </Link>
             <div>
-              <h1 className="text-2xl font-bold">{session.theme}</h1>
+              <div className="flex items-center gap-3">
+                <h1 className="text-2xl font-bold">{session.theme}</h1>
+                {isRunning && (
+                  <span className="flex items-center gap-1.5 text-xs text-primary font-medium animate-pulse">
+                    <Zap className="h-3.5 w-3.5" />
+                    {phase === "dialogue" ? "対話生成中..." : phase === "analysis" ? "分析中..." : "接続中..."}
+                  </span>
+                )}
+              </div>
               <p className="text-muted-foreground">
                 {twin1?.name || `Twin #${session.twin1Id}`} × {twin2?.name || `Twin #${session.twin2Id}`}
               </p>
@@ -215,9 +281,26 @@ export default function MatchingSession() {
           </div>
         </div>
 
+        {/* Streaming progress indicator */}
+        {isRunning && (
+          <Card className="border-primary/30 bg-primary/5">
+            <CardContent className="py-4">
+              <div className="flex items-center gap-3">
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                <div className="flex-1">
+                  <p className="text-sm font-medium">
+                    {phase === "dialogue" ? `対話生成中... (${streamingTurns.length}ターン完了)` : phase === "analysis" ? "AI分析を実行中..." : "接続中..."}
+                  </p>
+                  <Progress value={phase === "dialogue" ? (streamingTurns.length / 5) * 70 : phase === "analysis" ? 85 : 10} className="h-1.5 mt-2" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Score Overview */}
-        {result && (
-          <Card className="border-primary/50">
+        {displayResult && (
+          <Card className={`border-primary/50 ${streamingAnalysis && !result ? "animate-in fade-in-0 duration-500" : ""}`}>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <BarChart3 className="h-5 w-5 text-primary" />
@@ -230,18 +313,18 @@ export default function MatchingSession() {
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm text-muted-foreground">相性スコア</span>
-                      <span className="text-2xl font-bold text-primary">{compatibilityScore}%</span>
+                      <span className="text-2xl font-bold text-primary">{displayScore}%</span>
                     </div>
-                    <Progress value={compatibilityScore} className="h-3" />
+                    <Progress value={displayScore} className="h-3" />
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground mb-2">総合評価</p>
-                    <p className="font-medium">{result.summary}</p>
+                    <p className="font-medium">{displayResult.summary}</p>
                   </div>
                 </div>
                 
                 {/* Score Breakdown */}
-                {result.scoreBreakdown && (
+                {displayResult.scoreBreakdown && (
                   <div className="border-t pt-4">
                     <h4 className="text-sm font-medium mb-4">スコア内訳（5つの観点×20点満点）</h4>
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -250,12 +333,12 @@ export default function MatchingSession() {
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-sm font-medium">スキルマッチ度</span>
                           <span className="text-sm font-bold text-primary">
-                            {result.scoreBreakdown.skillMatch?.score || 0}/20
+                            {displayResult.scoreBreakdown.skillMatch?.score || 0}/20
                           </span>
                         </div>
                         <Progress value={(result.scoreBreakdown.skillMatch?.score || 0) * 5} className="h-2 mb-2" />
                         <p className="text-xs text-muted-foreground">
-                          {result.scoreBreakdown.skillMatch?.reason || "データなし"}
+                          {displayResult.scoreBreakdown.skillMatch?.reason || "データなし"}
                         </p>
                       </div>
                       
@@ -264,12 +347,12 @@ export default function MatchingSession() {
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-sm font-medium">価値観の一致度</span>
                           <span className="text-sm font-bold text-primary">
-                            {result.scoreBreakdown.valueAlignment?.score || 0}/20
+                            {displayResult.scoreBreakdown.valueAlignment?.score || 0}/20
                           </span>
                         </div>
-                        <Progress value={(result.scoreBreakdown.valueAlignment?.score || 0) * 5} className="h-2 mb-2" />
+                        <Progress value={(displayResult.scoreBreakdown.valueAlignment?.score || 0) * 5} className="h-2 mb-2" />
                         <p className="text-xs text-muted-foreground">
-                          {result.scoreBreakdown.valueAlignment?.reason || "データなし"}
+                          {displayResult.scoreBreakdown.valueAlignment?.reason || "データなし"}
                         </p>
                       </div>
                       
@@ -278,12 +361,12 @@ export default function MatchingSession() {
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-sm font-medium">コミュニケーション</span>
                           <span className="text-sm font-bold text-primary">
-                            {result.scoreBreakdown.communicationStyle?.score || 0}/20
+                            {displayResult.scoreBreakdown.communicationStyle?.score || 0}/20
                           </span>
                         </div>
-                        <Progress value={(result.scoreBreakdown.communicationStyle?.score || 0) * 5} className="h-2 mb-2" />
+                        <Progress value={(displayResult.scoreBreakdown.communicationStyle?.score || 0) * 5} className="h-2 mb-2" />
                         <p className="text-xs text-muted-foreground">
-                          {result.scoreBreakdown.communicationStyle?.reason || "データなし"}
+                          {displayResult.scoreBreakdown.communicationStyle?.reason || "データなし"}
                         </p>
                       </div>
                       
@@ -292,12 +375,12 @@ export default function MatchingSession() {
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-sm font-medium">ビジネス目標適合度</span>
                           <span className="text-sm font-bold text-primary">
-                            {result.scoreBreakdown.businessGoalFit?.score || 0}/20
+                            {displayResult.scoreBreakdown.businessGoalFit?.score || 0}/20
                           </span>
                         </div>
-                        <Progress value={(result.scoreBreakdown.businessGoalFit?.score || 0) * 5} className="h-2 mb-2" />
+                        <Progress value={(displayResult.scoreBreakdown.businessGoalFit?.score || 0) * 5} className="h-2 mb-2" />
                         <p className="text-xs text-muted-foreground">
-                          {result.scoreBreakdown.businessGoalFit?.reason || "データなし"}
+                          {displayResult.scoreBreakdown.businessGoalFit?.reason || "データなし"}
                         </p>
                       </div>
                       
@@ -306,12 +389,12 @@ export default function MatchingSession() {
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-sm font-medium">相互補完性</span>
                           <span className="text-sm font-bold text-primary">
-                            {result.scoreBreakdown.complementaryStrengths?.score || 0}/20
+                            {displayResult.scoreBreakdown.complementaryStrengths?.score || 0}/20
                           </span>
                         </div>
-                        <Progress value={(result.scoreBreakdown.complementaryStrengths?.score || 0) * 5} className="h-2 mb-2" />
+                        <Progress value={(displayResult.scoreBreakdown.complementaryStrengths?.score || 0) * 5} className="h-2 mb-2" />
                         <p className="text-xs text-muted-foreground">
-                          {result.scoreBreakdown.complementaryStrengths?.reason || "データなし"}
+                          {displayResult.scoreBreakdown.complementaryStrengths?.reason || "データなし"}
                         </p>
                       </div>
                     </div>
@@ -328,7 +411,7 @@ export default function MatchingSession() {
               <MessageSquare className="h-4 w-4 mr-2" />
               対話内容
             </TabsTrigger>
-            <TabsTrigger value="analysis" disabled={!result}>
+            <TabsTrigger value="analysis" disabled={!displayResult}>
               <BarChart3 className="h-4 w-4 mr-2" />
               詳細分析
             </TabsTrigger>
@@ -348,17 +431,18 @@ export default function MatchingSession() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <ScrollArea className="h-[500px] pr-4">
+                <ScrollArea className="h-[500px] pr-4" ref={scrollRef}>
                   <div className="space-y-4">
-                    {dialogues && dialogues.length > 0 ? (
-                      dialogues.map((dialogue, i) => {
-                        const isTwin1 = dialogue.speakerTwinId === session.twin1Id;
-                        const speakerName = isTwin1 ? twin1?.name : twin2?.name;
+                    {displayDialogues && displayDialogues.length > 0 ? (
+                      displayDialogues.map((dialogue: any, i: number) => {
+                        const speakerTwinId = dialogue.speakerTwinId;
+                        const isTwin1 = speakerTwinId === session.twin1Id;
+                        const speakerName = dialogue.speakerName || (isTwin1 ? twin1?.name : twin2?.name);
 
                         return (
                           <div
-                            key={dialogue.id}
-                            className={`flex gap-3 ${isTwin1 ? "" : "flex-row-reverse"}`}
+                            key={dialogue.id || `stream-${i}`}
+                            className={`flex gap-3 ${isTwin1 ? "" : "flex-row-reverse"} animate-in fade-in-0 slide-in-from-bottom-2 duration-300`}
                           >
                             <div
                               className={`h-10 w-10 rounded-full flex items-center justify-center flex-shrink-0 ${
@@ -371,7 +455,7 @@ export default function MatchingSession() {
                               className={`flex-1 max-w-[80%] ${isTwin1 ? "" : "text-right"}`}
                             >
                               <p className="text-sm font-medium mb-1">
-                                {speakerName || `Twin #${dialogue.speakerTwinId}`}
+                                {speakerName || `Twin #${speakerTwinId}`}
                               </p>
                               <div
                                 className={`rounded-lg p-3 ${
@@ -384,10 +468,28 @@ export default function MatchingSession() {
                           </div>
                         );
                       })
+                    ) : isRunning ? (
+                      <div className="text-center py-8">
+                        <Loader2 className="h-8 w-8 mx-auto text-primary animate-spin mb-4" />
+                        <p className="text-muted-foreground">分身AI同士の対話を生成しています...</p>
+                      </div>
                     ) : (
                       <div className="text-center py-8">
                         <MessageSquare className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                         <p className="text-muted-foreground">対話がまだ行われていません</p>
+                      </div>
+                    )}
+                    {/* Typing indicator during dialogue generation */}
+                    {phase === "dialogue" && streamingTurns.length > 0 && (
+                      <div className="flex gap-3">
+                        <div className="h-10 w-10 rounded-full flex items-center justify-center flex-shrink-0 bg-muted">
+                          <Bot className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                        <div className="flex items-center gap-1 px-3 py-2 rounded-lg bg-muted">
+                          <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                          <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                          <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                        </div>
                       </div>
                     )}
                   </div>
@@ -481,7 +583,7 @@ export default function MatchingSession() {
 
           {/* Analysis Tab */}
           <TabsContent value="analysis">
-            {result && (
+            {displayResult && (
               <div className="grid gap-6 md:grid-cols-2">
                 {/* Collaboration Potential */}
                 <Card>
@@ -492,7 +594,7 @@ export default function MatchingSession() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <p className="text-muted-foreground">{result.collaborationPotential}</p>
+                    <p className="text-muted-foreground">{displayResult.collaborationPotential}</p>
                   </CardContent>
                 </Card>
 
@@ -505,9 +607,9 @@ export default function MatchingSession() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    {result.strengths && result.strengths.length > 0 ? (
+                    {displayResult.strengths && displayResult.strengths.length > 0 ? (
                       <ul className="space-y-2">
-                        {result.strengths.map((strength: string, i: number) => (
+                        {displayResult.strengths.map((strength: string, i: number) => (
                           <li key={i} className="flex items-start gap-2">
                             <CheckCircle className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
                             <span className="text-sm">{strength}</span>
@@ -529,9 +631,9 @@ export default function MatchingSession() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    {result.challenges && result.challenges.length > 0 ? (
+                    {displayResult.challenges && displayResult.challenges.length > 0 ? (
                       <ul className="space-y-2">
-                        {result.challenges.map((challenge: string, i: number) => (
+                        {displayResult.challenges.map((challenge: string, i: number) => (
                           <li key={i} className="flex items-start gap-2">
                             <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
                             <span className="text-sm">{challenge}</span>
@@ -553,9 +655,9 @@ export default function MatchingSession() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    {result.recommendations && result.recommendations.length > 0 ? (
+                    {displayResult.recommendations && displayResult.recommendations.length > 0 ? (
                       <ul className="space-y-2">
-                        {result.recommendations.map((rec: string, i: number) => (
+                        {displayResult.recommendations.map((rec: string, i: number) => (
                           <li key={i} className="flex items-start gap-2">
                             <span className="h-5 w-5 rounded-full bg-primary/20 text-primary text-xs flex items-center justify-center flex-shrink-0">
                               {i + 1}
@@ -571,7 +673,7 @@ export default function MatchingSession() {
                 </Card>
 
                 {/* Role Distribution */}
-                {result.roleDistribution && (
+                {result?.roleDistribution && (
                   <Card>
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
@@ -581,14 +683,14 @@ export default function MatchingSession() {
                     </CardHeader>
                     <CardContent>
                       <div className="prose prose-sm dark:prose-invert max-w-none">
-                        <Streamdown>{result.roleDistribution}</Streamdown>
+                        <Streamdown>{result?.roleDistribution}</Streamdown>
                       </div>
                     </CardContent>
                   </Card>
                 )}
 
                 {/* Timeline */}
-                {result.timeline && (
+                {result?.timeline && (
                   <Card>
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
@@ -598,14 +700,14 @@ export default function MatchingSession() {
                     </CardHeader>
                     <CardContent>
                       <div className="prose prose-sm dark:prose-invert max-w-none">
-                        <Streamdown>{result.timeline}</Streamdown>
+                        <Streamdown>{result?.timeline}</Streamdown>
                       </div>
                     </CardContent>
                   </Card>
                 )}
 
                 {/* Resources */}
-                {result.resources && (
+                {result?.resources && (
                   <Card>
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
@@ -615,14 +717,14 @@ export default function MatchingSession() {
                     </CardHeader>
                     <CardContent>
                       <div className="prose prose-sm dark:prose-invert max-w-none">
-                        <Streamdown>{result.resources}</Streamdown>
+                        <Streamdown>{result?.resources}</Streamdown>
                       </div>
                     </CardContent>
                   </Card>
                 )}
 
                 {/* KPIs */}
-                {result.kpis && (
+                {result?.kpis && (
                   <Card>
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
@@ -632,14 +734,14 @@ export default function MatchingSession() {
                     </CardHeader>
                     <CardContent>
                       <div className="prose prose-sm dark:prose-invert max-w-none">
-                        <Streamdown>{result.kpis}</Streamdown>
+                        <Streamdown>{result?.kpis}</Streamdown>
                       </div>
                     </CardContent>
                   </Card>
                 )}
 
                 {/* Next Steps */}
-                {result.nextSteps && (
+                {result?.nextSteps && (
                   <Card className="md:col-span-2 border-primary/50 bg-primary/5">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
@@ -649,7 +751,7 @@ export default function MatchingSession() {
                     </CardHeader>
                     <CardContent>
                       <div className="prose prose-sm dark:prose-invert max-w-none">
-                        <Streamdown>{result.nextSteps}</Streamdown>
+                        <Streamdown>{result?.nextSteps}</Streamdown>
                       </div>
                     </CardContent>
                   </Card>
@@ -662,7 +764,7 @@ export default function MatchingSession() {
                   </CardHeader>
                   <CardContent>
                     <div className="prose prose-sm dark:prose-invert max-w-none">
-                      <Streamdown>{result.detailedAnalysis || "詳細分析データがありません"}</Streamdown>
+                      <Streamdown>{result?.detailedAnalysis || "詳細分析データがありません"}</Streamdown>
                     </div>
                   </CardContent>
                 </Card>
