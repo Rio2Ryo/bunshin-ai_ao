@@ -1,0 +1,7 @@
+export { KpiWidget } from "./KpiWidget";
+export { RecentMatchingsWidget } from "./RecentMatchingsWidget";
+export { FriendsListWidget } from "./FriendsListWidget";
+export { TwinStatusWidget } from "./TwinStatusWidget";
+export { NotificationsWidget } from "./NotificationsWidget";
+export { QuickActionsWidget } from "./QuickActionsWidget";
+export { AnalyticsWidget } from "./AnalyticsWidget";

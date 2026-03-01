@@ -41,10 +41,11 @@ function formatTime(dateStr?: string | null) {
 
 function TypingDots() {
   return (
-    <div className="flex gap-1 items-center h-5">
-      <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-      <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-      <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+    <div className="flex gap-1 items-center h-5" role="status" aria-label="AIが入力中">
+      <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} aria-hidden="true" />
+      <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} aria-hidden="true" />
+      <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} aria-hidden="true" />
+      <span className="sr-only">AIが応答を生成中...</span>
     </div>
   );
 }
@@ -488,14 +489,14 @@ export default function Chat() {
                   {myTwin ? `${myTwin.name}とチャット` : "分身AIチャット"}
                 </CardTitle>
                 {!isOnline && (
-                  <span className="text-xs text-amber-600 flex items-center gap-1">
-                    <WifiOff className="h-3 w-3" />
+                  <span className="text-xs text-amber-600 flex items-center gap-1" role="status" aria-live="polite">
+                    <WifiOff className="h-3 w-3" aria-hidden="true" />
                     オフライン
                   </span>
                 )}
                 {isOnline && wsConnected && (
-                  <span className="text-xs text-emerald-600 flex items-center gap-1" title="ストリーミング接続中">
-                    <Zap className="h-3 w-3" />
+                  <span className="text-xs text-emerald-600 flex items-center gap-1" role="status" aria-label="ストリーミング接続中" title="ストリーミング接続中">
+                    <Zap className="h-3 w-3" aria-hidden="true" />
                   </span>
                 )}
               </div>
@@ -644,8 +645,8 @@ export default function Chat() {
                       </div>
                     )}
                     {isFlushingQueue && (
-                      <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground py-2">
-                        <Loader2 className="h-3 w-3 animate-spin" />
+                      <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground py-2" role="status" aria-live="polite">
+                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
                         キューメッセージを送信中...
                       </div>
                     )}

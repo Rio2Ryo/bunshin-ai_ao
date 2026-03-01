@@ -9,6 +9,7 @@ export type Env = {
   DB: D1Database;
   ASSETS?: R2Bucket;
   CHAT_ROOMS: DurableObjectNamespace;
+  MATCHING_ROOMS: DurableObjectNamespace;
   JWT_SECRET?: string;
   AZURE_FOUNDRY_API_KEY?: string;
   AZURE_FOUNDRY_RESOURCE?: string;

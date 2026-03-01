@@ -97,6 +97,7 @@ export default function Register() {
                 required
                 autoComplete="name"
                 aria-label="お名前"
+                aria-invalid={registerMutation.isError || undefined}
               />
             </div>
             <div className="space-y-2">
@@ -110,6 +111,7 @@ export default function Register() {
                 required
                 autoComplete="email"
                 aria-label="メールアドレス"
+                aria-invalid={registerMutation.isError || undefined}
               />
             </div>
             <div className="space-y-2">
@@ -124,7 +126,10 @@ export default function Register() {
                 minLength={6}
                 autoComplete="new-password"
                 aria-label="パスワード"
+                aria-invalid={(password.length > 0 && password.length < 6) || undefined}
+                aria-describedby="password-hint"
               />
+              <p id="password-hint" className="sr-only">パスワードは6文字以上で入力してください</p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="confirmPassword">{t("register.confirmPassword")}</Label>
@@ -138,6 +143,7 @@ export default function Register() {
                 minLength={6}
                 autoComplete="new-password"
                 aria-label="パスワード（確認）"
+                aria-invalid={(confirmPassword.length > 0 && confirmPassword !== password) || undefined}
               />
             </div>
             <div className="flex items-start gap-2">
@@ -146,7 +152,8 @@ export default function Register() {
                 id="tos"
                 checked={tosAccepted}
                 onChange={(e) => setTosAccepted(e.target.checked)}
-                className="mt-1 rounded border-input"
+                className="mt-1 rounded border-input focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                aria-required="true"
               />
               <Label htmlFor="tos" className="text-xs text-muted-foreground leading-relaxed cursor-pointer">
                 <Link href="/terms" className="text-primary hover:underline">利用規約</Link>および

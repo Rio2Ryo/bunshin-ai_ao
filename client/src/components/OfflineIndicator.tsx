@@ -1,32 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import { WifiOff, Wifi } from "lucide-react";
+import { useNetworkStatus } from "@/hooks/useNetworkStatus";
 
 type Status = "online" | "offline" | "reconnected";
 
 export function OfflineIndicator() {
-  const [status, setStatus] = useState<Status>(navigator.onLine ? "online" : "offline");
-  const wasOffline = useRef(false);
+  const { isOnline } = useNetworkStatus();
+  const [status, setStatus] = useState<Status>(isOnline ? "online" : "offline");
+  const wasOffline = useRef(!isOnline);
 
   useEffect(() => {
-    const goOffline = () => {
+    if (!isOnline) {
       wasOffline.current = true;
       setStatus("offline");
-    };
-    const goOnline = () => {
-      if (wasOffline.current) {
-        setStatus("reconnected");
-        // 3秒後に非表示
-        setTimeout(() => setStatus("online"), 3000);
-        wasOffline.current = false;
-      }
-    };
-    window.addEventListener("offline", goOffline);
-    window.addEventListener("online", goOnline);
-    return () => {
-      window.removeEventListener("offline", goOffline);
-      window.removeEventListener("online", goOnline);
-    };
-  }, []);
+    } else if (wasOffline.current) {
+      setStatus("reconnected");
+      const timer = setTimeout(() => setStatus("online"), 3000);
+      wasOffline.current = false;
+      return () => clearTimeout(timer);
+    }
+  }, [isOnline]);
 
   if (status === "online") return null;
 

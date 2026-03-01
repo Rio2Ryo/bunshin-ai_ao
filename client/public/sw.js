@@ -1,6 +1,6 @@
 // Service Worker for 分身AI PWA
 const CACHE_NAME = 'bunshin-ai-v5';
-const API_CACHE_NAME = 'bunshin-ai-api-v1';
+const API_CACHE_NAME = 'bunshin-ai-api-v2';
 const API_CACHE_MAX_ENTRIES = 100;
 const API_CACHE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 
@@ -53,9 +53,9 @@ self.addEventListener('fetch', (event) => {
   // Chrome拡張等の非HTTP(S)リクエストは無視
   if (!url.protocol.startsWith('http')) return;
 
-  // tRPC APIクエリ（GET）: ネットワーク優先 + APIキャッシュ
+  // tRPC APIクエリ（GET）: stale-while-revalidate + APIキャッシュ
   if (url.pathname.startsWith('/api/trpc') && request.method === 'GET') {
-    event.respondWith(apiNetworkFirst(request));
+    event.respondWith(apiStaleWhileRevalidate(request));
     return;
   }
 
@@ -84,6 +84,18 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(networkFirst(request));
 });
 
+// クライアントからのメッセージハンドラ
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'ONLINE_STATUS_CHANGED' && event.data.isOnline) {
+    // オンライン復帰をすべてのクライアントに通知
+    self.clients.matchAll({ type: 'window' }).then((clients) => {
+      clients.forEach((client) => {
+        client.postMessage({ type: 'FLUSH_MESSAGE_QUEUE' });
+      });
+    });
+  }
+});
+
 // ナビゲーション処理（Navigation Preload対応）
 // オフライン時: まずキャッシュされたSPAシェル（/）を返す → SPAルーターが正しいページを描画
 async function handleNavigate(event) {
@@ -106,49 +118,44 @@ async function handleNavigate(event) {
   }
 }
 
-// tRPC API専用: ネットワーク優先 + 専用APIキャッシュ（5秒タイムアウト）
-async function apiNetworkFirst(request) {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-    const response = await fetch(request, { signal: controller.signal });
-    clearTimeout(timeoutId);
+// tRPC API専用: stale-while-revalidate + 専用APIキャッシュ
+// キャッシュがあれば即返却、バックグラウンドでネットワークから更新
+async function apiStaleWhileRevalidate(request) {
+  const cache = await caches.open(API_CACHE_NAME);
+  const cachedResponse = await cache.match(request);
 
-    if (response.ok) {
-      const cache = await caches.open(API_CACHE_NAME);
-      const responseToCache = response.clone();
+  const fetchPromise = fetch(request).then(async (networkResponse) => {
+    if (networkResponse.ok) {
       // タイムスタンプヘッダーを追加してキャッシュ
-      const headers = new Headers(responseToCache.headers);
+      const headers = new Headers(networkResponse.headers);
       headers.set('sw-cached-at', String(Date.now()));
-      const body = await responseToCache.arrayBuffer();
+      const body = await networkResponse.clone().arrayBuffer();
       const timestampedResponse = new Response(body, {
-        status: responseToCache.status,
-        statusText: responseToCache.statusText,
+        status: networkResponse.status,
+        statusText: networkResponse.statusText,
         headers,
       });
       cache.put(request, timestampedResponse);
-      // キャッシュサイズ制限
       trimCache(API_CACHE_NAME, API_CACHE_MAX_ENTRIES);
     }
-    return response;
-  } catch {
-    // オフライン: APIキャッシュからフォールバック
-    const cache = await caches.open(API_CACHE_NAME);
-    const cached = await cache.match(request);
-    if (cached) {
-      // 期限切れチェック（1時間）
-      const cachedAt = Number(cached.headers.get('sw-cached-at') || 0);
-      if (Date.now() - cachedAt < API_CACHE_MAX_AGE_MS) {
-        return cached;
-      }
-      // 期限切れでも返す（オフラインなので古いデータでも価値がある）
-      return cached;
-    }
-    return new Response(JSON.stringify({ error: 'Offline' }), {
-      status: 503,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return networkResponse;
+  }).catch(() => null);
+
+  // キャッシュがあれば即返却、なければネットワーク待ち
+  if (cachedResponse) {
+    // バックグラウンドで更新（結果は使わない）
+    fetchPromise;
+    return cachedResponse;
   }
+
+  // キャッシュなし：ネットワークからの結果を待つ
+  const networkResponse = await fetchPromise;
+  if (networkResponse) return networkResponse;
+
+  return new Response(JSON.stringify({ error: 'Offline' }), {
+    status: 503,
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 // Stale-while-revalidate: キャッシュから即返却＋バックグラウンドで更新

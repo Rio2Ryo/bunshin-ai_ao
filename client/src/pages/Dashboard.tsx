@@ -1,59 +1,63 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import DashboardLayout from "@/components/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
-import {
-  Bot, MessageSquare, Users, FileText, UserPlus,
-  Clock, CheckCircle, Crown, Globe, ArrowRight, Shield, Sparkles, Bell, Loader2
-} from "lucide-react";
+import { Crown, ArrowRight, Sparkles, Bell, Loader2, Pencil, RotateCcw, Eye, EyeOff, GripVertical, CheckCircle } from "lucide-react";
+import { useDashboardLayout, type WidgetId } from "@/hooks/useDashboardLayout";
+import { KpiWidget, RecentMatchingsWidget, FriendsListWidget, TwinStatusWidget, NotificationsWidget, QuickActionsWidget, AnalyticsWidget } from "@/components/widgets";
+import { useCallback, useRef, useState } from "react";
+
+const WIDGET_COMPONENTS: Record<WidgetId, { component: React.FC; label: string }> = {
+  kpi: { component: KpiWidget, label: "KPI" },
+  recentMatchings: { component: RecentMatchingsWidget, label: "最近のマッチング" },
+  friendsList: { component: FriendsListWidget, label: "友達" },
+  twinStatus: { component: TwinStatusWidget, label: "分身AI" },
+  notifications: { component: NotificationsWidget, label: "通知" },
+  quickActions: { component: QuickActionsWidget, label: "クイックアクション" },
+  analytics: { component: AnalyticsWidget, label: "アクティビティ" },
+};
 
 export default function Dashboard() {
   const { user } = useAuth();
   usePageMeta({ title: "ダッシュボード", description: "分身AIの管理、チャット、マッチングの概要を確認しましょう。", path: "/dashboard" });
-  const { data: myTwin, isLoading: twinLoading } = trpc.myTwin.get.useQuery(undefined, { staleTime: 30_000 });
-  const { data: friends } = trpc.friends.list.useQuery(undefined, { staleTime: 30_000 });
-  const { data: chatSessions } = trpc.chat.sessions.useQuery(undefined, { staleTime: 30_000 });
-  const { data: matchingSessions } = trpc.matching.sessions.useQuery(undefined, { staleTime: 30_000 });
   const { data: planInfo } = trpc.plan.getInfo.useQuery();
-  const { data: trustData, isLoading: trustLoading } = trpc.trust.getScore.useQuery(undefined, { staleTime: 60_000 });
-  const { data: receivedRequests } = trpc.matching.receivedRequests.useQuery(undefined, { staleTime: 15_000 });
   const { data: profile } = trpc.profile.get.useQuery(undefined, { staleTime: 60_000 });
+  const { data: receivedRequests } = trpc.matching.receivedRequests.useQuery(undefined, { staleTime: 15_000 });
+  const { data: myTwin, isLoading: twinLoading } = trpc.myTwin.get.useQuery(undefined, { staleTime: 30_000 });
+  const { data: trustData, isLoading: trustLoading } = trpc.trust.getScore.useQuery(undefined, { staleTime: 60_000 });
+  const { data: matchingSessions } = trpc.matching.sessions.useQuery(undefined, { staleTime: 30_000 });
   const pendingRequestCount = receivedRequests?.length ?? 0;
-
-  const completedMatchings = matchingSessions?.filter(s => s.status === "completed").length || 0;
-  const recentMatchings = matchingSessions?.slice(0, 3) || [];
   const me = user as any;
   const tutorialDone = me?.tutorialCompleted === 1;
   const hasNpcSessions = matchingSessions?.some((s: any) => s.isNpcSession);
 
-  // Determine action cards based on user state
-  const actionCards: Array<{ title: string; description: string; href: string; icon: React.ElementType; primary?: boolean }> = [];
+  const { layout, isEditing, setIsEditing, toggleWidget, resetLayout, swapWidgets } = useDashboardLayout();
+  const [draggedWidget, setDraggedWidget] = useState<WidgetId | null>(null);
 
-  if (myTwin && !myTwin.isPublic) {
-    actionCards.push({ title: "分身AIを公開しよう", description: "他のユーザーに発見してもらえるようになります", href: "/twins", icon: Globe });
-  }
-  if (!friends?.length) {
-    actionCards.push({ title: "友達を追加しよう", description: "フレンドコードで友達を見つけましょう", href: "/friends", icon: UserPlus });
-  }
-  if (friends?.length && !matchingSessions?.length) {
-    actionCards.push({ title: "マッチングを試そう", description: "友達の分身AIとビジネスマッチング", href: "/matching", icon: Users });
-  }
-  if (myTwin && chatSessions && chatSessions.length <= 1) {
-    actionCards.push({ title: "チャットで会話してみよう", description: "分身AIと会話して育てましょう", href: "/chat", icon: MessageSquare, primary: true });
-  }
+  const handleDragStart = useCallback((e: React.DragEvent, id: WidgetId) => {
+    setDraggedWidget(id);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", id);
+  }, []);
 
-  // If no specific actions, show default actions
-  if (actionCards.length === 0) {
-    actionCards.push(
-      { title: "チャット", description: "分身AIと会話する", href: "/chat", icon: MessageSquare },
-      { title: "マッチング", description: "新しいマッチングを作成", href: "/matching", icon: Users },
-    );
-  }
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent, dropId: WidgetId) => {
+    e.preventDefault();
+    const dragId = e.dataTransfer.getData("text/plain") as WidgetId;
+    if (dragId && dragId !== dropId) {
+      swapWidgets(dragId, dropId);
+    }
+    setDraggedWidget(null);
+  }, [swapWidgets]);
 
   // Profile completion
   const profileFields = [
@@ -79,10 +83,13 @@ export default function Dashboard() {
     );
   }
 
+  const visibleWidgets = layout.filter(w => w.visible).sort((a, b) => a.y === b.y ? a.x - b.x : a.y - b.y);
+  const hiddenWidgets = layout.filter(w => !w.visible);
+
   return (
     <DashboardLayout>
       <div className="space-y-6" role="main" aria-label="ダッシュボード">
-        {/* Welcome Section */}
+        {/* Header */}
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-2xl font-bold">
@@ -92,15 +99,62 @@ export default function Dashboard() {
               分身AIの管理とビジネスマッチングを始めましょう
             </p>
           </div>
-          {planInfo && (
-            <Link href="/plan">
-              <Badge variant={planInfo.plan === "free" ? "secondary" : "default"} className="cursor-pointer">
-                <Crown className="h-3 w-3 mr-1" />
-                {planInfo.plan === "free" ? "フリー" : planInfo.plan === "premium" ? "プレミアム" : "エンタープライズ"}
-              </Badge>
-            </Link>
-          )}
+          <div className="flex items-center gap-2">
+            {planInfo && (
+              <Link href="/plan">
+                <Badge variant={planInfo.plan === "free" ? "secondary" : "default"} className="cursor-pointer">
+                  <Crown className="h-3 w-3 mr-1" />
+                  {planInfo.plan === "free" ? "フリー" : planInfo.plan === "premium" ? "プレミアム" : "エンタープライズ"}
+                </Badge>
+              </Link>
+            )}
+            <Button
+              variant={isEditing ? "default" : "outline"}
+              size="sm"
+              onClick={() => setIsEditing(!isEditing)}
+              className="gap-1"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              {isEditing ? "完了" : "編集"}
+            </Button>
+          </div>
         </div>
+
+        {/* Edit mode toolbar */}
+        {isEditing && (
+          <Card className="border-primary/30 bg-primary/5">
+            <CardContent className="py-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">レイアウト編集中</span>
+                <span className="text-xs text-muted-foreground">ウィジェットをドラッグして並べ替え</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={resetLayout} className="gap-1">
+                  <RotateCcw className="h-3 w-3" />
+                  リセット
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Hidden widgets palette (edit mode) */}
+        {isEditing && hiddenWidgets.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {hiddenWidgets.map(w => (
+              <Button
+                key={w.id}
+                variant="outline"
+                size="sm"
+                onClick={() => toggleWidget(w.id)}
+                className="gap-1"
+              >
+                <Eye className="h-3 w-3" />
+                {WIDGET_COMPONENTS[w.id]?.label}
+              </Button>
+            ))}
+          </div>
+        )}
 
         {/* First-time user guide */}
         {!tutorialDone && myTwin && (
@@ -121,10 +175,6 @@ export default function Dashboard() {
                       <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30 shrink-0" />
                       <span>マッチング結果を確認してチュートリアル完了</span>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30 shrink-0" />
-                      <span>実ユーザーとのマッチングを開始</span>
-                    </div>
                   </div>
                   <Link href="/matching">
                     <Button size="sm" className="mt-3 gap-1">
@@ -138,7 +188,7 @@ export default function Dashboard() {
           </Card>
         )}
 
-        {/* Pending Requests Notification */}
+        {/* Pending Requests */}
         {pendingRequestCount > 0 && (
           <Card className="border-orange-500/50 bg-orange-500/5">
             <CardContent className="p-5">
@@ -161,54 +211,6 @@ export default function Dashboard() {
           </Card>
         )}
 
-        {/* Twin Status Card (compact) */}
-        {myTwin && (
-          <Card className="bg-muted/30">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center">
-                    <Bot className="h-5 w-5 text-primary" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-sm">{myTwin.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {myTwin.isPublic ? "公開中" : "非公開"} · {myTwin.description ? myTwin.description.slice(0, 30) + (myTwin.description.length > 30 ? "..." : "") : "プロフィール未設定"}
-                    </p>
-                  </div>
-                </div>
-                <Link href="/twins">
-                  <Button variant="ghost" size="sm">
-                    管理
-                    <ArrowRight className="h-3 w-3 ml-1" />
-                  </Button>
-                </Link>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Action Cards */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3" role="list" aria-label="アクション">
-          {actionCards.slice(0, 3).map((card) => (
-            <Link key={card.href + card.title} href={card.href}>
-              <Card className={`hover:border-primary/50 transition-colors cursor-pointer h-full ${card.primary ? "border-primary/30 bg-primary/5" : ""}`}>
-                <CardContent className="p-5">
-                  <div className="flex items-start gap-3">
-                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${card.primary ? "bg-primary/20" : "bg-muted"}`}>
-                      <card.icon className={`h-4 w-4 ${card.primary ? "text-primary" : "text-muted-foreground"}`} />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-medium text-sm">{card.title}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{card.description}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
-
         {/* Profile Completion */}
         {profile && completionPct < 100 && (
           <Card className="bg-muted/30">
@@ -222,9 +224,6 @@ export default function Dashboard() {
                 {profileFields.filter(f => !f.filled).slice(0, 4).map(f => (
                   <Badge key={f.key} variant="outline" className="text-xs text-muted-foreground">{f.label}</Badge>
                 ))}
-                {profileFields.filter(f => !f.filled).length > 4 && (
-                  <Badge variant="outline" className="text-xs text-muted-foreground">+{profileFields.filter(f => !f.filled).length - 4}</Badge>
-                )}
               </div>
               <Link href="/profile">
                 <Button variant="ghost" size="sm" className="mt-2 text-xs gap-1 p-0 h-auto">
@@ -235,13 +234,60 @@ export default function Dashboard() {
           </Card>
         )}
 
-        {/* Quick Stats */}
-        <div className="grid gap-3 grid-cols-2 lg:grid-cols-5" role="list" aria-label="統計情報">
-          <MiniStat icon={Shield} label="信頼度" value={`${trustData?.score ?? 0}pt`} href="/trust" />
-          <MiniStat icon={Bot} label="分身AI" value={myTwin ? "作成済み" : "未作成"} href="/twins" />
-          <MiniStat icon={UserPlus} label="友達" value={`${friends?.length || 0}人`} href="/friends" />
-          <MiniStat icon={MessageSquare} label="チャット" value={`${chatSessions?.length || 0}件`} href="/chat" />
-          <MiniStat icon={FileText} label="マッチング" value={`${completedMatchings}件完了`} href="/matching" />
+        {/* Widget Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {visibleWidgets.map(widgetLayout => {
+            const config = WIDGET_COMPONENTS[widgetLayout.id];
+            if (!config) return null;
+            const WidgetComponent = config.component;
+            const isFullWidth = widgetLayout.w >= 12;
+            const isDragging = draggedWidget === widgetLayout.id;
+
+            return (
+              <div
+                key={widgetLayout.id}
+                className={`${isFullWidth ? "md:col-span-2" : ""} ${isDragging ? "opacity-50" : ""} ${isEditing ? "relative group" : ""}`}
+                draggable={isEditing}
+                onDragStart={(e) => handleDragStart(e, widgetLayout.id)}
+                onDragOver={isEditing ? handleDragOver : undefined}
+                onDrop={isEditing ? (e) => handleDrop(e, widgetLayout.id) : undefined}
+              >
+                {isEditing && (
+                  <div className="absolute -top-2 -right-2 z-10 flex items-center gap-1">
+                    <button
+                      onClick={() => toggleWidget(widgetLayout.id)}
+                      className="h-6 w-6 rounded-full bg-destructive/90 text-white flex items-center justify-center hover:bg-destructive text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      aria-label={`${config.label}ウィジェットを非表示`}
+                    >
+                      <EyeOff className="h-3 w-3" aria-hidden="true" />
+                    </button>
+                  </div>
+                )}
+                {isEditing && (
+                  <div
+                    className="absolute top-2 left-2 z-10 cursor-grab active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-ring rounded"
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`${config.label}ウィジェットを移動（矢印キーで並べ替え）`}
+                    aria-roledescription="ドラッグハンドル"
+                    onKeyDown={(e) => {
+                      const idx = visibleWidgets.findIndex(w => w.id === widgetLayout.id);
+                      if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+                        e.preventDefault();
+                        if (idx > 0) swapWidgets(widgetLayout.id, visibleWidgets[idx - 1].id);
+                      } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+                        e.preventDefault();
+                        if (idx < visibleWidgets.length - 1) swapWidgets(widgetLayout.id, visibleWidgets[idx + 1].id);
+                      }
+                    }}
+                  >
+                    <GripVertical className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                  </div>
+                )}
+                <WidgetComponent />
+              </div>
+            );
+          })}
         </div>
 
         {/* Login Streak */}
@@ -252,82 +298,7 @@ export default function Dashboard() {
             {me.loginStreak >= 7 && <Badge variant="default" className="text-[10px]">ストリーク</Badge>}
           </div>
         )}
-
-        {/* Recent Matchings */}
-        {recentMatchings.length > 0 && (
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Clock className="h-4 w-4" />
-                  最近のマッチング
-                </CardTitle>
-                <Link href="/matching">
-                  <Button variant="ghost" size="sm" className="text-xs">
-                    すべて見る
-                  </Button>
-                </Link>
-              </div>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <div className="space-y-2">
-                {recentMatchings.map((session) => {
-                  const score = (session as any).compatibilityScore || 0;
-
-                  return (
-                    <Link key={session.id} href={`/matching/${session.id}`}>
-                      <div className="flex items-center justify-between p-2.5 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors cursor-pointer">
-                        <div className="flex items-center gap-2.5">
-                          {session.status === "completed" ? (
-                            <CheckCircle className="h-4 w-4 text-green-500" />
-                          ) : (
-                            <Clock className="h-4 w-4 text-muted-foreground" />
-                          )}
-                          <div>
-                            <p className="font-medium text-sm">{session.theme}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {session.twin1?.name} × {session.twin2?.name}
-                            </p>
-                          </div>
-                        </div>
-                        {score > 0 && (
-                          <Badge variant={score >= 80 ? "default" : "secondary"} className="text-xs">
-                            {score}%
-                          </Badge>
-                        )}
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-        )}
       </div>
     </DashboardLayout>
-  );
-}
-
-function MiniStat({
-  icon: Icon,
-  label,
-  value,
-  href,
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: string;
-  href: string;
-}) {
-  return (
-    <Link href={href} aria-label={`${label}: ${value}`}>
-      <div className="flex items-center gap-2.5 p-3 rounded-lg border bg-card hover:border-primary/50 transition-colors cursor-pointer" role="listitem">
-        <Icon className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden="true" />
-        <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">{label}</p>
-          <p className="text-sm font-medium truncate">{value}</p>
-        </div>
-      </div>
-    </Link>
   );
 }

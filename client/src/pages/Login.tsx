@@ -92,6 +92,8 @@ export default function Login() {
                 required
                 autoComplete="email"
                 aria-label="メールアドレス"
+                aria-invalid={loginMutation.isError || undefined}
+                aria-describedby={showResend ? "login-error" : undefined}
               />
             </div>
             <div className="space-y-2">
@@ -110,6 +112,7 @@ export default function Login() {
                 required
                 autoComplete="current-password"
                 aria-label="パスワード"
+                aria-invalid={loginMutation.isError || undefined}
               />
             </div>
             <Button
@@ -119,7 +122,7 @@ export default function Login() {
               aria-label="ログイン"
             >
               {loginMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                <Loader2 className="h-4 w-4 animate-spin mr-2" aria-hidden="true" />
               ) : null}
               {t("login.submit")}
             </Button>

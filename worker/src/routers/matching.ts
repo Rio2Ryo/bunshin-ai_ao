@@ -1299,4 +1299,24 @@ JSON形式で回答: {"summary": "傾向の要約(50文字)", "topPattern": "最
       stats: { totalMatchings: results.length, avgScore, successCount: successfulMatches.length },
     };
   }),
+
+  getComments: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT mc.*, u.name as userName FROM matching_comments mc LEFT JOIN users u ON u.id = mc.userId WHERE mc.sessionId=? ORDER BY mc.createdAt ASC`
+      ).bind(input.sessionId).all<any>();
+      return rows.results ?? [];
+    }),
+
+  getReactions: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT mr.*, u.name as userName FROM matching_reactions mr LEFT JOIN users u ON u.id = mr.userId WHERE mr.sessionId=? ORDER BY mr.createdAt ASC`
+      ).bind(input.sessionId).all<any>();
+      return rows.results ?? [];
+    }),
 });

@@ -9,11 +9,12 @@ import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc, API_BASE } from "@/lib/trpc";
 import { useParams, Link } from "wouter";
 import { useState, useCallback, useRef, useEffect } from "react";
-import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, Users, Calendar, DollarSign, Target, Rocket, Share2, Link as LinkIcon, ExternalLink, Search, Globe, Zap } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, Users, Calendar, DollarSign, Target, Rocket, Share2, Link as LinkIcon, ExternalLink, Search, Globe, Zap, ThumbsUp, Send as SendIcon, Eye } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { LazyStreamdown as Streamdown } from "@/components/LazyStreamdown";
 import { toast } from "sonner";
-import { useMatchingStream, type MatchingTurn, type MatchingAnalysis } from "@/hooks/useMatchingStream";
+import { useMatchingRoom, type MatchingComment, type MatchingReaction } from "@/hooks/useMatchingRoom";
+import { type MatchingTurn, type MatchingAnalysis } from "@/hooks/useMatchingStream";
 
 export default function MatchingSession() {
   const { id } = useParams<{ id: string }>();
@@ -25,6 +26,12 @@ export default function MatchingSession() {
   const [streamingAnalysis, setStreamingAnalysis] = useState<MatchingAnalysis | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Comments & reactions state
+  const [comments, setComments] = useState<MatchingComment[]>([]);
+  const [reactions, setReactions] = useState<Map<number, { count: number; reacted: boolean }>>(new Map());
+  const [commentInput, setCommentInput] = useState("");
+  const [commentTurn, setCommentTurn] = useState<number | null>(null);
 
   const { data, isLoading, isError, refetch } = trpc.matching.getSession.useQuery(
     { id: sessionId },
@@ -59,7 +66,20 @@ export default function MatchingSession() {
     toast.error(message);
   }, []);
 
-  const { phase } = useMatchingStream({
+  const onComment = useCallback((comment: MatchingComment) => {
+    setComments((prev) => [...prev, comment]);
+  }, []);
+
+  const onReaction = useCallback((reaction: MatchingReaction) => {
+    setReactions((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(reaction.turnNumber) || { count: 0, reacted: false };
+      next.set(reaction.turnNumber, { count: existing.count + 1, reacted: existing.reacted });
+      return next;
+    });
+  }, []);
+
+  const { phase, connected, sendComment, sendReaction, viewerCount } = useMatchingRoom({
     sessionId,
     enabled: shouldStream,
     onTurn,
@@ -67,7 +87,30 @@ export default function MatchingSession() {
     onAnalysisComplete,
     onComplete,
     onError,
+    onComment,
+    onReaction,
+    onViewerCount: undefined,
   });
+
+  const handleSendComment = useCallback(() => {
+    if (!commentInput.trim()) return;
+    sendComment(commentTurn, commentInput.trim());
+    setCommentInput("");
+    setCommentTurn(null);
+  }, [commentInput, commentTurn, sendComment]);
+
+  const handleLike = useCallback((turnNumber: number) => {
+    sendReaction(turnNumber, "like");
+    // Optimistic update
+    setReactions((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(turnNumber) || { count: 0, reacted: false };
+      if (!existing.reacted) {
+        next.set(turnNumber, { count: existing.count + 1, reacted: true });
+      }
+      return next;
+    });
+  }, [sendReaction]);
 
   // Auto-scroll streaming dialogue
   useEffect(() => {
@@ -218,8 +261,15 @@ export default function MatchingSession() {
               </p>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-2">
+            {/* Viewer count badge */}
+            {connected && viewerCount > 0 && (
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted rounded-full px-3 py-1">
+                <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+                {viewerCount}人が閲覧中
+              </span>
+            )}
             {/* Share Button */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -438,31 +488,88 @@ export default function MatchingSession() {
                         const speakerTwinId = dialogue.speakerTwinId;
                         const isTwin1 = speakerTwinId === session.twin1Id;
                         const speakerName = dialogue.speakerName || (isTwin1 ? twin1?.name : twin2?.name);
+                        const turnNum = dialogue.turnNumber ?? (i + 1);
+                        const turnReaction = reactions.get(turnNum);
+                        const turnComments = comments.filter(c => c.turnNumber === turnNum);
 
                         return (
                           <div
                             key={dialogue.id || `stream-${i}`}
-                            className={`flex gap-3 ${isTwin1 ? "" : "flex-row-reverse"} animate-in fade-in-0 slide-in-from-bottom-2 duration-300`}
+                            className={`group/turn animate-in fade-in-0 slide-in-from-bottom-2 duration-300`}
                           >
-                            <div
-                              className={`h-10 w-10 rounded-full flex items-center justify-center flex-shrink-0 ${
-                                isTwin1 ? "bg-primary/20" : "bg-accent/20"
-                              }`}
-                            >
-                              <Bot className={`h-5 w-5 ${isTwin1 ? "text-primary" : "text-accent"}`} />
-                            </div>
-                            <div
-                              className={`flex-1 max-w-[80%] ${isTwin1 ? "" : "text-right"}`}
-                            >
-                              <p className="text-sm font-medium mb-1">
-                                {speakerName || `Twin #${speakerTwinId}`}
-                              </p>
+                            <div className={`flex gap-3 ${isTwin1 ? "" : "flex-row-reverse"}`}>
                               <div
-                                className={`rounded-lg p-3 ${
-                                  isTwin1 ? "bg-muted" : "bg-accent/10"
+                                className={`h-10 w-10 rounded-full flex items-center justify-center flex-shrink-0 ${
+                                  isTwin1 ? "bg-primary/20" : "bg-accent/20"
                                 }`}
                               >
-                                <Streamdown>{dialogue.content}</Streamdown>
+                                <Bot className={`h-5 w-5 ${isTwin1 ? "text-primary" : "text-accent"}`} />
+                              </div>
+                              <div
+                                className={`flex-1 max-w-[80%] ${isTwin1 ? "" : "text-right"}`}
+                              >
+                                <p className="text-sm font-medium mb-1">
+                                  {speakerName || `Twin #${speakerTwinId}`}
+                                </p>
+                                <div
+                                  className={`rounded-lg p-3 ${
+                                    isTwin1 ? "bg-muted" : "bg-accent/10"
+                                  }`}
+                                >
+                                  <Streamdown>{dialogue.content}</Streamdown>
+                                </div>
+                                {/* Like button + comment trigger */}
+                                <div className={`flex items-center gap-2 mt-1 ${isTwin1 ? "" : "justify-end"}`}>
+                                  <button
+                                    onClick={() => handleLike(turnNum)}
+                                    disabled={turnReaction?.reacted}
+                                    className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full transition-colors ${
+                                      turnReaction?.reacted
+                                        ? "bg-primary/10 text-primary"
+                                        : "text-muted-foreground hover:bg-muted opacity-0 group-hover/turn:opacity-100 focus-visible:opacity-100"
+                                    }`}
+                                    aria-label={`いいね${turnReaction?.count ? `（${turnReaction.count}件）` : ""}`}
+                                  >
+                                    <ThumbsUp className="h-3 w-3" aria-hidden="true" />
+                                    {turnReaction?.count ? turnReaction.count : ""}
+                                  </button>
+                                  <button
+                                    onClick={() => setCommentTurn(commentTurn === turnNum ? null : turnNum)}
+                                    className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full text-muted-foreground hover:bg-muted opacity-0 group-hover/turn:opacity-100 focus-visible:opacity-100 transition-colors"
+                                    aria-label="コメント"
+                                    aria-expanded={commentTurn === turnNum}
+                                  >
+                                    <MessageSquare className="h-3 w-3" aria-hidden="true" />
+                                    {turnComments.length > 0 ? turnComments.length : ""}
+                                  </button>
+                                </div>
+                                {/* Inline comments for this turn */}
+                                {turnComments.length > 0 && (
+                                  <div className="mt-1.5 space-y-1 pl-2 border-l-2 border-muted">
+                                    {turnComments.map((c, ci) => (
+                                      <p key={ci} className="text-xs text-muted-foreground">
+                                        <span className="font-medium text-foreground">{c.userName}</span>: {c.content}
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
+                                {/* Comment input for this turn */}
+                                {commentTurn === turnNum && (
+                                  <div className="flex gap-1.5 mt-1.5">
+                                    <Input
+                                      value={commentInput}
+                                      onChange={(e) => setCommentInput(e.target.value)}
+                                      placeholder="コメントを入力..."
+                                      className="h-7 text-xs"
+                                      onKeyDown={(e) => { if (e.key === "Enter") handleSendComment(); }}
+                                      autoFocus
+                                      aria-label="コメント入力"
+                                    />
+                                    <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={handleSendComment} disabled={!commentInput.trim()} aria-label="コメント送信">
+                                      <SendIcon className="h-3 w-3" aria-hidden="true" />
+                                    </Button>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>

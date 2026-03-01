@@ -219,6 +219,7 @@ function DashboardLayoutContent({
         { icon: MessageCircle, label: t("nav.line"), path: "/line-link" },
         { icon: CreditCard, label: t("nav.cards"), path: "/cards" },
         { icon: Crown, label: t("nav.plan"), path: "/plan" },
+        { icon: Brain, label: language === "en" ? "Personality" : "人格診断", path: "/personality" },
       ],
     },
   ], [t, language]);
@@ -272,6 +273,13 @@ function DashboardLayoutContent({
 
   return (
     <>
+      {/* Skip to main content link for keyboard navigation */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:bg-primary focus:text-primary-foreground focus:px-4 focus:py-2 focus:rounded-md focus:text-sm focus:font-medium"
+      >
+        メインコンテンツへスキップ
+      </a>
       <div className="relative" ref={sidebarRef}>
         <Sidebar
           collapsible="icon"
@@ -495,10 +503,30 @@ function DashboardLayoutContent({
           </SidebarFooter>
         </Sidebar>
         <div
-          className={`absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/20 transition-colors ${isCollapsed ? "hidden" : ""}`}
+          className={`absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/20 transition-colors focus-visible:bg-primary/30 focus-visible:w-1.5 focus-visible:outline-none ${isCollapsed ? "hidden" : ""}`}
           onMouseDown={() => {
             if (isCollapsed) return;
             setIsResizing(true);
+          }}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="サイドバー幅を調整"
+          aria-valuenow={undefined}
+          tabIndex={isCollapsed ? -1 : 0}
+          onKeyDown={(e) => {
+            if (isCollapsed) return;
+            if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+              e.preventDefault();
+              const delta = e.key === "ArrowRight" ? 20 : -20;
+              const sidebar = sidebarRef.current;
+              if (sidebar) {
+                const rect = sidebar.getBoundingClientRect();
+                const newWidth = rect.width + delta;
+                if (newWidth >= MIN_WIDTH && newWidth <= MAX_WIDTH) {
+                  setSidebarWidth(newWidth);
+                }
+              }
+            }
           }}
           style={{ zIndex: 50 }}
         />

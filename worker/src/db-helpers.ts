@@ -676,6 +676,43 @@ CREATE TABLE IF NOT EXISTS user_blocks (
 );
 CREATE INDEX IF NOT EXISTS idx_user_blocks_userId ON user_blocks(userId);
 CREATE INDEX IF NOT EXISTS idx_user_blocks_blockedUserId ON user_blocks(blockedUserId);
+
+CREATE TABLE IF NOT EXISTS matching_comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  turnNumber INTEGER,
+  content TEXT NOT NULL,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_matching_comments_session ON matching_comments(sessionId);
+
+CREATE TABLE IF NOT EXISTS matching_reactions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  turnNumber INTEGER NOT NULL,
+  type TEXT NOT NULL DEFAULT 'like',
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, userId, turnNumber, type)
+);
+CREATE INDEX IF NOT EXISTS idx_matching_reactions_session ON matching_reactions(sessionId);
+
+CREATE TABLE IF NOT EXISTS personality_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL UNIQUE,
+  bigFive TEXT,
+  mbti TEXT,
+  mbtiScores TEXT,
+  valueProfile TEXT,
+  interviewLog TEXT,
+  status TEXT NOT NULL DEFAULT 'in_progress',
+  questionCount INTEGER NOT NULL DEFAULT 0,
+  analyzedAt TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_personality_profiles_userId ON personality_profiles(userId);
 `;
 
 // Migrations to run after schema creation (ALTER TABLE etc.)

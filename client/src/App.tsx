@@ -56,6 +56,7 @@ const UserProfile = lazy(() => import("./pages/UserProfile"));
 const ComponentShowcase = lazy(() => import("./pages/ComponentShowcase"));
 const Presentation = lazy(() => import("./pages/Presentation"));
 const NanoBananaSlides = lazy(() => import("./pages/NanoBananaSlides"));
+const PersonalityProfiler = lazy(() => import("./pages/PersonalityProfiler"));
 
 function PageLoader() {
   return (
@@ -113,6 +114,7 @@ function Router() {
         <Route path="/users/:id" component={UserProfile} />
         <Route path="/presentation/:id" component={Presentation} />
         <Route path="/slides/:id" component={NanoBananaSlides} />
+        <Route path="/personality" component={PersonalityProfiler} />
         <Route path="/dev/showcase" component={ComponentShowcase} />
 
         <Route path="/404" component={NotFound} />

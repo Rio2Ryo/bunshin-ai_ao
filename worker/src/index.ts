@@ -17,8 +17,9 @@ import { invokeLLM, getUserLLMConfig } from "./llm";
 import { notifyMatchingComplete, createNotification } from "./notifications";
 import { requestLogger } from "./middleware";
 
-// Re-export Durable Object class (required by Cloudflare Workers runtime)
+// Re-export Durable Object classes (required by Cloudflare Workers runtime)
 export { ChatRoom } from "./chat-room";
+export { MatchingRoom } from "./matching-room";
 
 // ============ Router Imports ============
 
@@ -42,6 +43,7 @@ import { analyticsRouter, trustRouter, onboardingRouter } from "./routers/analyt
 import { schedulerRouter } from "./routers/scheduler";
 import { adminRouter, reportRouter, marketplaceRouter, notificationRouter } from "./routers/admin";
 import { blocksRouter } from "./routers/blocks";
+import { personalityProfilerRouter } from "./routers/personality-profiler";
 
 // ============ Composed tRPC Router ============
 
@@ -80,6 +82,7 @@ const appRouter = router({
   marketplace: marketplaceRouter,
   notification: notificationRouter,
   blocks: blocksRouter,
+  personalityProfiler: personalityProfilerRouter,
 });
 
 export type AppRouter = typeof appRouter;
@@ -752,6 +755,55 @@ JSONのみ出力し、他の説明は不要です。`;
       "X-Accel-Buffering": "no",
     },
   });
+});
+
+// ============ WebSocket Matching Room (Durable Object) ============
+
+api.get("/api/matching/ws/:sessionId", async (c) => {
+  const env = c.env as Env;
+  await ensureSchema(env.DB);
+
+  // Authenticate via JWT cookie
+  const cookieHeader = c.req.header("cookie") || null;
+  const token = parseCookie(cookieHeader, COOKIE_NAME);
+  if (!token) return c.json({ error: "Unauthorized" }, 401);
+  const sess = await verifySessionToken(token, env);
+  if (!sess) return c.json({ error: "Unauthorized" }, 401);
+
+  const sessionId = parseInt(c.req.param("sessionId") || "0");
+  if (!sessionId) return c.json({ error: "Invalid session ID" }, 400);
+
+  // Verify user is initiator OR friend of this matching session
+  const session = await env.DB.prepare(
+    `SELECT ms.*, json_extract(ms.settings, '$.friendId') as friendId FROM matching_sessions ms WHERE ms.id=?`
+  ).bind(sessionId).first<any>();
+  if (!session) return c.json({ error: "Session not found" }, 404);
+
+  const isInitiator = session.initiatorUserId === sess.userId;
+  const friendId = session.friendId ? parseInt(session.friendId) : null;
+  const isFriend = friendId === sess.userId;
+
+  if (!isInitiator && !isFriend) {
+    return c.json({ error: "Not authorized for this matching session" }, 403);
+  }
+
+  // Get user name for broadcasting
+  const user = await env.DB.prepare(`SELECT name FROM users WHERE id=?`).bind(sess.userId).first<any>();
+
+  // Get Durable Object stub
+  const doId = env.MATCHING_ROOMS.idFromName(`matching-${sessionId}`);
+  const stub = env.MATCHING_ROOMS.get(doId);
+
+  // Forward the WebSocket upgrade to the Durable Object
+  const url = new URL(c.req.url);
+  url.searchParams.set("userId", String(sess.userId));
+  url.searchParams.set("sessionId", String(sessionId));
+  url.searchParams.set("isInitiator", String(isInitiator));
+  url.searchParams.set("userName", user?.name || "User");
+
+  return stub.fetch(new Request(url.toString(), {
+    headers: c.req.raw.headers,
+  }));
 });
 
 api.all("/api/trpc/*", async (c) => {
