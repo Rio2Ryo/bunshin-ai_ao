@@ -27,11 +27,11 @@ bindings = [
 
 [[migrations]]
 tag = "v1"
-new_classes = ["ChatRoom"]
+new_sqlite_classes = ["ChatRoom"]
 
 [[migrations]]
 tag = "v2"
-new_classes = ["MatchingRoom"]
+new_sqlite_classes = ["MatchingRoom"]
 
 # Cron triggers for auto matching scheduler
 [triggers]
