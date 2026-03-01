@@ -17,6 +17,9 @@ import { invokeLLM, getUserLLMConfig } from "./llm";
 import { notifyMatchingComplete } from "./notifications";
 import { requestLogger } from "./middleware";
 
+// Re-export Durable Object class (required by Cloudflare Workers runtime)
+export { ChatRoom } from "./chat-room";
+
 // ============ Router Imports ============
 
 import { authRouter } from "./routers/auth";
@@ -350,6 +353,130 @@ api.get("/api/status", async (c) => {
       users: userCount?.cnt ?? 0,
       npcs: npcCount?.cnt ?? 0,
       twins: twinCount?.cnt ?? 0,
+    },
+  });
+});
+
+// ============ WebSocket Chat (Durable Object) ============
+
+api.get("/api/chat/ws/:sessionId", async (c) => {
+  const env = c.env as Env;
+  await ensureSchema(env.DB);
+
+  // Authenticate via JWT cookie
+  const cookieHeader = c.req.header("cookie") || null;
+  const token = parseCookie(cookieHeader, COOKIE_NAME);
+  if (!token) return c.json({ error: "Unauthorized" }, 401);
+  const sess = await verifySessionToken(token, env);
+  if (!sess) return c.json({ error: "Unauthorized" }, 401);
+
+  const sessionId = parseInt(c.req.param("sessionId") || "0");
+  if (!sessionId) return c.json({ error: "Invalid session ID" }, 400);
+
+  // Verify session ownership
+  const chatSession = await env.DB.prepare(
+    `SELECT id FROM chat_sessions WHERE id=? AND userId=?`
+  ).bind(sessionId, sess.userId).first<any>();
+  if (!chatSession) return c.json({ error: "Session not found" }, 404);
+
+  // Get Durable Object stub (keyed by sessionId for isolation)
+  const doId = env.CHAT_ROOMS.idFromName(`session-${sessionId}`);
+  const stub = env.CHAT_ROOMS.get(doId);
+
+  // Forward the WebSocket upgrade to the Durable Object
+  const url = new URL(c.req.url);
+  url.searchParams.set("userId", String(sess.userId));
+  url.searchParams.set("sessionId", String(sessionId));
+
+  return stub.fetch(new Request(url.toString(), {
+    headers: c.req.raw.headers,
+  }));
+});
+
+// ============ SSE Notification Stream ============
+
+api.get("/api/notifications/stream", async (c) => {
+  const env = c.env as Env;
+  await ensureSchema(env.DB);
+
+  // Authenticate via JWT cookie
+  const cookieHeader = c.req.header("cookie") || null;
+  const token = parseCookie(cookieHeader, COOKIE_NAME);
+  if (!token) return c.json({ error: "Unauthorized" }, 401);
+  const sess = await verifySessionToken(token, env);
+  if (!sess) return c.json({ error: "Unauthorized" }, 401);
+  const userId = sess.userId;
+
+  // Last-Event-ID for reconnection (avoid duplicate notifications)
+  const lastEventIdHeader = c.req.header("last-event-id");
+  let lastSeenId = lastEventIdHeader ? parseInt(lastEventIdHeader, 10) : 0;
+  if (isNaN(lastSeenId)) lastSeenId = 0;
+
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+
+  // Start the SSE stream loop in the background
+  const streamLoop = async () => {
+    try {
+      let tickCount = 0;
+      // Stream for up to ~25 minutes (150 ticks * 10s) to stay within CF limits
+      while (tickCount < 150) {
+        tickCount++;
+
+        // Query D1 for new notifications
+        try {
+          const rows = await env.DB.prepare(
+            `SELECT id, type, title, message, data, createdAt FROM notifications WHERE userId=? AND id>? ORDER BY id ASC LIMIT 10`
+          ).bind(userId, lastSeenId).all<any>();
+
+          for (const row of rows.results ?? []) {
+            let parsedData = null;
+            if (row.data) {
+              try { parsedData = JSON.parse(row.data); } catch {}
+            }
+            const payload = JSON.stringify({
+              id: row.id,
+              type: row.type,
+              title: row.title,
+              message: row.message,
+              data: parsedData,
+              createdAt: row.createdAt,
+            });
+            await writer.write(encoder.encode(`id: ${row.id}\nevent: notification\ndata: ${payload}\n\n`));
+            lastSeenId = row.id;
+          }
+        } catch {
+          // D1 query failed — skip this tick
+        }
+
+        // Send keepalive ping every tick (~5s) to prevent CF idle timeout
+        try {
+          await writer.write(encoder.encode(`: ping\n\n`));
+        } catch {
+          // Writer closed (client disconnected)
+          break;
+        }
+
+        // Wait 5 seconds before next poll
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      }
+    } catch {
+      // Stream error — client likely disconnected
+    } finally {
+      try { await writer.close(); } catch {}
+    }
+  };
+
+  // Use waitUntil to keep the stream loop running after returning the response
+  c.executionCtx.waitUntil(streamLoop());
+
+  return new Response(readable, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
     },
   });
 });

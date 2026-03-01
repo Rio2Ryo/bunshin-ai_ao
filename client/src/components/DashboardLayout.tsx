@@ -20,6 +20,8 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
+import { useRealtimeNotifications } from "@/hooks/useRealtimeNotifications";
+import { toast } from "sonner";
 import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, Activity, X } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
@@ -159,11 +161,26 @@ function DashboardLayoutContent({
   const pendingRequestCount = receivedRequests?.length ?? 0;
   const { t, language, setLanguage } = useTranslation();
   const utils = trpc.useUtils();
-  const { data: notifData } = trpc.notification.list.useQuery({ unreadOnly: true, limit: 10 }, { refetchInterval: 30_000, staleTime: 10_000 });
+  const { data: notifData } = trpc.notification.list.useQuery({ unreadOnly: true, limit: 10 }, { refetchInterval: 60_000, staleTime: 60_000 });
   const markAllReadMut = trpc.notification.markAllRead.useMutation({ onSuccess: () => utils.notification.list.invalidate() });
   const markReadMut = trpc.notification.markRead.useMutation({ onSuccess: () => utils.notification.list.invalidate() });
   const deleteNotifMut = trpc.notification.delete.useMutation({ onSuccess: () => utils.notification.list.invalidate() });
   const unreadCount = notifData?.unreadCount ?? 0;
+
+  // Real-time notifications via SSE
+  useRealtimeNotifications({
+    enabled: !!user,
+    onNotification: (notif) => {
+      // Refresh the notification list so bell dropdown updates
+      utils.notification.list.invalidate();
+      // Show toast
+      toast(notif.title, { description: notif.message });
+      // Browser notification if permitted
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification(notif.title, { body: notif.message || undefined });
+      }
+    },
+  });
 
   useEffect(() => {
     if ('Notification' in window && Notification.permission === 'default') {

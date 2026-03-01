@@ -228,6 +228,224 @@ async function callAzureFoundry(
   };
 }
 
+// ============ Streaming LLM ============
+
+export type { LLMConfig, Message };
+
+/**
+ * Stream tokens from an LLM provider. Calls onToken for each chunk.
+ * Returns the full accumulated content when done.
+ */
+export async function invokeLLMStream(
+  config: LLMConfig,
+  messages: Message[],
+  options: { maxTokens?: number; temperature?: number },
+  onToken: (token: string) => void,
+): Promise<string> {
+  const { provider, apiKey } = config;
+  const model = config.model || DEFAULT_MODELS[provider] || "gpt-4o-mini";
+  const maxTokens = options?.maxTokens ?? 4096;
+  const temperature = options?.temperature ?? 0.7;
+
+  switch (provider) {
+    case "openai":
+    case "grok":
+      return streamOpenAICompatible(provider, apiKey, model, messages, maxTokens, temperature, onToken);
+    case "gemini":
+      return streamGemini(apiKey, model, messages, maxTokens, temperature, onToken);
+    case "anthropic":
+      return streamAnthropic(apiKey, model, messages, maxTokens, temperature, onToken);
+    case "azure-foundry":
+      return streamAzureFoundry(config.baseUrl!, apiKey, model, messages, maxTokens, temperature, onToken);
+    default:
+      throw new Error(`Unsupported LLM provider: ${provider}`);
+  }
+}
+
+/** Parse SSE lines from a ReadableStream, calling dataHandler for each `data:` line */
+async function parseSSEStream(
+  body: ReadableStream<Uint8Array>,
+  dataHandler: (data: string) => void,
+): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const data = line.slice(6).trim();
+          if (data && data !== "[DONE]") {
+            dataHandler(data);
+          }
+        }
+      }
+    }
+    // Process remaining buffer
+    if (buffer.startsWith("data: ")) {
+      const data = buffer.slice(6).trim();
+      if (data && data !== "[DONE]") {
+        dataHandler(data);
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function streamOpenAICompatible(
+  provider: string,
+  apiKey: string,
+  model: string,
+  messages: Message[],
+  maxTokens: number,
+  temperature: number,
+  onToken: (token: string) => void,
+): Promise<string> {
+  const baseUrl = provider === "grok" ? "https://api.x.ai" : "https://api.openai.com";
+  const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, messages, max_tokens: maxTokens, temperature, stream: true }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`${provider} API error ${res.status}: ${err}`);
+  }
+  let full = "";
+  await parseSSEStream(res.body!, (data) => {
+    try {
+      const json = JSON.parse(data);
+      const token = json.choices?.[0]?.delta?.content;
+      if (token) { full += token; onToken(token); }
+    } catch {}
+  });
+  return full;
+}
+
+async function streamGemini(
+  apiKey: string,
+  model: string,
+  messages: Message[],
+  maxTokens: number,
+  temperature: number,
+  onToken: (token: string) => void,
+): Promise<string> {
+  const systemInstruction = messages.find(m => m.role === "system")?.content;
+  const contents = messages
+    .filter(m => m.role !== "system")
+    .map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
+  const body: any = { contents, generationConfig: { maxOutputTokens: maxTokens, temperature } };
+  if (systemInstruction) body.systemInstruction = { parts: [{ text: systemInstruction }] };
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+  );
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Gemini API error ${res.status}: ${err}`);
+  }
+  let full = "";
+  await parseSSEStream(res.body!, (data) => {
+    try {
+      const json = JSON.parse(data);
+      const token = json.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (token) { full += token; onToken(token); }
+    } catch {}
+  });
+  return full;
+}
+
+async function streamAnthropic(
+  apiKey: string,
+  model: string,
+  messages: Message[],
+  maxTokens: number,
+  temperature: number,
+  onToken: (token: string) => void,
+): Promise<string> {
+  const systemMsg = messages.find(m => m.role === "system")?.content;
+  const chatMessages = messages.filter(m => m.role !== "system").map(m => ({ role: m.role, content: m.content }));
+  const body: any = { model, messages: chatMessages, max_tokens: maxTokens, temperature, stream: true };
+  if (systemMsg) body.system = systemMsg;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Anthropic API error ${res.status}: ${err}`);
+  }
+  let full = "";
+  // Anthropic SSE has event: lines before data: lines
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const data = line.slice(6).trim();
+          if (!data) continue;
+          try {
+            const json = JSON.parse(data);
+            if (json.type === "content_block_delta") {
+              const token = json.delta?.text;
+              if (token) { full += token; onToken(token); }
+            }
+          } catch {}
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return full;
+}
+
+async function streamAzureFoundry(
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  messages: Message[],
+  maxTokens: number,
+  temperature: number,
+  onToken: (token: string) => void,
+): Promise<string> {
+  const url = `${baseUrl}/openai/deployments/${model}/chat/completions?api-version=2024-12-01-preview`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "api-key": apiKey },
+    body: JSON.stringify({ messages, max_tokens: maxTokens, temperature, stream: true }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Azure Foundry API error ${res.status}: ${err}`);
+  }
+  let full = "";
+  await parseSSEStream(res.body!, (data) => {
+    try {
+      const json = JSON.parse(data);
+      const token = json.choices?.[0]?.delta?.content;
+      if (token) { full += token; onToken(token); }
+    } catch {}
+  });
+  return full;
+}
+
 /**
  * Get the user's preferred LLM config from the database.
  * Falls back to Azure AI Foundry (Kimi-K2.5) if user has no keys configured.

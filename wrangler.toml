@@ -18,6 +18,16 @@ database_id = "2d1ebbfb-5c34-48be-a48e-bb0fac6c676d"
 binding = "ASSETS"
 bucket_name = "bunshin-ai-assets"
 
+# Durable Objects for WebSocket chat streaming
+[durable_objects]
+bindings = [
+  { name = "CHAT_ROOMS", class_name = "ChatRoom" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["ChatRoom"]
+
 # Cron triggers for auto matching scheduler
 [triggers]
 crons = ["0 9 * * *", "0 9 * * 1"]

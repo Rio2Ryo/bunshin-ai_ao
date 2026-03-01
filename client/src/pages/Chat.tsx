@@ -5,11 +5,31 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { trpc } from "@/lib/trpc";
 import { usePageMeta } from "@/hooks/usePageMeta";
+import { useNetworkStatus } from "@/hooks/useNetworkStatus";
+import {
+  saveChatMessages,
+  getChatMessages,
+  saveChatSessions,
+  getChatSessions,
+  enqueueMessage,
+  dequeueMessage,
+  getPendingMessages,
+  type ChatMessage as OfflineChatMessage,
+} from "@/lib/offline-store";
 import { useParams, Link, useLocation } from "wouter";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
-import { Bot, Send, Loader2, Plus, MessageSquare, User, MoreVertical, Pencil, Trash2, Check, X, ChevronDown, Clock } from "lucide-react";
+import { Bot, Send, Loader2, Plus, MessageSquare, User, MoreVertical, Pencil, Trash2, Check, X, ChevronDown, Clock, WifiOff, Zap } from "lucide-react";
 import { LazyStreamdown as Streamdown } from "@/components/LazyStreamdown";
+import { useWebSocketChat } from "@/hooks/useWebSocketChat";
+
+interface DisplayMessage {
+  role: string;
+  content: string;
+  createdAt?: string;
+  pending?: boolean;
+  queueId?: number;
+}
 
 function formatTime(dateStr?: string | null) {
   if (!dateStr) return "";
@@ -33,6 +53,8 @@ export default function Chat() {
   usePageMeta({ title: "チャット", description: "分身AIとのチャット", path: "/chat" });
   const { sessionId } = useParams<{ sessionId?: string }>();
   const [, navigate] = useLocation();
+  const { isOnline } = useNetworkStatus();
+  const prevOnlineRef = useRef(isOnline);
 
   const { data: myTwin } = trpc.myTwin.get.useQuery();
   const { data: sessions, refetch: refetchSessions } = trpc.chat.sessions.useQuery();
@@ -48,15 +70,59 @@ export default function Chat() {
 
   const [currentSessionId, setCurrentSessionId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState<Array<{ role: string; content: string; createdAt?: string }>>([]);
+  const [messages, setMessages] = useState<DisplayMessage[]>([]);
+  const [offlineSessions, setOfflineSessions] = useState<Array<{ id: number; title?: string | null; messageCount?: number }>>([]);
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
   const [mobileSessionOpen, setMobileSessionOpen] = useState(false);
+  const [isFlushingQueue, setIsFlushingQueue] = useState(false);
+  const [streamingContent, setStreamingContent] = useState("");
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // WebSocket streaming chat
+  const { connected: wsConnected, isStreaming, sendMessage: wsSendMessage } = useWebSocketChat({
+    sessionId: currentSessionId,
+    enabled: isOnline && !!currentSessionId,
+    onUserSaved: () => {
+      // User message confirmed saved on server
+    },
+    onTypingStart: () => {
+      setStreamingContent("");
+    },
+    onToken: (token) => {
+      setStreamingContent((prev) => prev + token);
+    },
+    onMessageComplete: (_messageId, fullContent) => {
+      setStreamingContent("");
+      setMessages((prev) => [...prev, { role: "assistant", content: fullContent, createdAt: new Date().toISOString() }]);
+      refetchSessions();
+      // Cache to IndexedDB
+      if (currentSessionId) {
+        setMessages((prev) => {
+          const toCache: OfflineChatMessage[] = prev.map((m) => ({
+            sessionId: currentSessionId,
+            role: m.role,
+            content: m.content,
+            createdAt: m.createdAt,
+          }));
+          saveChatMessages(currentSessionId, toCache).catch(() => {});
+          return prev;
+        });
+      }
+    },
+    onTypingEnd: () => {
+      // Focus input after streaming ends
+      inputRef.current?.focus();
+    },
+    onError: (msg) => {
+      setStreamingContent("");
+      toast.error(msg);
+    },
+  });
 
   useEffect(() => {
     if (sessionId) {
@@ -64,17 +130,64 @@ export default function Chat() {
     }
   }, [sessionId]);
 
+  // Save sessions to IndexedDB when loaded from API
+  useEffect(() => {
+    if (sessions && sessions.length > 0) {
+      saveChatSessions(sessions as any[]).catch(() => {});
+    }
+  }, [sessions]);
+
+  // Load offline sessions when offline and no API data
+  useEffect(() => {
+    if (!isOnline && !sessions) {
+      getChatSessions().then(setOfflineSessions).catch(() => {});
+    }
+  }, [isOnline, sessions]);
+
+  // Load messages from API or IndexedDB
   useEffect(() => {
     if (sessionData?.messages) {
-      setMessages(sessionData.messages.map((m: any) => ({ role: m.role, content: m.content, createdAt: m.createdAt })));
-    }
-  }, [sessionData]);
+      const apiMessages: DisplayMessage[] = sessionData.messages.map((m: any) => ({
+        role: m.role,
+        content: m.content,
+        createdAt: m.createdAt,
+      }));
+      setMessages(apiMessages);
 
+      // Cache to IndexedDB
+      if (currentSessionId) {
+        const toCache: OfflineChatMessage[] = apiMessages.map((m) => ({
+          sessionId: currentSessionId,
+          role: m.role,
+          content: m.content,
+          createdAt: m.createdAt,
+        }));
+        saveChatMessages(currentSessionId, toCache).catch(() => {});
+      }
+    }
+  }, [sessionData, currentSessionId]);
+
+  // Load from IndexedDB when offline and no API data
+  useEffect(() => {
+    if (!isOnline && currentSessionId && !sessionData) {
+      getChatMessages(currentSessionId).then((cached) => {
+        if (cached.length > 0) {
+          setMessages(cached.map((m) => ({
+            role: m.role,
+            content: m.content,
+            createdAt: m.createdAt,
+          })));
+        }
+      }).catch(() => {});
+    }
+  }, [isOnline, currentSessionId, sessionData]);
+
+  // Scroll to bottom on new messages or streaming updates
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, sendMessage.isPending]);
+  }, [messages, sendMessage.isPending, streamingContent]);
 
   // Close menu on outside click
   useEffect(() => {
@@ -87,12 +200,65 @@ export default function Chat() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Focus input after assistant responds
+  // Focus input after assistant responds (tRPC fallback)
   useEffect(() => {
-    if (!sendMessage.isPending && inputRef.current) {
+    if (!sendMessage.isPending && !isStreaming && inputRef.current) {
       inputRef.current.focus();
     }
-  }, [sendMessage.isPending]);
+  }, [sendMessage.isPending, isStreaming]);
+
+  // Flush message queue when coming back online
+  const flushQueue = useCallback(async () => {
+    if (isFlushingQueue) return;
+    setIsFlushingQueue(true);
+    try {
+      const pending = await getPendingMessages();
+      for (const msg of pending) {
+        try {
+          const result = await sendMessage.mutateAsync({
+            sessionId: msg.sessionId,
+            content: msg.content,
+          });
+          await dequeueMessage(msg.id);
+          // Update UI: remove pending indicator and add assistant response
+          setMessages((prev) => {
+            const updated = prev.map((m) =>
+              m.queueId === msg.id ? { ...m, pending: false, queueId: undefined } : m
+            );
+            return [...updated, { role: "assistant", content: result.response, createdAt: new Date().toISOString() }];
+          });
+        } catch {
+          toast.error("キューメッセージの送信に失敗しました");
+          break;
+        }
+      }
+      refetchSessions();
+    } finally {
+      setIsFlushingQueue(false);
+    }
+  }, [isFlushingQueue, sendMessage, refetchSessions]);
+
+  useEffect(() => {
+    const wasOffline = !prevOnlineRef.current;
+    prevOnlineRef.current = isOnline;
+
+    if (isOnline && wasOffline) {
+      flushQueue();
+    }
+  }, [isOnline, flushQueue]);
+
+  // Listen for SW message to flush queue
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === 'FLUSH_MESSAGE_QUEUE') {
+        flushQueue();
+      }
+    };
+    navigator.serviceWorker?.addEventListener('message', handler);
+    return () => {
+      navigator.serviceWorker?.removeEventListener('message', handler);
+    };
+  }, [flushQueue]);
 
   const handleStartChat = async () => {
     if (!myTwin) {
@@ -120,8 +286,28 @@ export default function Chat() {
     const userMessage = message.trim();
     setMessage("");
     const now = new Date().toISOString();
+
+    if (!isOnline) {
+      // Offline: queue message and show with pending indicator
+      try {
+        const queueId = await enqueueMessage(currentSessionId, userMessage);
+        setMessages((prev) => [...prev, { role: "user", content: userMessage, createdAt: now, pending: true, queueId }]);
+        toast("オフライン — オンライン復帰時に送信します", { icon: "📤" });
+      } catch {
+        toast.error("メッセージのキューイングに失敗しました");
+      }
+      return;
+    }
+
     setMessages((prev) => [...prev, { role: "user", content: userMessage, createdAt: now }]);
 
+    // Try WebSocket streaming first, fallback to tRPC mutation
+    if (wsConnected && wsSendMessage(userMessage)) {
+      // Message sent via WebSocket — streaming tokens will arrive via onToken callbacks
+      return;
+    }
+
+    // Fallback: use tRPC mutation (non-streaming)
     try {
       const result = await sendMessage.mutateAsync({
         sessionId: currentSessionId,
@@ -130,6 +316,18 @@ export default function Chat() {
       setMessages((prev) => [...prev, { role: "assistant", content: result.response, createdAt: new Date().toISOString() }]);
       // Refresh sessions to pick up auto-title
       refetchSessions();
+
+      // Cache updated messages to IndexedDB
+      setMessages((prev) => {
+        const toCache: OfflineChatMessage[] = prev.map((m) => ({
+          sessionId: currentSessionId,
+          role: m.role,
+          content: m.content,
+          createdAt: m.createdAt,
+        }));
+        saveChatMessages(currentSessionId, toCache).catch(() => {});
+        return prev;
+      });
     } catch {
       toast.error("メッセージの送信に失敗しました");
       setMessages((prev) => prev.slice(0, -1));
@@ -174,6 +372,8 @@ export default function Chat() {
     setRenamingId(null);
     setRenameTitle("");
   };
+
+  const displaySessions = sessions || (offlineSessions.length > 0 ? offlineSessions : undefined);
 
   const renderSessionItem = (session: { id: number; title?: string | null; messageCount?: number }) => {
     const isRenaming = renamingId === session.id;
@@ -271,7 +471,7 @@ export default function Chat() {
             <CardContent className="p-2">
               <ScrollArea className="h-[calc(100vh-14rem)]">
                 <div className="space-y-1">
-                  {sessions?.map((session) => renderSessionItem(session as any))}
+                  {displaySessions?.map((session) => renderSessionItem(session as any))}
                 </div>
               </ScrollArea>
             </CardContent>
@@ -287,8 +487,19 @@ export default function Chat() {
                 <CardTitle className="text-lg">
                   {myTwin ? `${myTwin.name}とチャット` : "分身AIチャット"}
                 </CardTitle>
+                {!isOnline && (
+                  <span className="text-xs text-amber-600 flex items-center gap-1">
+                    <WifiOff className="h-3 w-3" />
+                    オフライン
+                  </span>
+                )}
+                {isOnline && wsConnected && (
+                  <span className="text-xs text-emerald-600 flex items-center gap-1" title="ストリーミング接続中">
+                    <Zap className="h-3 w-3" />
+                  </span>
+                )}
               </div>
-              <Button size="sm" onClick={handleStartChat} disabled={!myTwin}>
+              <Button size="sm" onClick={handleStartChat} disabled={!myTwin || !isOnline}>
                 <Plus className="h-4 w-4 mr-1" />
                 新規チャット
               </Button>
@@ -304,7 +515,7 @@ export default function Chat() {
                 <span className="flex items-center gap-2 truncate">
                   <MessageSquare className="h-4 w-4 flex-shrink-0" />
                   {currentSessionId
-                    ? sessions?.find((s) => s.id === currentSessionId)?.title || "チャット"
+                    ? displaySessions?.find((s) => s.id === currentSessionId)?.title || "チャット"
                     : "セッションを選択"}
                 </span>
                 <ChevronDown className={`h-4 w-4 flex-shrink-0 transition-transform ${mobileSessionOpen ? "rotate-180" : ""}`} />
@@ -312,8 +523,8 @@ export default function Chat() {
               {mobileSessionOpen && (
                 <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-popover border rounded-md shadow-md max-h-60 overflow-y-auto">
                   <div className="p-1 space-y-1">
-                    {sessions?.map((session) => renderSessionItem(session as any))}
-                    {(!sessions || sessions.length === 0) && (
+                    {displaySessions?.map((session) => renderSessionItem(session as any))}
+                    {(!displaySessions || displaySessions.length === 0) && (
                       <p className="text-sm text-muted-foreground p-2 text-center">チャット履歴なし</p>
                     )}
                   </div>
@@ -344,7 +555,7 @@ export default function Chat() {
                   <p className="text-muted-foreground mb-4">
                     あなたの分身AI「{myTwin.name}」と会話できます
                   </p>
-                  <Button onClick={handleStartChat}>
+                  <Button onClick={handleStartChat} disabled={!isOnline}>
                     <Plus className="h-4 w-4 mr-2" />
                     新規チャット
                   </Button>
@@ -360,7 +571,7 @@ export default function Chat() {
                         key={index}
                         className={`flex gap-3 ${
                           msg.role === "user" ? "justify-end" : "justify-start"
-                        }`}
+                        } ${msg.pending ? "opacity-70" : ""}`}
                       >
                         {msg.role !== "user" && (
                           <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
@@ -371,7 +582,9 @@ export default function Chat() {
                           <div
                             className={`rounded-lg p-3 ${
                               msg.role === "user"
-                                ? "bg-primary text-primary-foreground"
+                                ? msg.pending
+                                  ? "bg-primary/60 text-primary-foreground"
+                                  : "bg-primary text-primary-foreground"
                                 : "bg-muted"
                             }`}
                           >
@@ -381,12 +594,19 @@ export default function Chat() {
                               <Streamdown>{msg.content}</Streamdown>
                             )}
                           </div>
-                          {msg.createdAt && (
-                            <span className="text-[10px] text-muted-foreground mt-0.5 inline-flex items-center gap-0.5">
-                              <Clock className="h-2.5 w-2.5" />
-                              {formatTime(msg.createdAt)}
-                            </span>
-                          )}
+                          <span className="text-[10px] text-muted-foreground mt-0.5 inline-flex items-center gap-0.5">
+                            {msg.pending ? (
+                              <>
+                                <Clock className="h-2.5 w-2.5" />
+                                送信待ち
+                              </>
+                            ) : msg.createdAt ? (
+                              <>
+                                <Clock className="h-2.5 w-2.5" />
+                                {formatTime(msg.createdAt)}
+                              </>
+                            ) : null}
+                          </span>
                         </div>
                         {msg.role === "user" && (
                           <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
@@ -395,7 +615,25 @@ export default function Chat() {
                         )}
                       </div>
                     ))}
-                    {sendMessage.isPending && (
+                    {/* Streaming response (WebSocket) */}
+                    {isStreaming && streamingContent && (
+                      <div className="flex gap-3 justify-start">
+                        <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                          <Bot className="h-4 w-4 text-primary" />
+                        </div>
+                        <div className="max-w-[70%]">
+                          <div className="bg-muted rounded-lg p-3">
+                            <Streamdown>{streamingContent}</Streamdown>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground mt-0.5 inline-flex items-center gap-0.5">
+                            <Zap className="h-2.5 w-2.5" />
+                            ストリーミング中...
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    {/* Typing indicator (WebSocket — waiting for first token, or tRPC pending) */}
+                    {((isStreaming && !streamingContent) || sendMessage.isPending) && (
                       <div className="flex gap-3 justify-start">
                         <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
                           <Bot className="h-4 w-4 text-primary" />
@@ -403,6 +641,12 @@ export default function Chat() {
                         <div className="bg-muted rounded-lg p-3">
                           <TypingDots />
                         </div>
+                      </div>
+                    )}
+                    {isFlushingQueue && (
+                      <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground py-2">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        キューメッセージを送信中...
                       </div>
                     )}
                   </div>
@@ -421,12 +665,12 @@ export default function Chat() {
                       ref={inputRef}
                       value={message}
                       onChange={(e) => setMessage(e.target.value)}
-                      placeholder="メッセージを入力..."
-                      disabled={sendMessage.isPending}
+                      placeholder={isOnline ? "メッセージを入力..." : "オフライン — 送信はキューに追加されます"}
+                      disabled={sendMessage.isPending || isStreaming || isFlushingQueue}
                       aria-label="メッセージ入力"
                     />
-                    <Button type="submit" disabled={!message.trim() || sendMessage.isPending} aria-label="送信">
-                      {sendMessage.isPending ? (
+                    <Button type="submit" disabled={!message.trim() || sendMessage.isPending || isStreaming || isFlushingQueue} aria-label="送信">
+                      {(sendMessage.isPending || isStreaming) ? (
                         <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                       ) : (
                         <Send className="h-4 w-4" aria-hidden="true" />
