@@ -125,7 +125,7 @@ export default function Profile() {
 
   return (
     <DashboardLayout>
-      <div className="max-w-3xl mx-auto space-y-6">
+      <div className="max-w-3xl mx-auto space-y-6" role="main" aria-label="プロフィール設定">
         <div>
           <h1 className="text-3xl font-bold">プロフィール設定</h1>
           <p className="text-muted-foreground mt-2">

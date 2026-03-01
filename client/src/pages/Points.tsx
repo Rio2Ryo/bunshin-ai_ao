@@ -116,7 +116,7 @@ export default function Points() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
+      <div className="space-y-6" role="main" aria-label="ポイント管理">
         {/* Header */}
         <div>
           <h1 className="text-2xl font-bold tracking-tight">ポイント</h1>

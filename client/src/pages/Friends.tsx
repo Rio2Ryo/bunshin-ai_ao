@@ -147,7 +147,7 @@ export default function Friends() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
+      <div className="space-y-6" role="main" aria-label="友達管理">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold">友達</h1>
@@ -226,8 +226,8 @@ export default function Friends() {
                     <code className="flex-1 p-3 rounded-lg bg-muted font-mono text-xl tracking-wider text-center">
                       {myFriendCode}
                     </code>
-                    <Button variant="outline" size="icon" onClick={handleCopyCode}>
-                      <Copy className="h-4 w-4" />
+                    <Button variant="outline" size="icon" onClick={handleCopyCode} aria-label="友達コードをコピー">
+                      <Copy className="h-4 w-4" aria-hidden="true" />
                     </Button>
                   </div>
                 </div>
@@ -312,10 +312,12 @@ export default function Friends() {
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       className="max-w-sm"
+                      aria-label="友達を検索"
+                      role="searchbox"
                     />
                   </div>
                 )}
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3" role="list" aria-label="友達一覧">
                 {friends.filter(f => {
                   if (!searchQuery.trim()) return true;
                   const q = searchQuery.toLowerCase();

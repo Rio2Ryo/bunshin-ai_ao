@@ -274,9 +274,9 @@ export default function Onboarding() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="min-h-screen flex flex-col bg-background" role="main" aria-label="オンボーディング">
       {/* Header */}
-      <header className="border-b bg-background/95 backdrop-blur sticky top-0 z-50">
+      <header className="border-b bg-background/95 backdrop-blur sticky top-0 z-50" role="banner">
         <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
@@ -602,11 +602,13 @@ export default function Onboarding() {
                   placeholder="メッセージを入力..."
                   disabled={sendMessage.isPending || !sessionId}
                   className="flex-1"
+                  aria-label="メッセージ入力"
                 />
                 <Button
                   onClick={handleSend}
                   disabled={!message.trim() || sendMessage.isPending || !sessionId}
                   size="icon"
+                  aria-label="送信"
                 >
                   {sendMessage.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin" />

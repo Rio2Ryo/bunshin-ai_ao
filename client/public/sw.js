@@ -1,9 +1,12 @@
 // Service Worker for 分身AI PWA
-const CACHE_NAME = 'bunshin-ai-v4';
-const OFFLINE_URL = '/offline.html';
+const CACHE_NAME = 'bunshin-ai-v5';
+const API_CACHE_NAME = 'bunshin-ai-api-v1';
+const API_CACHE_MAX_ENTRIES = 100;
+const API_CACHE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 
-// キャッシュする静的アセット
+// キャッシュする静的アセット（SPAシェル含む）
 const STATIC_ASSETS = [
+  '/',
   '/offline.html',
   '/manifest.json',
   '/icons/icon-192x192.png',
@@ -31,7 +34,7 @@ self.addEventListener('activate', (event) => {
       caches.keys().then((cacheNames) =>
         Promise.all(
           cacheNames
-            .filter((name) => name !== CACHE_NAME)
+            .filter((name) => name !== CACHE_NAME && name !== API_CACHE_NAME)
             .map((name) => caches.delete(name))
         )
       ),
@@ -50,7 +53,13 @@ self.addEventListener('fetch', (event) => {
   // Chrome拡張等の非HTTP(S)リクエストは無視
   if (!url.protocol.startsWith('http')) return;
 
-  // API呼び出し: ネットワーク優先（5秒タイムアウトでキャッシュフォールバック）
+  // tRPC APIクエリ（GET）: ネットワーク優先 + APIキャッシュ
+  if (url.pathname.startsWith('/api/trpc') && request.method === 'GET') {
+    event.respondWith(apiNetworkFirst(request));
+    return;
+  }
+
+  // その他のAPI呼び出し: ネットワーク優先（5秒タイムアウトでキャッシュフォールバック）
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(networkFirstWithTimeout(request, 5000));
     return;
@@ -65,7 +74,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // ナビゲーション: ネットワーク優先、オフライン時はオフラインページ
+  // ナビゲーション: ネットワーク優先、オフライン時はSPAシェル→オフラインページ
   if (request.mode === 'navigate') {
     event.respondWith(handleNavigate(event));
     return;
@@ -76,19 +85,69 @@ self.addEventListener('fetch', (event) => {
 });
 
 // ナビゲーション処理（Navigation Preload対応）
+// オフライン時: まずキャッシュされたSPAシェル（/）を返す → SPAルーターが正しいページを描画
 async function handleNavigate(event) {
   try {
-    // Navigation Preloadレスポンスがあればそれを使用
     const preloadResponse = await event.preloadResponse;
     if (preloadResponse) return preloadResponse;
-
     return await fetch(event.request);
   } catch {
-    // オフライン時: キャッシュ or オフラインページ
+    // オフライン: まず元URLのキャッシュを試す
     const cached = await caches.match(event.request);
     if (cached) return cached;
-    const offlinePage = await caches.match(OFFLINE_URL);
+
+    // SPAシェル（/）を返す — React Router がクライアント側でルーティング
+    const shell = await caches.match('/');
+    if (shell) return shell;
+
+    // 最終フォールバック: offline.html
+    const offlinePage = await caches.match('/offline.html');
     return offlinePage || new Response('Offline', { status: 503 });
+  }
+}
+
+// tRPC API専用: ネットワーク優先 + 専用APIキャッシュ（5秒タイムアウト）
+async function apiNetworkFirst(request) {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const response = await fetch(request, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const cache = await caches.open(API_CACHE_NAME);
+      const responseToCache = response.clone();
+      // タイムスタンプヘッダーを追加してキャッシュ
+      const headers = new Headers(responseToCache.headers);
+      headers.set('sw-cached-at', String(Date.now()));
+      const body = await responseToCache.arrayBuffer();
+      const timestampedResponse = new Response(body, {
+        status: responseToCache.status,
+        statusText: responseToCache.statusText,
+        headers,
+      });
+      cache.put(request, timestampedResponse);
+      // キャッシュサイズ制限
+      trimCache(API_CACHE_NAME, API_CACHE_MAX_ENTRIES);
+    }
+    return response;
+  } catch {
+    // オフライン: APIキャッシュからフォールバック
+    const cache = await caches.open(API_CACHE_NAME);
+    const cached = await cache.match(request);
+    if (cached) {
+      // 期限切れチェック（1時間）
+      const cachedAt = Number(cached.headers.get('sw-cached-at') || 0);
+      if (Date.now() - cachedAt < API_CACHE_MAX_AGE_MS) {
+        return cached;
+      }
+      // 期限切れでも返す（オフラインなので古いデータでも価値がある）
+      return cached;
+    }
+    return new Response(JSON.stringify({ error: 'Offline' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 }
 
@@ -141,6 +200,17 @@ async function networkFirst(request) {
   } catch {
     const cached = await caches.match(request);
     return cached || new Response('', { status: 503 });
+  }
+}
+
+// キャッシュエントリ数を制限（LRU的に古いものから削除）
+async function trimCache(cacheName, maxEntries) {
+  const cache = await caches.open(cacheName);
+  const keys = await cache.keys();
+  if (keys.length > maxEntries) {
+    // 古い順に削除
+    const toDelete = keys.slice(0, keys.length - maxEntries);
+    await Promise.all(toDelete.map((key) => cache.delete(key)));
   }
 }
 

@@ -46,9 +46,8 @@ Deployed on Cloudflare Workers + D1 (SQLite) + R2, with React frontend on Cloudf
   - URL: https://bunshin-ai-api.common-gifted-tokyo.workers.dev
   - DB: Cloudflare D1 (SQLite) - database_id: 2d1ebbfb-5c34-48be-a48e-bb0fac6c676d
   - Storage: Cloudflare R2 bucket "bunshin-ai-assets"
-- **API (Legacy)**: Express + MySQL (server/ directory) - NOT actively deployed
-  - Has rich LINE integration, Clawdbot gateway, AI services
-  - Uses Drizzle ORM with MySQL2
+- **API (Legacy)**: ~~Express + MySQL (server/ directory)~~ **削除済み** (commit 43db4f1)
+  - LINE Bot機能はworker/src/routers/line.tsに移行済み
 - **Auth**: Email/password + JWT cookie sessions (jose library, PBKDF2 password hashing)
   - JWT_SECRET stored as CF Worker secret
   - Login/Register pages at /login and /register
@@ -71,7 +70,7 @@ Deployed on Cloudflare Workers + D1 (SQLite) + R2, with React frontend on Cloudf
 - `client/src/pages/Login.tsx` - Login page
 - `client/src/pages/Register.tsx` - Registration page
 - `wrangler.toml` - Worker deployment config
-- `server/` - Legacy Express server (LINE webhook, Clawdbot, AI services)
+- `worker/src/routers/` - 20 tRPC router files (auth, matching, friends, etc.)
 
 ## Database Tables (D1)
 users (with passwordHash, onboardingCompleted), user_profiles, digital_twins, friendships, knowledge_base,
@@ -225,7 +224,34 @@ ai_provider_settings
 
 ## Remaining Limitations
 - PPTX export: Not supported on CF Workers (returns informational message)
-- LINE: Full bidirectional LINE bot is in server/ (legacy Express), worker only has push + webhook
+- LINE: Worker has LINE webhook + push (worker/src/routers/line.ts, 994行)
 
 ## User Language
 Primary language: Japanese (日本語). All UI text is in Japanese.
+
+
+---
+
+## タスク完了後のプロトコル（必須・毎回実行）
+
+タスクが完了したら、次の指示を待つ前に**必ず以下を自分で実行**すること。
+
+### STEP 1: 自己評価
+コードベース・git log・テスト結果を自分で確認し、プロジェクトのゴールに対して「完成している機能」と「まだ足りないもの・改善すべきもの」を洗い出す。アオやRyoの指示を待たない。自分で考える。
+
+### STEP 2: status-report.md を更新
+~/status-report.md を最新状態に書き直す。完成済みはチェック、未実装・改善必要はHIGH/MEDIUM/LOW優先度付きで記載。
+
+### STEP 3: Telegramで次タスクを提案
+担当トピックに送信する形式:
+【[プロジェクト名] 完了 + 次タスク提案】
+✅ 今回完了: [やったこと]
+💡 次の提案:
+🔴 HIGH: [最重要タスク・理由]
+🟡 MEDIUM: [中優先・理由]
+🟢 LOW: [低優先・理由]
+⚠️ ブロッカー: [外部対応必要なもの]
+→ アオ確認後に実装開始します
+
+### STEP 4: 待機とフォールバック
+アオからの返信を受け取ってから実装開始。ただし30分以上返信がない場合はHIGHタスクを自律判断で開始してよい。

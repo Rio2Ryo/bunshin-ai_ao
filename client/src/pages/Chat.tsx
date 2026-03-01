@@ -225,28 +225,32 @@ export default function Chat() {
           <Button
             size="icon"
             variant="ghost"
-            className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+            className="h-6 w-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
               setMenuOpenId(menuOpenId === session.id ? null : session.id);
             }}
+            aria-label="チャットメニュー"
+            aria-expanded={menuOpenId === session.id}
           >
-            <MoreVertical className="h-3 w-3" />
+            <MoreVertical className="h-3 w-3" aria-hidden="true" />
           </Button>
           {menuOpenId === session.id && (
-            <div ref={menuRef} className="absolute right-0 top-full mt-1 z-50 bg-popover border rounded-md shadow-md py-1 min-w-[120px]">
+            <div ref={menuRef} className="absolute right-0 top-full mt-1 z-50 bg-popover border rounded-md shadow-md py-1 min-w-[120px]" role="menu">
               <button
                 className="flex items-center gap-2 px-3 py-1.5 text-sm w-full hover:bg-muted text-left"
                 onClick={(e) => { e.stopPropagation(); handleStartRename(session.id, session.title || ""); }}
+                role="menuitem"
               >
-                <Pencil className="h-3 w-3" /> 名前変更
+                <Pencil className="h-3 w-3" aria-hidden="true" /> 名前変更
               </button>
               <button
                 className="flex items-center gap-2 px-3 py-1.5 text-sm w-full hover:bg-muted text-left text-destructive"
                 onClick={(e) => { e.stopPropagation(); handleDelete(session.id); }}
+                role="menuitem"
               >
-                <Trash2 className="h-3 w-3" /> 削除
+                <Trash2 className="h-3 w-3" aria-hidden="true" /> 削除
               </button>
             </div>
           )}
@@ -257,9 +261,9 @@ export default function Chat() {
 
   return (
     <DashboardLayout>
-      <div className="h-[calc(100vh-8rem)] flex gap-4">
+      <div className="h-[calc(100vh-8rem)] flex gap-4" role="main" aria-label="チャット">
         {/* Sidebar - Sessions (desktop) */}
-        <div className="w-64 flex-shrink-0 hidden lg:block">
+        <div className="w-64 flex-shrink-0 hidden lg:block" role="complementary" aria-label="チャット履歴">
           <Card className="h-full">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm">チャット履歴</CardTitle>
@@ -350,7 +354,7 @@ export default function Chat() {
               <>
                 {/* Messages */}
                 <ScrollArea className="flex-1 p-4" ref={scrollRef}>
-                  <div className="space-y-4">
+                  <div className="space-y-4" role="log" aria-label="チャットメッセージ" aria-live="polite">
                     {messages.map((msg, index) => (
                       <div
                         key={index}
@@ -419,12 +423,13 @@ export default function Chat() {
                       onChange={(e) => setMessage(e.target.value)}
                       placeholder="メッセージを入力..."
                       disabled={sendMessage.isPending}
+                      aria-label="メッセージ入力"
                     />
-                    <Button type="submit" disabled={!message.trim() || sendMessage.isPending}>
+                    <Button type="submit" disabled={!message.trim() || sendMessage.isPending} aria-label="送信">
                       {sendMessage.isPending ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                       ) : (
-                        <Send className="h-4 w-4" />
+                        <Send className="h-4 w-4" aria-hidden="true" />
                       )}
                     </Button>
                   </form>

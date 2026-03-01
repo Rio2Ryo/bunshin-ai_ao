@@ -234,7 +234,7 @@ export default function MyTwin() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
+      <div className="space-y-6" role="main" aria-label="分身AI管理">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold">自分の分身AI</h1>

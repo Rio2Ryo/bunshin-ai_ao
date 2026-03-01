@@ -91,7 +91,7 @@
 
     // キャッシュされたページを表示
     if ('caches' in window) {
-      caches.open('bunshin-ai-v4').then(cache => cache.keys()).then(keys => {
+      caches.open('bunshin-ai-v5').then(cache => cache.keys()).then(keys => {
         const container = document.getElementById('cachedPages');
         const pages = keys
           .filter(r => r.url.includes(location.origin) && !r.url.includes('/api/') && !r.url.includes('.'))

@@ -81,7 +81,7 @@ export default function Dashboard() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
+      <div className="space-y-6" role="main" aria-label="ダッシュボード">
         {/* Welcome Section */}
         <div className="flex items-start justify-between">
           <div>
@@ -189,7 +189,7 @@ export default function Dashboard() {
         )}
 
         {/* Action Cards */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3" role="list" aria-label="アクション">
           {actionCards.slice(0, 3).map((card) => (
             <Link key={card.href + card.title} href={card.href}>
               <Card className={`hover:border-primary/50 transition-colors cursor-pointer h-full ${card.primary ? "border-primary/30 bg-primary/5" : ""}`}>
@@ -236,7 +236,7 @@ export default function Dashboard() {
         )}
 
         {/* Quick Stats */}
-        <div className="grid gap-3 grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-3 grid-cols-2 lg:grid-cols-5" role="list" aria-label="統計情報">
           <MiniStat icon={Shield} label="信頼度" value={`${trustData?.score ?? 0}pt`} href="/trust" />
           <MiniStat icon={Bot} label="分身AI" value={myTwin ? "作成済み" : "未作成"} href="/twins" />
           <MiniStat icon={UserPlus} label="友達" value={`${friends?.length || 0}人`} href="/friends" />
@@ -320,9 +320,9 @@ function MiniStat({
   href: string;
 }) {
   return (
-    <Link href={href}>
-      <div className="flex items-center gap-2.5 p-3 rounded-lg border bg-card hover:border-primary/50 transition-colors cursor-pointer">
-        <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
+    <Link href={href} aria-label={`${label}: ${value}`}>
+      <div className="flex items-center gap-2.5 p-3 rounded-lg border bg-card hover:border-primary/50 transition-colors cursor-pointer" role="listitem">
+        <Icon className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden="true" />
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">{label}</p>
           <p className="text-sm font-medium truncate">{value}</p>

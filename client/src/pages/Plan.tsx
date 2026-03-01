@@ -124,7 +124,7 @@ export default function Plan() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
+      <div className="space-y-6" role="main" aria-label="プラン管理">
         {/* Current Plan */}
         <Card className="bg-gradient-to-r from-gray-900 to-gray-800 border-cyan-500/30">
           <CardHeader>

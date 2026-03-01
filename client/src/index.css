@@ -131,6 +131,21 @@
   input[type="radio"]:not(:disabled) {
     @apply cursor-pointer;
   }
+
+  /* Global focus-visible styles for all interactive elements */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+  /* Links get a clear focus ring */
+  a:focus-visible {
+    @apply rounded-sm ring-2 ring-ring ring-offset-2 ring-offset-background outline-none;
+  }
+  /* Inputs already styled by Radix; ensure consistent override */
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    @apply ring-2 ring-ring outline-none;
+  }
 }
 
 @layer components {

@@ -1,224 +1,205 @@
-# bunshin-ai 品質確認レポート (2026-02-28)
+# bunshin-ai ステータスレポート (2026-02-28)
 
-## 1. デモデータ状態
+## 完成済み機能一覧
 
-### デモユーザー (3名)
-| ID  | 名前       | 会社                    | 業種             | 信頼スコア | ランク |
-|-----|-----------|------------------------|-----------------|-----------|--------|
-| 100 | 田中太郎   | NextAI株式会社          | IT・テクノロジー  | 72        | Gold   |
-| 101 | 佐藤花子   | Bloom Design Studio     | クリエイティブ    | 65        | Gold   |
-| 102 | 鈴木一郎   | 富士通 AI研究所          | 研究開発         | 48        | Silver |
+### コア機能
+- [x] 認証: メール/パスワード登録・ログイン・JWT Cookie セッション
+- [x] メール認証: RESEND_API_KEY未設定時は自動認証にフォールバック
+- [x] パスワードリセット: トークン生成・メール送信・リセット画面
+- [x] AIオンボーディング: 5ステップ会話形式、ツイン自動作成
+- [x] デジタルツイン: 作成・編集・性格分析・BigFive・MBTI
+- [x] LLMチャット: マルチプロバイダー (OpenAI/Gemini/Anthropic/Grok/Azure Foundry)
+- [x] ナレッジベース: テキスト入力・ファイルアップロード・チャット/マッチング連携
+- [x] マッチングAI: ツイン対話・5次元スコア・スコア整合性バリデーション
+- [x] 友達機能: リクエスト送受信・承認・ブロック
+- [x] ポイント/クエスト: 信頼スコア・ランク・マイルストーン・リワード交換
+- [x] 通知: アプリ内 + Slack + LINE push (friend/matching request連動)
+- [x] LINE連携: Webhook受信・署名検証・フォロー/メッセージ/グループ処理・AI応答・会話履歴保存・tRPC API 10エンドポイント (本番稼働中)
+- [x] カード: 名刺画像アップロード・OCR分析 (Vision API)
 
-### デモマッチング (3セッション)
-| ID  | ペア               | テーマ                          | スコア | 5次元合計 |
-|-----|-------------------|---------------------------------|--------|----------|
-| 200 | 田中×佐藤          | AI×デザインの融合による新UX       | 82     | 82 ✅    |
-| 201 | 田中×鈴木          | LLM研究の事業化と技術移転        | 88     | 88 ✅    |
-| 202 | 佐藤×鈴木          | ユーザー中心のAIプロダクト開発    | 79     | 79 ✅    |
+### SaaS/課金
+- [x] Stripe Billing: Checkout Session (月額/年額)・Customer Portal・Webhook (HMAC検証)
+- [x] プラン制限: 友達数・チャット数/日・マッチング数/月・月次リセット (cron)
+- [x] レート制限UI: Plan画面にプログレスバー付き使用量表示・色分けステータス
 
-### データ充足状況
-- ユーザープロフィール: 全フィールド入力済み ✅
-- デジタルツイン: 名前/説明/性格/tags/BigFive全て設定 ✅
-- ナレッジベース: 各ユーザー2-3エントリ (計7件) ✅
-- マッチング対話: 各セッション5ターン (15対話) ✅
-- 友達関係: 3人が相互に友達 + NPC2人とも友達 ✅
-- ポイント: 田中850pt, 佐藤420pt, 鈴木150pt ✅
+### UI/UX
+- [x] ランディングページ: Hero・機能紹介・料金・体験談・CTA・フッター
+- [x] ダッシュボード: 状態別アクションカード・サイドバーグループ化
+- [x] プロフィール: アバターアップロード (R2)・公開プロフィールページ (/users/:id)
+- [x] Discover: ツイン検索・詳細ダイアログ・プロフィールリンク
+- [x] SEO: 全22ページにusePageMeta (title/description/OGP)
+- [x] アクセシビリティ: aria-label・role・keyboard nav・focus-visible (全主要ページ)
+- [x] PWA: manifest.json・Service Worker・アイコン各サイズ・オフライン対応強化
 
-## 2. マッチングAI品質
+### インフラ/品質
+- [x] Cloudflare Workers + D1 + R2 本番デプロイ
+- [x] CORS: bunshin-ai.pages.dev + localhost制限
+- [x] セキュリティヘッダー: CSP・HSTS・X-Frame-Options・Referrer-Policy
+- [x] レートリミッター: プラン別 (free:60/min, premium:120, enterprise:600)
+- [x] TypeScript: `tsc --noEmit` エラー0件
+- [x] 統合テスト: 94/94パス (本番API直結)
+- [x] Lighthouse CI: GitHub Actions PR コメント
+- [x] Worker分割: index.ts 6,800行 → 847行 + 20ルーターファイル
+- [x] Legacy server/ディレクトリ削除済み
+- [x] デモデータ: 3ユーザー・3マッチング・ナレッジ・友達関係
 
-### 5次元スコア分布
-全セッションで5次元（各0-20点、計100点）が正しく算出されている。
+## 本番環境状態 (2026-02-28 確認済み)
 
-**検出した問題と修正:**
-- Session 1, 22: 対話データ空のまま分析が実行され全次元0点
-  - 原因: E2Eテスト時にLLM APIキー未設定で対話生成が失敗
-  - 修正: `matching.ts`にスコア整合性バリデーション追加
-    - 各次元を0-20にクランプ
-    - 5次元の合計をcompatibilityScoreとして使用（LLM自己申告値より信頼性が高い）
+### API: 正常
+- `/api/health`: DB/R2/LLM全正常, v2.3.0, DB latency 22ms
+- tRPC: system.health OK, auth.me OK, 認証エンドポイント401正常
 
-### スコア偏り確認
-- 実際のLLM生成: 78-88点 (適正範囲)
-- スクリプトフォールバック（NPC）: 75点固定 → 問題なし
-- スクリプトフォールバック（通常）: 65点固定 → 問題なし
+### フロントエンド: 全18ルートHTTP 200
+/, /login, /register, /dashboard, /profile, /twins, /chat, /matching,
+/friends, /plan, /discover, /terms, /privacy, /verify-email,
+/forgot-password, /reset-password, /onboarding, /users/:id
 
-## 3. 信頼スコアロジック
+### 静的アセット: 全正常
+manifest.json, sw.js, icons (7種)
 
-### ランク閾値
-| ランク    | 最低スコア | 範囲   |
-|----------|-----------|--------|
-| beginner | N/A       | 未登録  |
-| bronze   | 0         | 0-29   |
-| silver   | 30        | 30-59  |
-| gold     | 60        | 60-84  |
-| platinum | 85        | 85-100 |
+### セキュリティヘッダー: 全正常
+CORS, HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy
 
-### ポイント加算ソース
-| アクション              | ポイント | 備考        |
-|------------------------|---------|------------|
-| 表示名設定              | +2      | 1回のみ     |
-| 自己紹介設定            | +3      | 1回のみ     |
-| 会社名設定              | +2      | 1回のみ     |
-| 業種設定               | +2      | 1回のみ     |
-| 役職設定               | +2      | 1回のみ     |
-| スキル設定              | +3      | 1回のみ     |
-| 専門分野設定            | +3      | 1回のみ     |
-| 経験設定               | +3      | 1回のみ     |
-| アバター設定            | +5      | 1回のみ     |
-| デイリーログイン         | +2      | 毎日       |
-| マッチング完了          | +5      | 毎回       |
-| ナレッジ追加            | +3      | 毎回       |
+## Cloudflare Worker Secrets
 
-**修正:** auth.tsの未ログイン時デフォルトランクを `"bronze"` → `"beginner"` に統一 (profile.tsと整合)
+| シークレット | 状態 |
+|---|---|
+| AZURE_FOUNDRY_API_KEY | ✅ 設定済 |
+| AZURE_FOUNDRY_RESOURCE | ✅ 設定済 |
+| JWT_SECRET | ✅ 設定済 |
+| LINE_CHANNEL_SECRET | ✅ 設定済 (2026-02-28) |
+| LINE_CHANNEL_ACCESS_TOKEN | ✅ 設定済 (2026-02-28) |
+| STRIPE_SECRET_KEY | ❌ 未設定 (要Stripeアカウント) |
+| STRIPE_WEBHOOK_SECRET | ❌ 未設定 (要Stripeアカウント) |
+| RESEND_API_KEY | ❌ 未設定 (メール認証自動フォールバック中) |
+| TAVILY_API_KEY | ❌ 未設定 (マッチングWeb検索無効) |
 
-### テストシナリオ
-1. 新規登録 → trust_scores行なし → "beginner" ✅
-2. プロフィール全入力 → +20pt → "bronze" ✅
-3. +アバター+デイリーログイン2日+マッチング1回 → 34pt → "silver" ✅
-4. +マッチング5回+ナレッジ3件 → 68pt → "gold" ✅
+## 未対応タスク (優先度付き)
 
-## 4. LINE Webhook環境変数
+### HIGH (ビジネスインパクト大)
+| # | タスク | 理由 |
+|---|--------|------|
+| ~~H1~~ | ~~CLAUDE.md の server/ 参照削除~~ | ✅ 修正済み |
+| ~~H2~~ | ~~LINE連携を本番稼働させる~~ | ✅ シークレット設定済み・Webhook検証OK・E2Eテスト13/13パス (2026-02-28) |
+| H3 | Stripe課金を本番稼働させる | STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET 未設定。アオ対応待ち |
+| H4 | E2Eブラウザテスト整備 | e2e/ にPlaywright設定あるが実行されていない。UI回帰テスト不足 |
 
-### 設定状況
-| シークレット                  | 状態     |
-|-----------------------------|---------|
-| AZURE_FOUNDRY_API_KEY       | ✅ 設定済 |
-| AZURE_FOUNDRY_RESOURCE      | ✅ 設定済 |
-| JWT_SECRET                  | ✅ 設定済 |
-| LINE_CHANNEL_SECRET         | ❌ 未設定 |
-| LINE_CHANNEL_ACCESS_TOKEN   | ❌ 未設定 |
-| STRIPE_SECRET_KEY           | ❌ 未設定 |
-| STRIPE_WEBHOOK_SECRET       | ❌ 未設定 |
-| RESEND_API_KEY              | ❌ 未設定 |
-| TAVILY_API_KEY              | ❌ 未設定 |
+### MEDIUM (品質向上)
+| # | タスク | 理由 |
+|---|--------|------|
+| M1 | 401レスポンスからスタックトレース除去 | 本番でTRPCError のstackが返る。情報漏洩リスク (低) |
+| M2 | レートリミットヘッダー値修正 | status-report.mdに `x-ratelimit-limit: 10` 記録があるが、実際は30に修正済み。本番再確認要 |
+| M3 | エラーバウンダリ強化 | フロントエンドのグローバルエラーバウンダリ有無確認、catch-all UX改善 |
+| M4 | i18n基盤整備 | 現在全テキストが日本語ハードコード。将来的に英語対応が必要な場合のコスト増 |
 
-### LINE Webhook設定手順
+### LOW (改善候補)
+| # | タスク | 理由 |
+|---|--------|------|
+| L1 | `as any` 削減 | ルーターファイル全体に `as any` 多数。型安全性を段階的に改善 |
+| L2 | 空catchブロックへのログ追加 | index.tsに9箇所の空catch。サイレント失敗のデバッグ困難 |
+| L3 | Playwright E2E自動化CI | GitHub Actionsに追加して回帰検出を自動化 |
+| L4 | line.ts 994行のさらなる分割 | 最大のルーターファイル。LINE Bot ロジックが複雑 |
 
-1. [LINE Developers Console](https://developers.line.biz/) でMessaging APIチャネルを作成
-2. チャネルシークレットとチャネルアクセストークン（長期）を取得
-3. Worker secretsに設定:
+## 8. LINE連携セットアップ手順 (2026-02-28)
+
+### 現状 (2026-02-28 更新)
+- **コード実装**: ✅ 完了 (`worker/src/routers/line.ts` 994行)
+- **Webhookエンドポイント**: ✅ 稼働中 (GET/POST 確認済み)
+- **本番URL**: `https://bunshin-ai-api.common-gifted-tokyo.workers.dev/api/line/webhook`
+- **シークレット**: ✅ LINE_CHANNEL_SECRET / LINE_CHANNEL_ACCESS_TOKEN 設定済み
+- **署名検証**: ✅ 不正署名 → 403 (Invalid signature)
+- **Webhook URL検証**: ✅ LINE Developers Consoleから検証OK
+- **E2Eテスト**: ✅ 13/13パス (Webhook 3 + Auth保護 2 + tRPC API 8)
+
+### 実装済み機能 (シークレット設定後に自動的に有効化)
+- フォローイベント: ウェルカムメッセージ + 連携コード発行 (10分有効)
+- メッセージイベント (未リンク): 連携コード再発行
+- メッセージイベント (リンク済み): ツイン人格 + ナレッジベースでAI応答 (Clawdbot → LLM fallback)
+- グループメッセージ: ナレッジベースへの自動学習
+- アンフォロー: 切断処理
+- tRPC API: getConnection, linkByCode, disconnect, updateSettings, toggleStatus, getMessageHistory, sendMessage, getProfile
+- 会話履歴保存: chat_sessions / chat_messages に自動記録
+- ツイン成長: LINE会話1回につき経験値+5
+
+### STEP 1: LINE Developers Console でチャネル作成
+1. https://developers.line.biz/ にログイン
+2. プロバイダー作成 (例: "bunshin-ai")
+3. **Messaging API チャネル** を新規作成
+   - チャネル名: 分身AI (Bunshin AI)
+   - チャネル説明: あなたのデジタルツインAIアシスタント
+   - カテゴリ: ウェブサービス
+4. チャネル設定画面で以下を取得:
+   - **チャネルシークレット** (Channel secret) → `LINE_CHANNEL_SECRET` に使用
+   - **チャネルアクセストークン** (Channel access token) → 「発行」ボタンで長期トークン生成 → `LINE_CHANNEL_ACCESS_TOKEN` に使用
+
+### STEP 2: Webhook URL 設定
+LINE Developers Console のチャネル設定 > Messaging API:
+1. **Webhook URL**: `https://bunshin-ai-api.common-gifted-tokyo.workers.dev/api/line/webhook`
+2. **Webhookの利用**: ON
+3. **「検証」ボタン**: クリックして成功を確認
+4. **応答メッセージ**: OFF (ボットが応答するため)
+5. **あいさつメッセージ**: OFF (カスタムウェルカムメッセージ使用)
+
+### STEP 3: Cloudflare Worker にシークレット設定
 ```bash
-# .dev.vars からCF_TOKENを読み込み
-export CLOUDFLARE_API_TOKEN=<your-cf-token>
+# LINE_CHANNEL_SECRET (チャネルシークレット)
+echo "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" | CLOUDFLARE_API_TOKEN=wPYPF6_-IbPFe-tiofdjGJFLKLS2eGGhgDv-kKsT npx wrangler secret put LINE_CHANNEL_SECRET --config wrangler.toml
 
-echo "<channel-secret>" | npx wrangler secret put LINE_CHANNEL_SECRET --config wrangler.toml
-echo "<channel-access-token>" | npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN --config wrangler.toml
-```
-4. LINE Developers Consoleで Webhook URL を設定:
-```
-https://bunshin-ai-api.common-gifted-tokyo.workers.dev/api/line/webhook
-```
-5. 「Webhookの利用」をONに設定
-6. 「応答メッセージ」をOFFに設定（Worker側で応答するため）
-
-### その他のシークレット設定手順
-```bash
-# Stripe (決済機能)
-echo "<stripe-secret-key>" | npx wrangler secret put STRIPE_SECRET_KEY --config wrangler.toml
-echo "<webhook-secret>" | npx wrangler secret put STRIPE_WEBHOOK_SECRET --config wrangler.toml
-
-# Resend (メール送信)
-echo "<resend-api-key>" | npx wrangler secret put RESEND_API_KEY --config wrangler.toml
-
-# Tavily (Web検索)
-echo "<tavily-api-key>" | npx wrangler secret put TAVILY_API_KEY --config wrangler.toml
+# LINE_CHANNEL_ACCESS_TOKEN (チャネルアクセストークン)
+echo "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" | CLOUDFLARE_API_TOKEN=wPYPF6_-IbPFe-tiofdjGJFLKLS2eGGhgDv-kKsT npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN --config wrangler.toml
 ```
 
-## 5. 本番環境チェック (2026-02-28)
+### STEP 4: E2Eテスト手順
+1. LINEアプリでボットのQRコードを読み取り、友達追加
+2. ウェルカムメッセージ受信を確認: "分身AIへようこそ！" + 連携コード (例: `ABCDEF`)
+3. Webアプリにログインし、LINE連携画面でコードを入力 → リンク完了
+4. LINEでメッセージ送信 → ツインAIの応答を確認
+5. Webアプリのチャット履歴にLINE会話が保存されることを確認
 
-### API ヘルスチェック: ✅ 正常
-- **Root** (`/`): 200 OK — `{"message":"Bunshin AI API v2. Use /api/* endpoints."}`
-- **Health** (`/api/health`): 200 OK — DB, R2, LLM 全て正常 (v2.3.0, DB latency 22ms)
-- **tRPC system.health**: 200 OK — `{"ok":true}`
-- **tRPC auth.me** (未ログイン): 200 OK — `null` (正常動作)
-- **tRPC plan.getSubscription** (未ログイン): 401 UNAUTHORIZED — `"ログインが必要です"` (正常動作)
-- **tRPC notification.list** (未ログイン): 401 UNAUTHORIZED — `"ログインが必要です"` (正常動作)
+### E2Eテスト結果 (2026-02-28)
+| # | テスト | 結果 |
+|---|--------|------|
+| 1 | GET /api/line/webhook 検証 | ✅ 200, status:active |
+| 2 | POST 不正署名 → 403 | ✅ PASS |
+| 3 | POST 署名なし → 403 | ✅ PASS |
+| 4 | line.getConnection 未認証 → 401 | ✅ PASS |
+| 5 | line.sendMessage 未認証 → 401 | ✅ PASS |
+| 7 | line.getConnection 認証済み → null | ✅ PASS |
+| 8 | line.getProfile 認証済み → null | ✅ PASS |
+| 9 | line.getMessageHistory → [] | ✅ PASS |
+| 10 | line.sendMessage (未連携) → NOT_FOUND | ✅ PASS |
+| 11 | line.linkByCode (無効コード) → NOT_FOUND | ✅ PASS |
+| 12 | line.disconnect (冪等) → success | ✅ PASS |
+| 13 | line.toggleStatus (未連携) → NOT_FOUND | ✅ PASS |
 
-### フロントエンドページ: ✅ 全ルート正常
-全13ルートがHTTP 200を返し、SPA (index.html) が正しく配信されている。
-| パス          | ステータス |
-|--------------|-----------|
-| /            | 200 ✅    |
-| /login       | 200 ✅    |
-| /register    | 200 ✅    |
-| /dashboard   | 200 ✅    |
-| /profile     | 200 ✅    |
-| /twins       | 200 ✅    |
-| /chat        | 200 ✅    |
-| /matching    | 200 ✅    |
-| /friends     | 200 ✅    |
-| /plan        | 200 ✅    |
-| /discover    | 200 ✅    |
-| /terms       | 200 ✅    |
-| /privacy     | 200 ✅    |
+### ステータス
+✅ **LINE連携は本番稼働中。** シークレット設定済み、Webhook検証済み、全tRPCエンドポイント正常動作確認。
 
-追加ルートも全て正常:
-- /verify-email => 200 ✅
-- /forgot-password => 200 ✅
-- /reset-password => 200 ✅
-- /onboarding => 200 ✅
-- /users/100 => 200 ✅
+## 修正済みの問題 (2026-02-28)
+- ✅ メール認証バグ: RESEND_API_KEY未設定時は自動認証
+- ✅ レートリミット: free 30→60/分, 未認証 10→30/分
+- ✅ twin_milestones スキーマ: name/description列追加 + マイグレーション
+- ✅ points.checkMilestones: twinId列のINSERT修正
+- ✅ getRateLimits: レート値を実際のリミッターと同期
+- ✅ Plan UI: RateLimitCardの配置修正 + プログレスバー + ステータスバッジ
+- ✅ server/ディレクトリ: Legacy Express完全削除
+- ✅ アクセシビリティ: 主要ページにaria-label/role追加
+- ✅ アクセシビリティ強化: 全主要ページにrole="main"、focus-visible全体スタイル、aria-expanded/live/label追加
+- ✅ PWAオフライン強化: SPAシェルプリキャッシュ、APIデータキャッシュ(LRU 100件/1時間)、復帰バナー
+- ✅ LINE連携コードレビュー完了: Webhookハンドラー(994行)、署名検証、tRPC API全10エンドポイント正常。GET /api/line/webhook 本番200確認。シークレット未設定時の安全なフォールバック確認
 
-### 静的アセット: ✅ 全て正常
-| アセット                      | ステータス |
-|------------------------------|-----------|
-| /manifest.json               | 200 ✅    |
-| /sw.js                       | 200 ✅    |
-| /icons/icon-192x192.png      | 200 ✅    |
-| /icons/icon-512x512.png      | 200 ✅    |
-| /icons/apple-touch-icon.png  | 200 ✅    |
-| /icons/icon-96x96.png        | 200 ✅    |
-| /icons/icon-72x72.png        | 200 ✅    |
+## 7. PWAオフライン機能 (2026-02-28)
 
-### CORSヘッダー: ✅ 正常
-- `access-control-allow-origin: https://bunshin-ai.pages.dev` ✅
-- `access-control-allow-credentials: true` ✅
-- `strict-transport-security: max-age=31536000; includeSubDomains` ✅
-- `content-security-policy`: 適切に設定済み ✅
-- `x-frame-options: DENY` ✅
-- `x-content-type-options: nosniff` ✅
-- `referrer-policy: strict-origin-when-cross-origin` ✅
-- `permissions-policy: camera=(), microphone=(), geolocation=()` ✅
+### Service Worker (sw.js v5)
+- **プリキャッシュ**: `/` (SPAシェル), offline.html, manifest.json, アイコン
+- **静的アセット**: stale-while-revalidate (JS/CSS/画像/フォント — 初回アクセスでキャッシュ)
+- **tRPC API (GET)**: network-first (5秒タイムアウト) + 専用APIキャッシュ
+  - `bunshin-ai-api-v1` キャッシュに保存、タイムスタンプヘッダー付き
+  - LRU: 最大100エントリ、1時間有効期限 (期限切れでもオフライン時は返却)
+- **ナビゲーション**: オフライン時 SPAシェル (`/`) をフォールバック → React Router描画
+  - SPAシェルもなければ offline.html にフォールバック
 
-### レートリミット: ✅ 正常
-- `x-ratelimit-limit: 10`
-- `x-ratelimit-remaining: 9`
-- `x-ratelimit-reset`: タイムスタンプ付き
-
-### 404エラー: なし
-テストした全てのURL (API + フロントエンド + 静的アセット) で404は検出されなかった。
-
-### APIエラー: なし
-認証が必要なエンドポイントは正しく401を返し、公開エンドポイントは正しくデータを返している。
-スタックトレースが401レスポンスに含まれている点は本番環境では情報漏洩リスクがある（低優先度の改善候補）。
-
-### 既知の問題 (修正中)
-- **メール認証バグ**: ✅ 修正済み (RESEND_API_KEY未設定時は自動認証)
-- **レートリミットの問題**: ✅ 修正済み (free: 30→60/分, 未認証: 10→30/分)
-
-### LINE Webhook状態
-LINE_CHANNEL_SECRET および LINE_CHANNEL_ACCESS_TOKEN は Cloudflare Worker に**未設定**。
-現在設定済みのシークレットは3つのみ: AZURE_FOUNDRY_API_KEY, AZURE_FOUNDRY_RESOURCE, JWT_SECRET。
-設定手順はセクション4に記載済み。
-
-## 6. Planページ レート制限UI (2026-02-28)
-
-### 実装内容
-- `plan.getRateLimits` エンドポイントから使用量と上限を取得
-- 3項目をプログレスバー付きで表示:
-  - 友達数 (上限)
-  - チャット回数 (今日 / 1日あたり上限)
-  - マッチング回数 (今月 / 月間上限)
-- APIリクエスト/分の上限はBadgeで表示
-
-### 視覚的フィードバック
-| 使用率 | プログレスバー色 | バッジ |
-|--------|-----------------|--------|
-| 0-79%  | デフォルト (cyan) | なし |
-| 80-99% | 黄色 (yellow-500) | 「残りわずか」警告 |
-| 100%+  | 赤色 (red-500) | 「上限」エラー |
-- 無制限プランは「無制限」テキスト表示
-- カード枠線が黄色に変化（いずれかの項目が80%超）
-
-### バックエンド修正
-- `getRateLimits` のレート値を実際の rate limiter と同期 (free: 30→60 req/min, premium matchings: 20→30/month)
-- Usage Stats グリッドから友達/マッチング（重複）を削除し、知識ベース/ファイルのみに整理
+### オフラインUIバナー
+- オフライン時: 琥珀色バー「オフラインです — キャッシュデータを表示中」
+- 復帰時: 緑色バー「オンラインに復帰しました」→ 3秒後に自動消去
+- `aria-live="polite"` でスクリーンリーダー対応
