@@ -97,14 +97,14 @@ export default function Home() {
             </div>
 
             <h1 className="text-5xl md:text-7xl font-bold mb-6 leading-tight tracking-tight">
-              <span className="text-gradient">あなたの分身AI</span>を
+              <span className="text-gradient">5分で作れる、</span>
               <br />
-              創造する
+              あなたのデジタル分身
             </h1>
             <p className="text-lg md:text-xl text-muted-foreground mb-10 max-w-2xl mx-auto leading-relaxed">
-              あなたの知識、経験、スキルを学習したAIが、
+              プロフィールを入力するだけで、あなたの知識・経験・スキルを学習したAIが誕生。
               <br className="hidden sm:block" />
-              ビジネスパートナーを見つけ、新たな可能性を開拓します。
+              24時間あなたの代わりにビジネスパートナーを探し、マッチングします。
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               {isAuthenticated ? (
@@ -122,6 +122,16 @@ export default function Home() {
                   </Button>
                 </Link>
               )}
+              <a
+                href="https://line.me/R/ti/p/@696szqnp"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Button size="lg" className="text-base px-8 h-12 gap-2 text-white border-0" style={{ backgroundColor: "#06C755" }}>
+                  <MessageSquare className="h-5 w-5" />
+                  LINEで始める
+                </Button>
+              </a>
               <a href="#features">
                 <Button size="lg" variant="outline" className="text-base px-8 h-12">
                   詳しく見る
@@ -258,25 +268,25 @@ export default function Home() {
             <StepCard
               number={1}
               title="プロフィールを設定"
-              description="あなたのスキル、経歴、ビジネス情報を入力します。"
+              description="会社名・役職・スキル・経歴を入力。例：「SaaS営業10年、AI導入コンサル経験あり」など、あなたの強みを登録します。"
               color="text-cyan-400 border-cyan-500/30 bg-cyan-500/10"
             />
             <StepCard
               number={2}
               title="分身AIを作成"
-              description="プロフィールを基に分身AIを作成。ドキュメントをアップロードして知識を追加できます。"
+              description="プロフィールを基にAIが自動学習。提案書やポートフォリオをアップロードすれば、さらに精度の高い分身が完成します。"
               color="text-violet-400 border-violet-500/30 bg-violet-500/10"
             />
             <StepCard
               number={3}
               title="分身AIと対話"
-              description="作成した分身AIとチャットして、学習内容を確認・調整します。"
+              description="「新規事業について相談したい」と話しかけてテスト。回答の精度を確認し、ナレッジを追加して調整できます。"
               color="text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
             />
             <StepCard
               number={4}
               title="マッチング開始"
-              description="他のユーザーの分身AIと自動対話を開始。ビジネスマッチングの可能性を探ります。"
+              description="あなたの分身AIが相手の分身AIと自動で対話。「AI×教育で協業可能」など、具体的な相性分析レポートが届きます。"
               color="text-amber-400 border-amber-500/30 bg-amber-500/10"
             />
           </div>
@@ -408,36 +418,40 @@ export default function Home() {
       {/* Divider */}
       <div className="h-px bg-gradient-to-r from-transparent via-border to-transparent" />
 
-      {/* Demo Section */}
+      {/* Demo Section — 3 Use Case Cards */}
       <section className="py-24 relative overflow-hidden">
         <div className="container">
           <div className="text-center mb-12">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-muted/50 text-xs text-muted-foreground mb-4 uppercase tracking-wider">
-              デモ動画
+              活用例
             </div>
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">分身AIの使い方を見る</h2>
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">こんなシーンで使われています</h2>
             <p className="text-muted-foreground max-w-xl mx-auto">
-              3分でわかる分身AIプラットフォームのデモンストレーション
+              業種・職種を問わず、ビジネスマッチングを自動化できます。
             </p>
           </div>
-          <div className="max-w-4xl mx-auto">
-            <div className="relative aspect-video rounded-2xl border border-border/50 bg-card/60 backdrop-blur-sm overflow-hidden group cursor-pointer" role="img" aria-label="分身AIプラットフォーム紹介デモ動画（準備中）">
-              <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-accent/10" aria-hidden="true" />
-              <div className="absolute inset-0 flex items-center justify-center" aria-hidden="true">
-                <div className="w-20 h-20 rounded-full bg-primary/90 flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg shadow-primary/20">
-                  <svg className="w-8 h-8 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                </div>
-              </div>
-              <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between text-sm text-muted-foreground">
-                <span>分身AI プラットフォーム紹介</span>
-                <span>3:24</span>
-              </div>
-            </div>
-            <p className="text-center text-sm text-muted-foreground mt-4">
-              デモ動画は準備中です。サービスの使い方はオンボーディングガイドをご覧ください。
-            </p>
+          <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+            <DemoCard
+              icon={<Target className="h-8 w-8 text-cyan-400" />}
+              title="スタートアップ × 投資家"
+              description="創業者の分身AIが事業計画を説明し、投資家の分身AIが質問。相性スコア92%で面談実現。"
+              stat="月3件の提携"
+              gradient="from-cyan-500/10 to-blue-500/10"
+            />
+            <DemoCard
+              icon={<Users className="h-8 w-8 text-violet-400" />}
+              title="フリーランス × 企業"
+              description="デザイナーの分身AIがポートフォリオを紹介。企業の分身AIが要件をヒアリングし、最適な案件をマッチング。"
+              stat="受注率2倍"
+              gradient="from-violet-500/10 to-purple-500/10"
+            />
+            <DemoCard
+              icon={<TrendingUp className="h-8 w-8 text-emerald-400" />}
+              title="部門間コラボ"
+              description="営業部と開発部の分身AI同士が対話。「顧客の声×技術力」で新サービスのアイデアを自動生成。"
+              stat="アイデア創出3倍"
+              gradient="from-emerald-500/10 to-green-500/10"
+            />
           </div>
         </div>
       </section>
@@ -633,6 +647,35 @@ function StepCard({
         <div className="flex-1 min-w-0">
           <h3 className="text-lg font-semibold mb-1">{title}</h3>
           <p className="text-muted-foreground text-sm leading-relaxed">{description}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DemoCard({
+  icon,
+  title,
+  description,
+  stat,
+  gradient,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  stat: string;
+  gradient: string;
+}) {
+  return (
+    <div className="relative p-6 rounded-2xl border border-border/50 bg-card/80 backdrop-blur-sm overflow-hidden group hover:border-primary/30 transition-all">
+      <div className={`absolute inset-0 bg-gradient-to-br ${gradient} opacity-0 group-hover:opacity-100 transition-opacity`} />
+      <div className="relative">
+        <div className="mb-4">{icon}</div>
+        <h3 className="text-lg font-bold mb-2">{title}</h3>
+        <p className="text-sm text-muted-foreground leading-relaxed mb-4">{description}</p>
+        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold">
+          <TrendingUp className="h-3 w-3" />
+          {stat}
         </div>
       </div>
     </div>

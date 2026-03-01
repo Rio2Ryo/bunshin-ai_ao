@@ -161,18 +161,80 @@ export default function LineLink() {
         ) : !connection || connection.status === "disconnected" ? (
           // 未連携状態
           <div className="space-y-6">
-            <Alert>
-              <Smartphone className="w-4 h-4" />
-              <AlertTitle>LINE連携の手順</AlertTitle>
-              <AlertDescription className="mt-2">
-                <ol className="list-decimal list-inside space-y-2">
-                  <li>分身AI公式LINEアカウントを友だち追加</li>
-                  <li>LINEで送られてくる6桁の連携コードを確認</li>
-                  <li>下のフォームに連携コードを入力</li>
-                </ol>
-              </AlertDescription>
-            </Alert>
-            
+            {/* Big LINE CTA */}
+            <Card className="border-2 border-green-500/30 bg-gradient-to-br from-green-500/5 to-green-600/5">
+              <CardContent className="py-8 text-center">
+                <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-4">
+                  <MessageCircle className="w-8 h-8 text-green-500" />
+                </div>
+                <h2 className="text-xl font-bold mb-2">まずはLINEで友だち追加</h2>
+                <p className="text-muted-foreground mb-6 max-w-md mx-auto">
+                  分身AI公式アカウントを友だち追加すると、連携コードが届きます
+                </p>
+                <Button size="lg" className="text-white text-lg px-10 h-14 gap-3 border-0 shadow-lg shadow-green-500/20 hover:brightness-110" style={{ backgroundColor: "#06C755" }} asChild>
+                  <a
+                    href="https://line.me/R/ti/p/@696szqnp"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <MessageCircle className="w-6 h-6" />
+                    LINEで友だち追加して始める
+                  </a>
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* QR Code placeholder */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <QrCode className="w-5 h-5" />
+                  QRコードで追加
+                </CardTitle>
+                <CardDescription>スマートフォンのカメラでスキャンしてください</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex justify-center py-4">
+                  <div className="w-48 h-48 rounded-xl border-2 border-dashed border-border flex flex-col items-center justify-center bg-muted/30">
+                    <QrCode className="w-16 h-16 text-muted-foreground/40 mb-2" />
+                    <p className="text-xs text-muted-foreground">QRコード準備中</p>
+                  </div>
+                </div>
+                <p className="text-center text-xs text-muted-foreground mt-2">
+                  LINE ID: <span className="font-mono font-semibold">@696szqnp</span>
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* 3 Step Visual Cards */}
+            <div className="grid md:grid-cols-3 gap-4">
+              <Card className="relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-1 bg-green-500" />
+                <CardContent className="pt-6 text-center">
+                  <div className="w-10 h-10 rounded-full bg-green-500/10 text-green-500 flex items-center justify-center mx-auto mb-3 text-lg font-bold">1</div>
+                  <h3 className="font-semibold mb-1">友だち追加</h3>
+                  <p className="text-sm text-muted-foreground">上のボタンまたはQRコードから分身AI公式LINEを友だち追加</p>
+                </CardContent>
+              </Card>
+              <Card className="relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-1 bg-blue-500" />
+                <CardContent className="pt-6 text-center">
+                  <div className="w-10 h-10 rounded-full bg-blue-500/10 text-blue-500 flex items-center justify-center mx-auto mb-3 text-lg font-bold">2</div>
+                  <h3 className="font-semibold mb-1">連携コード受取</h3>
+                  <p className="text-sm text-muted-foreground">LINEに6桁の連携コードが自動で届きます（例: ABC123）</p>
+                </CardContent>
+              </Card>
+              <Card className="relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-1 bg-violet-500" />
+                <CardContent className="pt-6 text-center">
+                  <div className="w-10 h-10 rounded-full bg-violet-500/10 text-violet-500 flex items-center justify-center mx-auto mb-3 text-lg font-bold">3</div>
+                  <h3 className="font-semibold mb-1">コード入力で連携完了</h3>
+                  <p className="text-sm text-muted-foreground">下のフォームにコードを入力すれば、LINEから分身AIと会話可能に</p>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Link Code Input */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -194,8 +256,8 @@ export default function LineLink() {
                       className="text-center text-2xl tracking-widest font-mono"
                     />
                   </div>
-                  <Button 
-                    onClick={handleLink} 
+                  <Button
+                    onClick={handleLink}
                     disabled={isLinking || linkCode.length !== 6}
                   >
                     {isLinking ? (
@@ -205,35 +267,6 @@ export default function LineLink() {
                     )}
                     連携する
                   </Button>
-                </div>
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <QrCode className="w-5 h-5" />
-                  公式LINEを友だち追加
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center py-4">
-                  <p className="text-muted-foreground mb-4">
-                    以下のボタンから分身AI公式LINEを友だち追加してください
-                  </p>
-                  <Button variant="outline" size="lg" asChild>
-                    <a 
-                      href="https://line.me/R/ti/p/@696szqnp" 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                    >
-                      <MessageCircle className="w-5 h-5 mr-2 text-green-500" />
-                      友だち追加
-                    </a>
-                  </Button>
-                  <p className="text-xs text-muted-foreground mt-4">
-                    ※公式LINEアカウントは管理者が設定する必要があります
-                  </p>
                 </div>
               </CardContent>
             </Card>
