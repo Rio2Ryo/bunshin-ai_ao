@@ -5525,4 +5525,265 @@ JSON形式:
     ).bind(ctx.userId).all<any>();
     return (rows.results ?? []).map((r: any) => ({ ...r, percentiles: parseJson<any>(r.percentiles) }));
   }),
+
+  // ============ Debate Mode ============
+
+  createDebate: protectedProcedure
+    .input(z.object({
+      topic: z.string().min(1),
+      stance: z.enum(["pro", "con"]),
+      opponentUserId: z.number().optional(),
+      turnCount: z.number().min(2).max(8).default(4),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      let opponentTwin: any = null;
+      if (input.opponentUserId) {
+        opponentTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? AND status='active' LIMIT 1`).bind(input.opponentUserId).first<any>();
+      }
+
+      const proLabel = input.stance === "pro" ? twin.name : (opponentTwin?.name || "反対側AI");
+      const conLabel = input.stance === "con" ? twin.name : (opponentTwin?.name || "賛成側AI");
+
+      const proPrompt = `あなたは「${input.topic}」に賛成の立場で討論します。名前: ${proLabel}。${input.stance === "pro" ? (twin.personality || "") : (opponentTwin?.personality || "論理的で鋭い議論をする")}。根拠を示し、説得力のある主張をしてください。`;
+      const conPrompt = `あなたは「${input.topic}」に反対の立場で討論します。名前: ${conLabel}。${input.stance === "con" ? (twin.personality || "") : (opponentTwin?.personality || "論理的で鋭い議論をする")}。根拠を示し、説得力のある反論をしてください。`;
+
+      const dialogues: { turn: number; speaker: string; stance: string; content: string }[] = [];
+      const history: string[] = [];
+
+      for (let i = 0; i < input.turnCount; i++) {
+        // Pro speaks
+        const proMessages = [
+          { role: "system" as const, content: proPrompt },
+          { role: "user" as const, content: i === 0 ? `ディベートを開始してください。テーマ: 「${input.topic}」。あなたは賛成側です。` : `これまでの議論:\n${history.join('\n')}\n\n反対側の主張に反論し、自分の立場を強化してください。` },
+        ];
+        const proResp = await invokeLLM(llmConfig, proMessages, { maxTokens: 400 });
+        dialogues.push({ turn: i * 2 + 1, speaker: proLabel, stance: "pro", content: proResp.content });
+        history.push(`[賛成・${proLabel}] ${proResp.content}`);
+
+        // Con speaks
+        const conMessages = [
+          { role: "system" as const, content: conPrompt },
+          { role: "user" as const, content: `これまでの議論:\n${history.join('\n')}\n\n賛成側の主張に反論し、反対の立場を主張してください。` },
+        ];
+        const conResp = await invokeLLM(llmConfig, conMessages, { maxTokens: 400 });
+        dialogues.push({ turn: i * 2 + 2, speaker: conLabel, stance: "con", content: conResp.content });
+        history.push(`[反対・${conLabel}] ${conResp.content}`);
+      }
+
+      // Judge
+      const judgePrompt = `あなたは公平なディベートジャッジです。以下の討論を採点してください。
+
+テーマ: 「${input.topic}」
+${dialogues.map(d => `[${d.stance === "pro" ? "賛成" : "反対"}・${d.speaker}] ${d.content}`).join('\n\n')}
+
+JSON形式で返してください:
+{"winner":"pro|con|draw","proScore":{"logic":0-25,"persuasion":0-25,"rebuttal":0-25,"originality":0-25,"total":0-100},"conScore":{"logic":0-25,"persuasion":0-25,"rebuttal":0-25,"originality":0-25,"total":0-100},"keyPoints":[{"side":"pro|con","point":"要約"}],"summary":"総評"}`;
+
+      const judgeResp = await invokeLLM(llmConfig, [{ role: "user", content: judgePrompt }]);
+      let judgeResult: any = {};
+      try { judgeResult = JSON.parse(judgeResp.content); } catch { judgeResult = { winner: "draw", proScore: { total: 50 }, conScore: { total: 50 }, keyPoints: [], summary: "判定不能" }; }
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO debate_sessions (userId, topic, stance, opponentUserId, dialogues, judgeResult) VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(ctx.userId, input.topic, input.stance, input.opponentUserId || null, toJson(dialogues), toJson(judgeResult)).run();
+
+      // Update rankings
+      const myStance = input.stance;
+      const won = judgeResult.winner === myStance;
+      const lost = judgeResult.winner !== "draw" && judgeResult.winner !== myStance;
+      const myScore = myStance === "pro" ? (judgeResult.proScore?.total || 0) : (judgeResult.conScore?.total || 0);
+
+      await ctx.env.DB.prepare(
+        `INSERT INTO debate_rankings (userId, wins, losses, draws, totalScore) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(userId) DO UPDATE SET wins=wins+?, losses=losses+?, draws=draws+?, totalScore=totalScore+?, updatedAt=datetime('now')`
+      ).bind(ctx.userId, won ? 1 : 0, lost ? 1 : 0, (!won && !lost) ? 1 : 0, myScore, won ? 1 : 0, lost ? 1 : 0, (!won && !lost) ? 1 : 0, myScore).run();
+
+      return { id: Number(res.meta.last_row_id), dialogues, judgeResult };
+    }),
+
+  listDebates: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT id, topic, stance, status, createdAt, judgeResult FROM debate_sessions WHERE userId=? ORDER BY createdAt DESC LIMIT 30`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, judgeResult: parseJson<any>(r.judgeResult) }));
+  }),
+
+  getDebate: protectedProcedure
+    .input(z.object({ debateId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(`SELECT * FROM debate_sessions WHERE id=? AND userId=?`).bind(input.debateId, ctx.userId).first<any>();
+      if (!row) throw new TRPCError({ code: "NOT_FOUND" });
+      return { ...row, dialogues: parseJson<any[]>(row.dialogues), judgeResult: parseJson<any>(row.judgeResult) };
+    }),
+
+  getDebateRankings: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT dr.*, u.name as userName FROM debate_rankings dr LEFT JOIN users u ON u.id = dr.userId ORDER BY dr.totalScore DESC LIMIT 20`
+    ).all<any>();
+    const myRank = await ctx.env.DB.prepare(`SELECT * FROM debate_rankings WHERE userId=?`).bind(ctx.userId).first<any>();
+    return {
+      rankings: (rows.results ?? []).map((r: any) => ({ ...r, bestArguments: parseJson<string[]>(r.bestArguments) })),
+      myRank: myRank ? { ...myRank, bestArguments: parseJson<string[]>(myRank.bestArguments) } : null,
+    };
+  }),
+
+  // ============ Community Matching Events ============
+
+  createCommunityEvent: protectedProcedure
+    .input(z.object({
+      title: z.string().min(1),
+      description: z.string().optional(),
+      theme: z.string().optional(),
+      maxParticipants: z.number().min(2).max(50).default(10),
+      scheduledAt: z.string(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO community_events (organizerId, title, description, theme, maxParticipants, scheduledAt) VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(ctx.userId, input.title, input.description || null, input.theme || null, input.maxParticipants, input.scheduledAt).run();
+      const eventId = Number(res.meta.last_row_id);
+      // Auto-join organizer
+      await ctx.env.DB.prepare(
+        `INSERT INTO community_event_participants (eventId, userId, status) VALUES (?, ?, 'approved')`
+      ).bind(eventId, ctx.userId).run();
+      return { id: eventId };
+    }),
+
+  listCommunityEvents: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT ce.*, u.name as organizerName,
+              (SELECT COUNT(*) FROM community_event_participants cep WHERE cep.eventId = ce.id AND cep.status='approved') as participantCount,
+              (SELECT cep2.status FROM community_event_participants cep2 WHERE cep2.eventId = ce.id AND cep2.userId = ?) as myStatus
+       FROM community_events ce
+       LEFT JOIN users u ON u.id = ce.organizerId
+       ORDER BY ce.scheduledAt DESC LIMIT 30`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, settings: parseJson<any>(r.settings) }));
+  }),
+
+  getCommunityEvent: protectedProcedure
+    .input(z.object({ eventId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const event = await ctx.env.DB.prepare(
+        `SELECT ce.*, u.name as organizerName FROM community_events ce LEFT JOIN users u ON u.id = ce.organizerId WHERE ce.id=?`
+      ).bind(input.eventId).first<any>();
+      if (!event) throw new TRPCError({ code: "NOT_FOUND" });
+      const participants = await ctx.env.DB.prepare(
+        `SELECT cep.*, u.name as userName FROM community_event_participants cep LEFT JOIN users u ON u.id = cep.userId WHERE cep.eventId=? ORDER BY cep.rank ASC NULLS LAST, cep.matchingScore DESC NULLS LAST`
+      ).bind(input.eventId).all<any>();
+      return { ...event, settings: parseJson<any>(event.settings), reportData: parseJson<any>(event.reportData), participants: participants.results ?? [] };
+    }),
+
+  joinCommunityEvent: protectedProcedure
+    .input(z.object({ eventId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const event = await ctx.env.DB.prepare(`SELECT * FROM community_events WHERE id=?`).bind(input.eventId).first<any>();
+      if (!event) throw new TRPCError({ code: "NOT_FOUND" });
+      if (event.status !== "upcoming") throw new TRPCError({ code: "BAD_REQUEST", message: "このイベントは参加受付終了です" });
+      const count = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM community_event_participants WHERE eventId=? AND status='approved'`).bind(input.eventId).first<any>();
+      if ((count?.c || 0) >= event.maxParticipants) throw new TRPCError({ code: "BAD_REQUEST", message: "定員に達しています" });
+      const needsApproval = event.organizerId !== ctx.userId;
+      await ctx.env.DB.prepare(
+        `INSERT OR IGNORE INTO community_event_participants (eventId, userId, status) VALUES (?, ?, ?)`
+      ).bind(input.eventId, ctx.userId, needsApproval ? "pending" : "approved").run();
+      return { joined: true, status: needsApproval ? "pending" : "approved" };
+    }),
+
+  approveParticipant: protectedProcedure
+    .input(z.object({ eventId: z.number(), userId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const event = await ctx.env.DB.prepare(`SELECT organizerId FROM community_events WHERE id=?`).bind(input.eventId).first<any>();
+      if (!event || event.organizerId !== ctx.userId) throw new TRPCError({ code: "FORBIDDEN" });
+      await ctx.env.DB.prepare(
+        `UPDATE community_event_participants SET status='approved' WHERE eventId=? AND userId=?`
+      ).bind(input.eventId, input.userId).run();
+      return { approved: true };
+    }),
+
+  runCommunityEvent: protectedProcedure
+    .input(z.object({ eventId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const event = await ctx.env.DB.prepare(`SELECT * FROM community_events WHERE id=?`).bind(input.eventId).first<any>();
+      if (!event) throw new TRPCError({ code: "NOT_FOUND" });
+      if (event.organizerId !== ctx.userId) throw new TRPCError({ code: "FORBIDDEN" });
+
+      const participants = await ctx.env.DB.prepare(
+        `SELECT cep.userId, dt.name as twinName, dt.personality, dt.description
+         FROM community_event_participants cep
+         LEFT JOIN digital_twins dt ON dt.userId = cep.userId AND dt.status='active'
+         WHERE cep.eventId=? AND cep.status='approved'`
+      ).bind(input.eventId).all<any>();
+
+      const pList = participants.results ?? [];
+      if (pList.length < 2) throw new TRPCError({ code: "BAD_REQUEST", message: "参加者が2人以上必要です" });
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      // Random pairing
+      const shuffled = [...pList].sort(() => Math.random() - 0.5);
+      const pairs: { user1: any; user2: any; score: number }[] = [];
+      for (let i = 0; i < shuffled.length - 1; i += 2) {
+        const u1 = shuffled[i];
+        const u2 = shuffled[i + 1];
+        // Simple LLM scoring
+        const scorePrompt = `2人のビジネスパーソンの相性を0-100で採点してください。
+人物1: ${u1.twinName || 'ユーザー'} - ${u1.personality || '不明'}
+人物2: ${u2.twinName || 'ユーザー'} - ${u2.personality || '不明'}
+テーマ: ${event.theme || '一般ビジネス'}
+数値のみ返してください。`;
+        const scoreResp = await invokeLLM(llmConfig, [{ role: "user", content: scorePrompt }], { maxTokens: 10 });
+        const score = parseInt(scoreResp.content.replace(/\D/g, '')) || 50;
+        pairs.push({ user1: u1, user2: u2, score });
+
+        // Update participant scores
+        await ctx.env.DB.prepare(`UPDATE community_event_participants SET matchingScore=? WHERE eventId=? AND userId=?`).bind(score, input.eventId, u1.userId).run();
+        await ctx.env.DB.prepare(`UPDATE community_event_participants SET matchingScore=? WHERE eventId=? AND userId=?`).bind(score, input.eventId, u2.userId).run();
+      }
+
+      // Rank by score
+      const ranked = [...pList].sort((a: any, b: any) => {
+        const pa = pairs.find(p => p.user1.userId === a.userId || p.user2.userId === a.userId);
+        const pb = pairs.find(p => p.user1.userId === b.userId || p.user2.userId === b.userId);
+        return (pb?.score || 0) - (pa?.score || 0);
+      });
+      for (let i = 0; i < ranked.length; i++) {
+        await ctx.env.DB.prepare(`UPDATE community_event_participants SET rank=? WHERE eventId=? AND userId=?`).bind(i + 1, input.eventId, ranked[i].userId).run();
+      }
+
+      // Generate report
+      const reportPrompt = `以下のマッチングイベントのレポートをJSON形式で作成してください。
+テーマ: ${event.theme || event.title}
+参加者数: ${pList.length}
+ペアリング結果: ${JSON.stringify(pairs.map(p => ({ pair: `${p.user1.twinName} & ${p.user2.twinName}`, score: p.score })))}
+
+JSON形式: {"summary":"要約","highlights":["ハイライト1"],"bestPair":{"names":"名前","score":数値},"avgScore":数値,"recommendations":["次回への提案"]}`;
+
+      const reportResp = await invokeLLM(llmConfig, [{ role: "user", content: reportPrompt }]);
+      let reportData: any = {};
+      try { reportData = JSON.parse(reportResp.content); } catch { reportData = { summary: "レポート生成中", highlights: [], avgScore: 0, recommendations: [] }; }
+
+      await ctx.env.DB.prepare(
+        `UPDATE community_events SET status='completed', reportData=?, updatedAt=datetime('now') WHERE id=?`
+      ).bind(toJson(reportData), input.eventId).run();
+
+      return { pairs: pairs.map(p => ({ user1: p.user1.twinName, user2: p.user2.twinName, score: p.score })), reportData };
+    }),
+
 });

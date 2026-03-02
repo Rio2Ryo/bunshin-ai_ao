@@ -97,6 +97,9 @@ const MatchingCalendar = lazy(() => import("./pages/MatchingCalendar"));
 const SandboxSimulation = lazy(() => import("./pages/SandboxSimulation"));
 const PeerReview = lazy(() => import("./pages/PeerReview"));
 const TwinBenchmark = lazy(() => import("./pages/TwinBenchmark"));
+const DebateMode = lazy(() => import("./pages/DebateMode"));
+const EmotionJournal = lazy(() => import("./pages/EmotionJournal"));
+const CommunityEvents = lazy(() => import("./pages/CommunityEvents"));
 
 function PageLoader() {
   return (
@@ -198,6 +201,9 @@ function Router() {
         <Route path="/sandbox" component={SandboxSimulation} />
         <Route path="/peer-review" component={PeerReview} />
         <Route path="/benchmark" component={TwinBenchmark} />
+        <Route path="/debate" component={DebateMode} />
+        <Route path="/emotion-journal" component={EmotionJournal} />
+        <Route path="/events" component={CommunityEvents} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

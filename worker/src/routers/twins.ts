@@ -2386,4 +2386,159 @@ ${entrySummaries}
       ).bind(input.sessionId, ctx.userId).run();
       return { ended: true };
     }),
+
+  // ============ Emotion Mapping Journal ============
+
+  recordEmotion: protectedProcedure
+    .input(z.object({
+      sourceType: z.enum(["matching", "chat", "coaching", "manual"]),
+      sourceId: z.number().optional(),
+      emotions: z.object({
+        joy: z.number().min(0).max(1),
+        anger: z.number().min(0).max(1),
+        sadness: z.number().min(0).max(1),
+        happiness: z.number().min(0).max(1),
+        anxiety: z.number().min(0).max(1),
+        confidence: z.number().min(0).max(1),
+      }),
+      context: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const emotions = input.emotions;
+      const entries = Object.entries(emotions);
+      const dominant = entries.sort((a, b) => b[1] - a[1])[0];
+      const intensity = entries.reduce((sum, [, v]) => sum + v, 0) / entries.length;
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO emotion_journal_entries (userId, twinId, sourceType, sourceId, emotions, dominantEmotion, intensity, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(ctx.userId, twin.id, input.sourceType, input.sourceId || null, toJson(input.emotions), dominant[0], Math.round(intensity * 100) / 100, input.context || null).run();
+
+      // Check for stress patterns (3+ recent entries with high anxiety or anger)
+      const recent = await ctx.env.DB.prepare(
+        `SELECT emotions FROM emotion_journal_entries WHERE userId=? ORDER BY createdAt DESC LIMIT 5`
+      ).bind(ctx.userId).all<any>();
+      const recentEmotions = (recent.results ?? []).map((r: any) => parseJson<any>(r.emotions) || {});
+      const highStressCount = recentEmotions.filter(e => (e.anxiety || 0) > 0.7 || (e.anger || 0) > 0.7).length;
+
+      if (highStressCount >= 3) {
+        await ctx.env.DB.prepare(
+          `INSERT INTO emotion_alerts (userId, alertType, message, suggestion) VALUES (?, 'stress', ?, ?)`
+        ).bind(ctx.userId, "ストレス兆候が検出されました: 最近の対話で不安や怒りの感情が高い状態が続いています", "対話のテーマを変えてみる、リラックスできるトピックでの練習、またはツインの人格設定を調整することをお勧めします").run();
+      }
+
+      return { id: Number(res.meta.last_row_id), dominantEmotion: dominant[0], intensity };
+    }),
+
+  analyzeSessionEmotions: protectedProcedure
+    .input(z.object({
+      sourceType: z.enum(["matching", "chat"]),
+      sourceId: z.number(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "chat", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      // Get dialogues
+      let dialogueText = "";
+      if (input.sourceType === "matching") {
+        const dialogues = await ctx.env.DB.prepare(
+          `SELECT speaker, content FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber ASC`
+        ).bind(input.sourceId).all<any>();
+        dialogueText = (dialogues.results ?? []).map((d: any) => `[${d.speaker}] ${d.content}`).join('\n');
+      } else {
+        const messages = await ctx.env.DB.prepare(
+          `SELECT role, content FROM chat_messages WHERE sessionId=? ORDER BY createdAt ASC LIMIT 20`
+        ).bind(input.sourceId).all<any>();
+        dialogueText = (messages.results ?? []).map((m: any) => `[${m.role}] ${m.content}`).join('\n');
+      }
+
+      if (!dialogueText) throw new TRPCError({ code: "BAD_REQUEST", message: "対話データがありません" });
+
+      const prompt = `以下の対話から感情の推移を分析してJSON形式で返してください。
+
+${dialogueText}
+
+JSON形式:
+{"emotions":{"joy":0-1,"anger":0-1,"sadness":0-1,"happiness":0-1,"anxiety":0-1,"confidence":0-1},"dominantEmotion":"最も強い感情","transitions":[{"turn":1,"emotion":"感情名","intensity":0-1}],"summary":"感情の推移の要約","stressIndicators":["ストレス兆候"]}`;
+
+      const result = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+      let analysis: any = {};
+      try { analysis = JSON.parse(result.content); } catch { analysis = { emotions: { joy: 0.5, anger: 0.1, sadness: 0.1, happiness: 0.5, anxiety: 0.2, confidence: 0.5 }, dominantEmotion: "happiness", transitions: [], summary: "分析中", stressIndicators: [] }; }
+
+      // Auto-record emotion
+      const emotions = analysis.emotions || {};
+      const emotionEntries = Object.entries(emotions);
+      const dominant = emotionEntries.sort(([,a]: any, [,b]: any) => b - a)[0];
+      const intensity = emotionEntries.reduce((sum: number, [, v]: any) => sum + v, 0) / Math.max(emotionEntries.length, 1);
+
+      await ctx.env.DB.prepare(
+        `INSERT INTO emotion_journal_entries (userId, twinId, sourceType, sourceId, emotions, dominantEmotion, intensity, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(ctx.userId, twin.id, input.sourceType, input.sourceId, toJson(emotions), dominant?.[0] || "neutral", Math.round(intensity * 100) / 100, analysis.summary || null).run();
+
+      return analysis;
+    }),
+
+  getEmotionJournal: protectedProcedure
+    .input(z.object({ limit: z.number().default(30) }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT * FROM emotion_journal_entries WHERE userId=? ORDER BY createdAt DESC LIMIT ?`
+      ).bind(ctx.userId, input.limit).all<any>();
+      return (rows.results ?? []).map((r: any) => ({ ...r, emotions: parseJson<any>(r.emotions) }));
+    }),
+
+  getEmotionTimeline: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT emotions, dominantEmotion, intensity, createdAt, sourceType FROM emotion_journal_entries WHERE userId=? ORDER BY createdAt ASC LIMIT 60`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, emotions: parseJson<any>(r.emotions) }));
+  }),
+
+  getEmotionAlerts: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT * FROM emotion_alerts WHERE userId=? AND isRead=0 ORDER BY createdAt DESC LIMIT 10`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
+  markEmotionAlertRead: protectedProcedure
+    .input(z.object({ alertId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`UPDATE emotion_alerts SET isRead=1 WHERE id=? AND userId=?`).bind(input.alertId, ctx.userId).run();
+      return { read: true };
+    }),
+
+  getEmotionAdvice: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "chat", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+    const recent = await ctx.env.DB.prepare(
+      `SELECT emotions, dominantEmotion, intensity, sourceType, context, createdAt FROM emotion_journal_entries WHERE userId=? ORDER BY createdAt DESC LIMIT 10`
+    ).bind(ctx.userId).all<any>();
+
+    const prompt = `以下の感情ジャーナルデータを分析し、ストレス対策とメンタルヘルスのアドバイスをJSON形式で返してください。
+
+${JSON.stringify((recent.results ?? []).map((r: any) => ({ ...r, emotions: parseJson<any>(r.emotions) })))}
+
+JSON形式: {"overallMood":"全体的な気分","stressLevel":"low|medium|high","advice":[{"title":"アドバイスタイトル","description":"詳細","priority":"high|medium|low"}],"recommendation":"総合的な推奨事項"}`;
+
+    const result = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+    let advice: any = {};
+    try { advice = JSON.parse(result.content); } catch { advice = { overallMood: "分析中", stressLevel: "medium", advice: [], recommendation: "データを増やしてください" }; }
+    return advice;
+  }),
+
 });

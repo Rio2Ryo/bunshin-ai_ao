@@ -23,7 +23,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useRealtimeNotifications } from "@/hooks/useRealtimeNotifications";
 import { useWebPush } from "@/hooks/useWebPush";
 import { toast } from "sonner";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare, FileCheck, History, Mic, TrendingUp, MessageCircleHeart, CalendarDays, FlaskRound, Star, Gauge } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare, FileCheck, History, Mic, TrendingUp, MessageCircleHeart, CalendarDays, FlaskRound, Star, Gauge, Scale, BookHeart, Calendar } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -228,6 +228,8 @@ function DashboardLayoutContent({
         { icon: Network, label: language === "en" ? "Network" : "ネットワーク", path: "/network" },
         { icon: TrendingUp, label: language === "en" ? "ROI" : "ROI分析", path: "/roi" },
         { icon: CalendarDays, label: language === "en" ? "Calendar" : "カレンダー", path: "/calendar" },
+        { icon: Scale, label: language === "en" ? "Debate" : "ディベート", path: "/debate" },
+        { icon: Calendar, label: language === "en" ? "Events" : "イベント", path: "/events" },
       ],
     },
     {
@@ -259,6 +261,7 @@ function DashboardLayoutContent({
         { icon: FlaskRound, label: language === "en" ? "Sandbox" : "サンドボックス", path: "/sandbox" },
         { icon: Star, label: language === "en" ? "Peer Review" : "相互評価", path: "/peer-review" },
         { icon: Gauge, label: language === "en" ? "Benchmark" : "ベンチマーク", path: "/benchmark" },
+        { icon: BookHeart, label: language === "en" ? "Emotion Journal" : "感情ジャーナル", path: "/emotion-journal" },
       ],
     },
   ], [t, language]);

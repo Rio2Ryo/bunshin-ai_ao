@@ -1434,6 +1434,79 @@ CREATE TABLE IF NOT EXISTS twin_benchmarks (
   improvements TEXT,
   createdAt TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS debate_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  topic TEXT NOT NULL,
+  stance TEXT NOT NULL DEFAULT 'pro',
+  opponentUserId INTEGER,
+  dialogues TEXT,
+  judgeResult TEXT,
+  status TEXT DEFAULT 'completed',
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS debate_rankings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  wins INTEGER DEFAULT 0,
+  losses INTEGER DEFAULT 0,
+  draws INTEGER DEFAULT 0,
+  totalScore INTEGER DEFAULT 0,
+  bestArguments TEXT,
+  updatedAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(userId)
+);
+
+CREATE TABLE IF NOT EXISTS emotion_journal_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  sourceType TEXT NOT NULL,
+  sourceId INTEGER,
+  emotions TEXT NOT NULL,
+  dominantEmotion TEXT,
+  intensity REAL DEFAULT 0.5,
+  context TEXT,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS emotion_alerts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  alertType TEXT NOT NULL,
+  message TEXT,
+  suggestion TEXT,
+  isRead INTEGER DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS community_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  organizerId INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  theme TEXT,
+  maxParticipants INTEGER DEFAULT 10,
+  scheduledAt TEXT NOT NULL,
+  status TEXT DEFAULT 'upcoming',
+  settings TEXT,
+  reportData TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS community_event_participants (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  eventId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  status TEXT DEFAULT 'pending',
+  matchingScore INTEGER,
+  rank INTEGER,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(eventId, userId)
+);
 `;
 
 let schemaReady = false;
