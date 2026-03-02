@@ -82,6 +82,9 @@ const OutcomeTracker = lazy(() => import("./pages/OutcomeTracker"));
 const QualityScorecard = lazy(() => import("./pages/QualityScorecard"));
 const KnowledgeGraph = lazy(() => import("./pages/KnowledgeGraph"));
 const MatchingDigest = lazy(() => import("./pages/MatchingDigest"));
+const PlaybookLibrary = lazy(() => import("./pages/PlaybookLibrary"));
+const ConversationStyleAnalysis = lazy(() => import("./pages/ConversationStyleAnalysis"));
+const MatchingNetwork = lazy(() => import("./pages/MatchingNetwork"));
 
 function PageLoader() {
   return (
@@ -168,6 +171,9 @@ function Router() {
         <Route path="/quality" component={QualityScorecard} />
         <Route path="/knowledge-graph" component={KnowledgeGraph} />
         <Route path="/digest" component={MatchingDigest} />
+        <Route path="/playbooks" component={PlaybookLibrary} />
+        <Route path="/conversation-style" component={ConversationStyleAnalysis} />
+        <Route path="/network" component={MatchingNetwork} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

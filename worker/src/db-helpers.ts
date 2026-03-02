@@ -1236,6 +1236,41 @@ CREATE TABLE IF NOT EXISTS matching_digests (
   digestData TEXT,
   generatedAt TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS matching_playbooks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  category TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT,
+  customTips TEXT,
+  isShared INTEGER DEFAULT 0,
+  shareCode TEXT,
+  useCount INTEGER DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS conversation_style_analysis (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  analysis TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, twinId)
+);
+
+CREATE TABLE IF NOT EXISTS matching_network_graphs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  graphData TEXT,
+  communities TEXT,
+  bridgeUsers TEXT,
+  suggestions TEXT,
+  generatedAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(userId)
+);
 `;
 
 let schemaReady = false;

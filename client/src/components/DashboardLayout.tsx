@@ -223,6 +223,9 @@ function DashboardLayoutContent({
         { icon: ClipboardList, label: language === "en" ? "Outcomes" : "成果トラッカー", path: "/outcomes" },
         { icon: Award, label: language === "en" ? "Quality" : "品質評価", path: "/quality" },
         { icon: FileText, label: language === "en" ? "Digest" : "ダイジェスト", path: "/digest" },
+        { icon: BookOpen, label: language === "en" ? "Playbooks" : "プレイブック", path: "/playbooks" },
+        { icon: MessageCircle, label: language === "en" ? "Conv. Style" : "会話スタイル", path: "/conversation-style" },
+        { icon: Network, label: language === "en" ? "Network" : "ネットワーク", path: "/network" },
       ],
     },
     {

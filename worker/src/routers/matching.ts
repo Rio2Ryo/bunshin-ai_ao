@@ -4436,4 +4436,329 @@ ${summaryData.topSessions.map((s: any) => `- ${s.theme || "未設定"} (スコ�
         return { sent: res.ok };
       } catch { return { sent: false, reason: "メール送信に失敗しました" }; }
     }),
+
+  // ============ Feature 21-1: AIマッチングコーチング・プレイブック ============
+
+  generatePlaybook: protectedProcedure
+    .input(z.object({
+      category: z.enum(["sales", "recruiting", "investor", "tech_alliance", "partnership", "general"]),
+      customContext: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM APIキーが未設定です" });
+
+      // Get user's matching history for personalization
+      const history = await ctx.env.DB.prepare(
+        `SELECT ms.theme, mr.compatibilityScore, mr.scoreBreakdown, mr.recommendations
+         FROM matching_sessions ms
+         LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+         WHERE ms.initiatorUserId = ? AND mr.id IS NOT NULL
+         ORDER BY ms.createdAt DESC LIMIT 10`
+      ).bind(ctx.userId).all<any>();
+
+      const categoryLabels: Record<string, string> = {
+        sales: "営業・商談", recruiting: "採用面接", investor: "投資家ピッチ",
+        tech_alliance: "技術提携", partnership: "パートナーシップ", general: "一般ビジネス",
+      };
+
+      const historyContext = (history.results ?? []).map((h: any) => {
+        const breakdown = parseJson<any>(h.scoreBreakdown);
+        return `テーマ: ${h.theme}, スコア: ${h.compatibilityScore}, 強み: ${breakdown ? Object.entries(breakdown).filter(([,v]) => (v as number) >= 15).map(([k]) => k).join(",") : "N/A"}`;
+      }).join("\n");
+
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: `あなたはビジネスマッチングの専門コンサルタントです。「${categoryLabels[input.category]}」カテゴリの実践的なプレイブックを作成してください。` },
+        { role: "user", content: `カテゴリ: ${categoryLabels[input.category]}
+${input.customContext ? `追加コンテキスト: ${input.customContext}` : ""}
+${historyContext ? `\nユーザーの過去マッチング傾向:\n${historyContext}` : ""}
+
+以下のJSON形式で出力してください:
+{
+  "title": "プレイブックタイトル",
+  "sections": [
+    { "heading": "セクション見出し", "content": "詳細な説明とアドバイス", "tips": ["具体的なヒント1", "ヒント2"] }
+  ],
+  "doList": ["すべきこと1", "すべきこと2"],
+  "dontList": ["避けるべきこと1", "避けるべきこと2"],
+  "openingLines": ["使える冒頭フレーズ1", "フレーズ2"],
+  "closingStrategies": ["クロージング戦略1", "戦略2"],
+  "customTips": ["ユーザーの傾向に合わせたカスタムヒント1", "ヒント2"]
+}` },
+      ], { maxTokens: 2048, temperature: 0.7 });
+
+      let playbook: any = {};
+      try {
+        const match = result.content.match(/\{[\s\S]*\}/);
+        if (match) playbook = JSON.parse(match[0]);
+      } catch { playbook = { title: `${categoryLabels[input.category]}プレイブック`, sections: [], doList: [], dontList: [], openingLines: [], closingStrategies: [], customTips: [] }; }
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO matching_playbooks (userId, category, title, content, customTips, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+      ).bind(ctx.userId, input.category, playbook.title || `${categoryLabels[input.category]}プレイブック`, toJson(playbook), toJson(playbook.customTips || [])).run();
+
+      return { id: Number(res.meta.last_row_id), ...playbook };
+    }),
+
+  listPlaybooks: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT * FROM matching_playbooks WHERE userId = ? OR isShared = 1 ORDER BY updatedAt DESC`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({
+      ...r,
+      content: parseJson<any>(r.content),
+      customTips: parseJson<any>(r.customTips),
+    }));
+  }),
+
+  sharePlaybook: protectedProcedure
+    .input(z.object({ playbookId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const pb = await ctx.env.DB.prepare(`SELECT * FROM matching_playbooks WHERE id = ? AND userId = ?`).bind(input.playbookId, ctx.userId).first<any>();
+      if (!pb) throw new TRPCError({ code: "NOT_FOUND" });
+      const shareCode = Array.from(crypto.getRandomValues(new Uint8Array(8))).map(b => b.toString(16).padStart(2, "0")).join("");
+      await ctx.env.DB.prepare(`UPDATE matching_playbooks SET isShared = 1, shareCode = ?, updatedAt = datetime('now') WHERE id = ?`).bind(shareCode, input.playbookId).run();
+      return { shareCode };
+    }),
+
+  deletePlaybook: protectedProcedure
+    .input(z.object({ playbookId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM matching_playbooks WHERE id = ? AND userId = ?`).bind(input.playbookId, ctx.userId).run();
+      return { deleted: true };
+    }),
+
+  // ============ Feature 21-2: ツイン会話スタイル分析 ============
+
+  analyzeConversationStyle: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id = ?`).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_dialogues WHERE sessionId = ? ORDER BY turnNumber`
+      ).bind(input.sessionId).all<any>();
+      if (!dialogues.results?.length) throw new TRPCError({ code: "BAD_REQUEST", message: "対話データがありません" });
+
+      const settings = parseJson<any>(session.settings) || {};
+      const twin1Id = session.twin1Id || settings.twin1Id;
+
+      const dialogueText = (dialogues.results ?? []).map((d: any) => `Turn ${d.turnNumber} [${d.speaker}]: ${d.content}`).join("\n");
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM APIキーが未設定です" });
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: `あなたは会話分析の専門家です。ビジネスマッチング対話から各参加者の会話スタイルを深層分析してください。` },
+        { role: "user", content: `以下の対話を分析してください:\n\n${dialogueText}\n\n各参加者について以下のJSON形式で出力:
+{
+  "participants": [
+    {
+      "speaker": "speaker名",
+      "vocabularyLevel": { "score": 0-100, "characteristics": ["特徴1", "特徴2"], "frequentWords": ["頻出語1", "語2"] },
+      "topicDevelopment": { "score": 0-100, "pattern": "展開パターン", "strengths": ["強み"], "areas": ["改善点"] },
+      "questionFrequency": { "score": 0-100, "count": 0, "types": ["質問タイプ"] },
+      "agreementStyle": { "score": 0-100, "pattern": "合意形成パターン", "techniques": ["テクニック"] },
+      "overallStyle": "総合スタイル名",
+      "improvements": ["改善提案1", "提案2"]
+    }
+  ],
+  "comparison": { "similarity": 0-100, "complementary": ["補完的な点"], "friction": ["摩擦点"] },
+  "recommendations": ["全体的な推奨事項1", "推奨2"]
+}` },
+      ], { maxTokens: 2048, temperature: 0.5 });
+
+      let analysis: any = {};
+      try {
+        const match = result.content.match(/\{[\s\S]*\}/);
+        if (match) analysis = JSON.parse(match[0]);
+      } catch { analysis = { participants: [], comparison: { similarity: 50, complementary: [], friction: [] }, recommendations: [] }; }
+
+      // Save for each twin
+      if (twin1Id) {
+        await ctx.env.DB.prepare(
+          `INSERT OR REPLACE INTO conversation_style_analysis (sessionId, twinId, userId, analysis, createdAt) VALUES (?, ?, ?, ?, datetime('now'))`
+        ).bind(input.sessionId, twin1Id, ctx.userId, toJson(analysis)).run();
+      }
+
+      return analysis;
+    }),
+
+  getConversationStyle: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT * FROM conversation_style_analysis WHERE sessionId = ? AND userId = ?`
+      ).bind(input.sessionId, ctx.userId).all<any>();
+      return (rows.results ?? []).map((r: any) => ({ ...r, analysis: parseJson<any>(r.analysis) }));
+    }),
+
+  getStyleComparison: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    // Get all style analyses for the user
+    const rows = await ctx.env.DB.prepare(
+      `SELECT csa.*, ms.theme, dt.name as twinName
+       FROM conversation_style_analysis csa
+       JOIN matching_sessions ms ON ms.id = csa.sessionId
+       LEFT JOIN digital_twins dt ON dt.id = csa.twinId
+       WHERE csa.userId = ?
+       ORDER BY csa.createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+
+    const analyses = (rows.results ?? []).map((r: any) => ({
+      sessionId: r.sessionId,
+      theme: r.theme,
+      twinName: r.twinName,
+      analysis: parseJson<any>(r.analysis),
+      createdAt: r.createdAt,
+    }));
+
+    // Aggregate style scores across sessions
+    const styleScores: Record<string, number[]> = { vocabularyLevel: [], topicDevelopment: [], questionFrequency: [], agreementStyle: [] };
+    for (const a of analyses) {
+      const participants = a.analysis?.participants || [];
+      for (const p of participants) {
+        if (p.vocabularyLevel?.score != null) styleScores.vocabularyLevel.push(p.vocabularyLevel.score);
+        if (p.topicDevelopment?.score != null) styleScores.topicDevelopment.push(p.topicDevelopment.score);
+        if (p.questionFrequency?.score != null) styleScores.questionFrequency.push(p.questionFrequency.score);
+        if (p.agreementStyle?.score != null) styleScores.agreementStyle.push(p.agreementStyle.score);
+      }
+    }
+
+    const avg = (arr: number[]) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0;
+
+    return {
+      analyses,
+      averages: {
+        vocabularyLevel: avg(styleScores.vocabularyLevel),
+        topicDevelopment: avg(styleScores.topicDevelopment),
+        questionFrequency: avg(styleScores.questionFrequency),
+        agreementStyle: avg(styleScores.agreementStyle),
+      },
+      totalAnalyzed: analyses.length,
+    };
+  }),
+
+  // ============ Feature 21-3: マッチングネットワーク可視化 ============
+
+  generateNetworkGraph: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+
+    // Gather all friendships
+    const friendships = await ctx.env.DB.prepare(
+      `SELECT f.*, u1.name as user1Name, u2.name as user2Name
+       FROM friendships f
+       JOIN users u1 ON u1.id = f.userId
+       JOIN users u2 ON u2.id = f.friendId
+       WHERE (f.userId = ? OR f.friendId = ?) AND f.status = 'accepted'`
+    ).bind(ctx.userId, ctx.userId).all<any>();
+
+    // Gather all matching sessions with scores
+    const matchings = await ctx.env.DB.prepare(
+      `SELECT ms.initiatorUserId, ms.settings, mr.compatibilityScore, ms.theme,
+              u1.name as initiatorName, u2.name as friendName
+       FROM matching_sessions ms
+       LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+       LEFT JOIN users u1 ON u1.id = ms.initiatorUserId
+       LEFT JOIN users u2 ON u2.id = CAST(json_extract(ms.settings, '$.friendId') AS INTEGER)
+       WHERE (ms.initiatorUserId = ? OR CAST(json_extract(ms.settings, '$.friendId') AS INTEGER) = ?)
+       AND mr.id IS NOT NULL`
+    ).bind(ctx.userId, ctx.userId).all<any>();
+
+    // Build nodes and edges
+    const nodeMap = new Map<number, any>();
+    const edges: any[] = [];
+
+    // Add self node
+    const selfUser = await ctx.env.DB.prepare(`SELECT id, name FROM users WHERE id = ?`).bind(ctx.userId).first<any>();
+    nodeMap.set(ctx.userId, { id: ctx.userId, name: selfUser?.name || "自分", type: "self", connections: 0, matchCount: 0 });
+
+    for (const f of (friendships.results ?? [])) {
+      const otherId = f.userId === ctx.userId ? f.friendId : f.userId;
+      const otherName = f.userId === ctx.userId ? f.user2Name : f.user1Name;
+      if (!nodeMap.has(otherId)) {
+        nodeMap.set(otherId, { id: otherId, name: otherName, type: "friend", connections: 0, matchCount: 0 });
+      }
+      nodeMap.get(otherId)!.connections++;
+      nodeMap.get(ctx.userId)!.connections++;
+      edges.push({ source: ctx.userId, target: otherId, type: "friendship", weight: 1 });
+    }
+
+    for (const m of (matchings.results ?? [])) {
+      const settings = parseJson<any>(m.settings) || {};
+      const friendId = settings.friendId;
+      if (!friendId) continue;
+      if (!nodeMap.has(friendId)) {
+        nodeMap.set(friendId, { id: friendId, name: m.friendName || `User${friendId}`, type: "match_only", connections: 0, matchCount: 0 });
+      }
+      nodeMap.get(friendId)!.matchCount++;
+      edges.push({ source: m.initiatorUserId, target: friendId, type: "matching", weight: m.compatibilityScore || 50, theme: m.theme });
+    }
+
+    const nodes = Array.from(nodeMap.values());
+
+    // Simple community detection (connected components with matching threshold)
+    const communities: any[] = [];
+    const highScoreEdges = edges.filter(e => e.type === "matching" && e.weight >= 70);
+    const visited = new Set<number>();
+    for (const node of nodes) {
+      if (visited.has(node.id)) continue;
+      const community: number[] = [];
+      const queue = [node.id];
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        if (visited.has(current)) continue;
+        visited.add(current);
+        community.push(current);
+        for (const e of highScoreEdges) {
+          if (e.source === current && !visited.has(e.target)) queue.push(e.target);
+          if (e.target === current && !visited.has(e.source)) queue.push(e.source);
+        }
+      }
+      if (community.length > 1) {
+        communities.push({ members: community, size: community.length, label: `コミュニティ ${communities.length + 1}` });
+      }
+    }
+
+    // Bridge users (connected to multiple communities)
+    const bridgeUsers = nodes.filter(n => {
+      const connectedCommunities = communities.filter(c => c.members.includes(n.id));
+      return connectedCommunities.length > 1;
+    }).map(n => ({ id: n.id, name: n.name, communitiesCount: communities.filter(c => c.members.includes(n.id)).length }));
+
+    // Suggestions
+    const suggestions: string[] = [];
+    if (nodes.length < 5) suggestions.push("ネットワークを広げるため、Discoverページで新しいユーザーを探してみましょう");
+    if (communities.length === 0) suggestions.push("高スコアのマッチングを増やすことで、コミュニティが形成されます");
+    if (bridgeUsers.length > 0) suggestions.push(`${bridgeUsers[0].name}さんは複数のコミュニティを繋ぐブリッジユーザーです`);
+    const lowMatchNodes = nodes.filter(n => n.matchCount === 0 && n.type === "friend");
+    if (lowMatchNodes.length > 0) suggestions.push(`${lowMatchNodes[0].name}さんとはまだマッチングしていません。試してみましょう`);
+
+    const graphData = { nodes, edges, communities, bridgeUsers, suggestions, stats: { totalNodes: nodes.length, totalEdges: edges.length, communityCount: communities.length, bridgeCount: bridgeUsers.length } };
+
+    await ctx.env.DB.prepare(
+      `INSERT OR REPLACE INTO matching_network_graphs (userId, graphData, communities, bridgeUsers, suggestions, generatedAt) VALUES (?, ?, ?, ?, ?, datetime('now'))`
+    ).bind(ctx.userId, toJson(graphData), toJson(communities), toJson(bridgeUsers), toJson(suggestions)).run();
+
+    return graphData;
+  }),
+
+  getNetworkGraph: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const row = await ctx.env.DB.prepare(`SELECT * FROM matching_network_graphs WHERE userId = ?`).bind(ctx.userId).first<any>();
+    if (!row) return null;
+    return {
+      graphData: parseJson<any>(row.graphData),
+      communities: parseJson<any>(row.communities),
+      bridgeUsers: parseJson<any>(row.bridgeUsers),
+      suggestions: parseJson<any>(row.suggestions),
+      generatedAt: row.generatedAt,
+    };
+  }),
 });
