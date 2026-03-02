@@ -802,4 +802,272 @@ All output should be in Japanese.`,
 
     return { avatarUrl, description: avatarDescription };
   }),
+
+  analyzeDocument: protectedProcedure
+    .input(z.object({
+      fileData: z.string(), // base64
+      fileName: z.string(),
+      mimeType: z.string(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIを作成してください" });
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "analysis", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "LLM APIキーが必要です" });
+
+      // 1. Upload to R2
+      const base64Data = input.fileData.replace(/^data:[^;]+;base64,/, "");
+      const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+      const ext = input.fileName.split(".").pop() || "bin";
+      const fileKey = `documents/${ctx.userId}/${Date.now()}.${ext}`;
+      const r2 = ctx.env.ASSETS;
+      let fileUrl: string | null = null;
+      if (r2) {
+        await r2.put(fileKey, binaryData, { httpMetadata: { contentType: input.mimeType } });
+        fileUrl = `/assets/${fileKey}`;
+      }
+
+      // 2. Extract text content
+      let extractedText = "";
+      const isImage = /^image\/(jpeg|jpg|png|webp|gif)$/i.test(input.mimeType);
+      const isText = /^(text\/|application\/json)/i.test(input.mimeType) || /\.(txt|md|csv|json)$/i.test(input.fileName);
+      const isPdf = input.mimeType === "application/pdf" || input.fileName.endsWith(".pdf");
+
+      if (isText) {
+        // Direct decode for text files
+        try {
+          extractedText = new TextDecoder().decode(binaryData);
+        } catch {
+          extractedText = atob(base64Data);
+        }
+      } else if (isImage) {
+        // Vision API OCR
+        const configs = await ctx.env.DB.prepare(
+          `SELECT provider, apiKey FROM ai_api_configs WHERE userId=? AND isActive=1`
+        ).bind(ctx.userId).all<any>();
+        const keys = new Map<string, string>();
+        for (const c of configs.results ?? []) keys.set(c.provider, c.apiKey);
+
+        const ocrPrompt = `この画像の内容をすべて読み取ってテキストとして出力してください。
+名刺、履歴書、プレゼン資料、書類など、あらゆるタイプの画像を処理します。
+構造を保ちつつ、できるだけ詳細にテキスト化してください。`;
+
+        // Try OpenAI gpt-4o
+        if (keys.has("openai")) {
+          try {
+            const res = await fetch("https://api.openai.com/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${keys.get("openai")}` },
+              body: JSON.stringify({
+                model: "gpt-4o",
+                messages: [{ role: "user", content: [
+                  { type: "text", text: ocrPrompt },
+                  { type: "image_url", image_url: { url: `data:${input.mimeType};base64,${base64Data}` } },
+                ] }],
+                max_tokens: 4096,
+              }),
+            });
+            if (res.ok) {
+              const data = await res.json() as any;
+              extractedText = data.choices?.[0]?.message?.content ?? "";
+            }
+          } catch { /* fallback below */ }
+        }
+        // Try Gemini
+        if (!extractedText && keys.has("gemini")) {
+          try {
+            const res = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${keys.get("gemini")}`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  contents: [{ parts: [
+                    { text: ocrPrompt },
+                    { inline_data: { mime_type: input.mimeType, data: base64Data } },
+                  ] }],
+                }),
+              }
+            );
+            if (res.ok) {
+              const data = await res.json() as any;
+              extractedText = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+            }
+          } catch { /* fallback */ }
+        }
+        // Fallback via LLM (without vision)
+        if (!extractedText) {
+          extractedText = `[画像ファイル: ${input.fileName}] — Vision API未設定のためOCRできません`;
+        }
+      } else if (isPdf) {
+        // Simple PDF text extraction — try to decode as text first
+        try {
+          const textContent = new TextDecoder().decode(binaryData);
+          // Extract readable strings from PDF binary
+          const textMatches = textContent.match(/\(([^)]+)\)/g);
+          if (textMatches && textMatches.length > 5) {
+            extractedText = textMatches.map(m => m.slice(1, -1)).join(" ");
+          }
+        } catch { /* ignore */ }
+
+        // If basic extraction failed, try Vision API on first page (treat as image)
+        if (!extractedText || extractedText.length < 50) {
+          // Fall back to sending to LLM as context
+          const configs = await ctx.env.DB.prepare(
+            `SELECT provider, apiKey FROM ai_api_configs WHERE userId=? AND isActive=1`
+          ).bind(ctx.userId).all<any>();
+          const keys = new Map<string, string>();
+          for (const c of configs.results ?? []) keys.set(c.provider, c.apiKey);
+
+          if (keys.has("openai")) {
+            try {
+              const res = await fetch("https://api.openai.com/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${keys.get("openai")}` },
+                body: JSON.stringify({
+                  model: "gpt-4o",
+                  messages: [{ role: "user", content: [
+                    { type: "text", text: "このPDFドキュメントの内容をすべて読み取ってテキストとして出力してください。" },
+                    { type: "image_url", image_url: { url: `data:application/pdf;base64,${base64Data}` } },
+                  ] }],
+                  max_tokens: 4096,
+                }),
+              });
+              if (res.ok) {
+                const data = await res.json() as any;
+                extractedText = data.choices?.[0]?.message?.content ?? extractedText;
+              }
+            } catch { /* ignore */ }
+          }
+          if (!extractedText || extractedText.length < 50) {
+            extractedText = `[PDFファイル: ${input.fileName}] — テキスト抽出が限定的です。画像ベースのPDFの場合はVision APIが必要です。`;
+          }
+        }
+      } else {
+        extractedText = `[ファイル: ${input.fileName}] (${input.mimeType})`;
+      }
+
+      // Truncate if too long
+      const maxLen = 15000;
+      const truncated = extractedText.length > maxLen ? extractedText.slice(0, maxLen) + "\n...(省略)" : extractedText;
+
+      // 3. LLM Analysis → personality, skills, knowledge
+      const analysisResult = await invokeLLM(llmConfig, [
+        {
+          role: "system",
+          content: `あなたはデジタルツインの人格・スキル解析の専門家です。
+アップロードされたドキュメント（履歴書、プレゼン資料、名刺、メモ等）から以下を抽出してください。
+JSON形式のみ出力:
+{
+  "personality": "抽出した性格・コミュニケーションスタイルの説明（日本語）",
+  "description": "職業的な経歴・専門性の要約（日本語）",
+  "skills": ["スキル1", "スキル2", ...],
+  "knowledgeTitle": "ナレッジベースに保存するタイトル",
+  "knowledgeSummary": "内容の要約（200文字以内）",
+  "extractedProfile": {
+    "company": "会社名 or null",
+    "position": "役職 or null",
+    "industry": "業界 or null",
+    "experience": "経歴要約 or null"
+  }
+}
+既存のツイン設定:
+- 名前: ${twin.name}
+- 性格: ${twin.personality || "未設定"}
+- 説明: ${twin.description || "未設定"}
+- タグ: ${(twin.tags || []).join(", ") || "なし"}
+
+既存設定を尊重しつつ、新しい情報を統合して更新してください。`,
+        },
+        { role: "user", content: `ファイル名: ${input.fileName}\nファイル種別: ${input.mimeType}\n\n--- 抽出テキスト ---\n${truncated}` },
+      ], { maxTokens: 2048, temperature: 0.3 });
+
+      // 4. Parse and apply
+      let updateResult: any = { updated: false };
+      try {
+        const jsonMatch = analysisResult.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+
+          // Update twin personality/description/tags
+          const updates: string[] = [];
+          const params: any[] = [];
+
+          if (parsed.personality) {
+            updates.push("personality=?");
+            params.push(parsed.personality);
+          }
+          if (parsed.description) {
+            updates.push("description=?");
+            params.push(parsed.description);
+          }
+          if (parsed.skills && Array.isArray(parsed.skills) && parsed.skills.length > 0) {
+            const existingTags: string[] = twin.tags || [];
+            const merged = Array.from(new Set([...existingTags, ...parsed.skills])).slice(0, 20);
+            updates.push("tags=?");
+            params.push(JSON.stringify(merged));
+          }
+          if (updates.length > 0) {
+            updates.push("updatedAt=datetime('now')");
+            params.push(twin.id);
+            await ctx.env.DB.prepare(
+              `UPDATE digital_twins SET ${updates.join(",")} WHERE id=?`
+            ).bind(...params).run();
+          }
+
+          // Add to knowledge base
+          await ctx.env.DB.prepare(
+            `INSERT INTO knowledge_base (twinId, sourceType, sourceId, title, content, summary, metadata) VALUES (?,?,?,?,?,?,?)`
+          ).bind(
+            twin.id,
+            "upload",
+            fileKey,
+            parsed.knowledgeTitle || input.fileName,
+            truncated.slice(0, 50000),
+            parsed.knowledgeSummary || truncated.slice(0, 200),
+            JSON.stringify({ fileName: input.fileName, mimeType: input.mimeType, fileUrl, analyzedAt: new Date().toISOString() })
+          ).run();
+
+          // Update user_profiles if profile data extracted
+          if (parsed.extractedProfile) {
+            const ep = parsed.extractedProfile;
+            const profileUpdates: string[] = [];
+            const profileParams: any[] = [];
+            if (ep.company) { profileUpdates.push("company=?"); profileParams.push(ep.company); }
+            if (ep.position) { profileUpdates.push("position=?"); profileParams.push(ep.position); }
+            if (ep.industry) { profileUpdates.push("industry=?"); profileParams.push(ep.industry); }
+            if (ep.experience) { profileUpdates.push("experience=?"); profileParams.push(ep.experience); }
+            if (profileUpdates.length > 0) {
+              profileParams.push(ctx.userId);
+              await ctx.env.DB.prepare(
+                `UPDATE user_profiles SET ${profileUpdates.join(",")} WHERE userId=?`
+              ).bind(...profileParams).run();
+            }
+          }
+
+          updateResult = {
+            updated: true,
+            personality: parsed.personality,
+            description: parsed.description,
+            skills: parsed.skills || [],
+            knowledgeTitle: parsed.knowledgeTitle || input.fileName,
+            extractedProfile: parsed.extractedProfile || null,
+          };
+        }
+      } catch { /* parse error */ }
+
+      // Record uploaded file
+      await ctx.env.DB.prepare(
+        `INSERT INTO uploaded_files (userId, twinId, filename, fileKey, url, mimeType, size, status, processedAt)
+         VALUES (?,?,?,?,?,?,?,?,datetime('now'))`
+      ).bind(ctx.userId, twin.id, input.fileName, fileKey, fileUrl, input.mimeType, binaryData.length, "completed").run();
+
+      return {
+        ...updateResult,
+        extractedTextLength: extractedText.length,
+        fileUrl,
+      };
+    }),
 });

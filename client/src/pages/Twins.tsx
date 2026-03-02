@@ -36,6 +36,10 @@ export default function MyTwin() {
   const generateFriendPredictionsMutation = trpc.friends.generateFriendPredictions.useMutation();
   const applyFeedbackMutation = trpc.matching.applyFeedback.useMutation();
   const generateAvatarMut = trpc.myTwin.generateAvatar.useMutation();
+  const analyzeDocMut = trpc.myTwin.analyzeDocument.useMutation();
+  const [docFile, setDocFile] = useState<File | null>(null);
+  const [docDragOver, setDocDragOver] = useState(false);
+  const [docResult, setDocResult] = useState<any>(null);
 
   // Visibility settings
   const { data: visibilityData, refetch: refetchVisibility } = trpc.myTwin.getVisibilitySettings.useQuery();
@@ -151,6 +155,41 @@ export default function MyTwin() {
       }
     } catch (e: any) {
       toast.error(e.message || "フィードバック反映に失敗しました");
+    }
+  };
+
+  const handleDocFileSelect = (file: File) => {
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("ファイルサイズは5MB以下にしてください");
+      return;
+    }
+    setDocFile(file);
+    setDocResult(null);
+  };
+
+  const handleDocAnalyze = async () => {
+    if (!docFile) return;
+    try {
+      const reader = new FileReader();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(docFile);
+      });
+      const result = await analyzeDocMut.mutateAsync({
+        fileData: base64,
+        fileName: docFile.name,
+        mimeType: docFile.type || "application/octet-stream",
+      });
+      setDocResult(result);
+      if (result.updated) {
+        toast.success("ドキュメントを解析し、ツイン設定を更新しました");
+        refetch();
+      } else {
+        toast.info("ドキュメントを解析しましたが、更新する情報が見つかりませんでした");
+      }
+    } catch (e: any) {
+      toast.error(e.message || "ドキュメント解析に失敗しました");
     }
   };
 
@@ -542,6 +581,115 @@ export default function MyTwin() {
 
             {/* 音声入力で人格キャプチャ */}
             <VoiceCapture onComplete={() => refetch()} />
+
+            {/* ドキュメント解析でツイン人格キャプチャ */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-blue-500" />
+                  ドキュメント解析
+                </CardTitle>
+                <CardDescription>
+                  履歴書、プレゼン資料、名刺画像などをアップロードして、人格・スキル・ナレッジを自動抽出
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div
+                  className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+                    docDragOver ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50"
+                  }`}
+                  onDragOver={(e) => { e.preventDefault(); setDocDragOver(true); }}
+                  onDragLeave={() => setDocDragOver(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDocDragOver(false);
+                    const file = e.dataTransfer.files[0];
+                    if (file) handleDocFileSelect(file);
+                  }}
+                >
+                  {docFile ? (
+                    <div className="flex items-center justify-center gap-3">
+                      <FileText className="h-8 w-8 text-primary" />
+                      <div className="text-left">
+                        <p className="font-medium text-sm">{docFile.name}</p>
+                        <p className="text-xs text-muted-foreground">{(docFile.size / 1024).toFixed(1)} KB</p>
+                      </div>
+                      <Button variant="ghost" size="icon" onClick={() => { setDocFile(null); setDocResult(null); }}>
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <label className="cursor-pointer block">
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept=".pdf,.jpg,.jpeg,.png,.webp,.txt,.md,.csv,.json"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleDocFileSelect(file);
+                          e.target.value = "";
+                        }}
+                      />
+                      <Plus className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                      <p className="text-sm text-muted-foreground">ファイルをドラッグ&ドロップ、またはクリックして選択</p>
+                      <p className="text-xs text-muted-foreground mt-1">PDF, 画像 (JPG/PNG/WebP), テキスト (TXT/MD/CSV/JSON) — 最大5MB</p>
+                    </label>
+                  )}
+                </div>
+
+                {docFile && !docResult && (
+                  <Button
+                    onClick={handleDocAnalyze}
+                    disabled={analyzeDocMut.isPending}
+                    className="w-full"
+                  >
+                    {analyzeDocMut.isPending ? (
+                      <><Loader2 className="h-4 w-4 animate-spin mr-2" />解析中...</>
+                    ) : (
+                      <><Sparkles className="h-4 w-4 mr-2" />解析開始</>
+                    )}
+                  </Button>
+                )}
+
+                {docResult && (
+                  <div className="space-y-3 bg-muted/50 rounded-lg p-4">
+                    <h4 className="font-medium text-sm flex items-center gap-2">
+                      <Check className="h-4 w-4 text-green-500" />
+                      解析完了
+                    </h4>
+                    {docResult.personality && (
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground">性格</p>
+                        <p className="text-sm">{docResult.personality}</p>
+                      </div>
+                    )}
+                    {docResult.description && (
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground">説明</p>
+                        <p className="text-sm">{docResult.description}</p>
+                      </div>
+                    )}
+                    {docResult.skills?.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground mb-1">抽出スキル</p>
+                        <div className="flex flex-wrap gap-1">
+                          {docResult.skills.map((s: string, i: number) => (
+                            <Badge key={i} variant="secondary" className="text-xs">{s}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {docResult.knowledgeTitle && (
+                      <p className="text-xs text-muted-foreground">📚 ナレッジベースに追加: {docResult.knowledgeTitle}</p>
+                    )}
+                    <Button variant="outline" size="sm" onClick={() => { setDocFile(null); setDocResult(null); }}>
+                      別のファイルを解析
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             {/* 知識ベース */}
             <KnowledgeBaseSection />
 
