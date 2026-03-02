@@ -1216,4 +1216,168 @@ JSON形式のみ出力:
         fileUrl,
       };
     }),
+
+  // ============ Phase 16: ツインペルソナ切替システム ============
+
+  createPersona: protectedProcedure
+    .input(z.object({
+      name: z.string(),
+      mode: z.string(),
+      personality: z.string().optional(),
+      systemPrompt: z.string().optional(),
+      description: z.string().optional(),
+      tags: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const result = await ctx.env.DB.prepare(
+        `INSERT INTO twin_personas (twinId, name, mode, personality, systemPrompt, description, tags, createdAt, updatedAt)
+         VALUES (?,?,?,?,?,?,?,datetime('now'),datetime('now'))`
+      ).bind(
+        twin.id,
+        input.name,
+        input.mode,
+        input.personality ?? null,
+        input.systemPrompt ?? null,
+        input.description ?? null,
+        input.tags ?? null,
+      ).run();
+
+      return { id: result.meta?.last_row_id ?? 0 };
+    }),
+
+  listPersonas: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) return [];
+
+    const rows = await ctx.env.DB.prepare(
+      `SELECT id, name, mode, personality, description, tags, useCount, createdAt FROM twin_personas WHERE twinId=? ORDER BY createdAt DESC`
+    ).bind(twin.id).all<any>();
+
+    return (rows.results ?? []).map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      mode: r.mode,
+      personality: r.personality,
+      description: r.description,
+      tags: r.tags,
+      useCount: r.useCount ?? 0,
+      createdAt: r.createdAt,
+    }));
+  }),
+
+  updatePersona: protectedProcedure
+    .input(z.object({
+      personaId: z.number(),
+      name: z.string().optional(),
+      mode: z.string().optional(),
+      personality: z.string().optional(),
+      systemPrompt: z.string().optional(),
+      description: z.string().optional(),
+      tags: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const persona = await ctx.env.DB.prepare(
+        `SELECT id FROM twin_personas WHERE id=? AND twinId=?`
+      ).bind(input.personaId, twin.id).first<any>();
+      if (!persona) throw new TRPCError({ code: "FORBIDDEN", message: "このペルソナへのアクセス権がありません" });
+
+      const updates: string[] = [];
+      const values: any[] = [];
+      if (input.name !== undefined) { updates.push("name=?"); values.push(input.name); }
+      if (input.mode !== undefined) { updates.push("mode=?"); values.push(input.mode); }
+      if (input.personality !== undefined) { updates.push("personality=?"); values.push(input.personality); }
+      if (input.systemPrompt !== undefined) { updates.push("systemPrompt=?"); values.push(input.systemPrompt); }
+      if (input.description !== undefined) { updates.push("description=?"); values.push(input.description); }
+      if (input.tags !== undefined) { updates.push("tags=?"); values.push(input.tags); }
+
+      if (updates.length > 0) {
+        updates.push("updatedAt=datetime('now')");
+        const sql = `UPDATE twin_personas SET ${updates.join(",")} WHERE id=?`;
+        values.push(input.personaId);
+        await ctx.env.DB.prepare(sql).bind(...values).run();
+      }
+
+      return { success: true as const };
+    }),
+
+  deletePersona: protectedProcedure
+    .input(z.object({ personaId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const persona = await ctx.env.DB.prepare(
+        `SELECT id FROM twin_personas WHERE id=? AND twinId=?`
+      ).bind(input.personaId, twin.id).first<any>();
+      if (!persona) throw new TRPCError({ code: "FORBIDDEN", message: "このペルソナへのアクセス権がありません" });
+
+      await ctx.env.DB.prepare(`DELETE FROM twin_personas WHERE id=?`).bind(input.personaId).run();
+      return { success: true as const };
+    }),
+
+  getPersonaStats: protectedProcedure
+    .input(z.object({ personaId: z.number().optional() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) return [];
+
+      let personas: any[];
+      if (input.personaId) {
+        const p = await ctx.env.DB.prepare(
+          `SELECT * FROM twin_personas WHERE id=? AND twinId=?`
+        ).bind(input.personaId, twin.id).first<any>();
+        personas = p ? [p] : [];
+      } else {
+        const rows = await ctx.env.DB.prepare(
+          `SELECT * FROM twin_personas WHERE twinId=?`
+        ).bind(twin.id).all<any>();
+        personas = rows.results ?? [];
+      }
+
+      const sessions = await ctx.env.DB.prepare(
+        `SELECT id, settings FROM matching_sessions WHERE userId=? OR targetUserId=?`
+      ).bind(ctx.userId, ctx.userId).all<any>();
+      const allSessions = sessions.results ?? [];
+
+      const results = await ctx.env.DB.prepare(
+        `SELECT sessionId, overallScore FROM matching_results WHERE userId=?`
+      ).bind(ctx.userId).all<any>();
+      const allResults = results.results ?? [];
+      const resultMap = new Map<number, number>();
+      for (const r of allResults) {
+        resultMap.set(r.sessionId, r.overallScore ?? 0);
+      }
+
+      return personas.map((p: any) => {
+        const matchingSessions = allSessions.filter((s: any) => {
+          const settings = parseJson<any>(s.settings);
+          return settings?.personaId === p.id;
+        });
+        const scores = matchingSessions
+          .map((s: any) => resultMap.get(s.id))
+          .filter((s: number | undefined): s is number => s !== undefined);
+        const avgScore = scores.length > 0 ? Math.round(scores.reduce((a: number, b: number) => a + b, 0) / scores.length) : 0;
+        const maxScore = scores.length > 0 ? Math.max(...scores) : 0;
+
+        return {
+          personaId: p.id,
+          name: p.name,
+          mode: p.mode,
+          avgScore,
+          maxScore,
+          matchCount: matchingSessions.length,
+        };
+      });
+    }),
 });

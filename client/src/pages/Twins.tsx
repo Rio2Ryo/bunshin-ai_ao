@@ -11,7 +11,7 @@ import { usePageMeta } from "@/hooks/usePageMeta";
 import { Link } from "wouter";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { Bot, Edit, Loader2, MessageSquare, Save, Sparkles, User, Globe, Eye, EyeOff, Tag, X, Brain, Target, Zap, TrendingUp, BarChart3, Shield, Lock, Users, UserCheck, Check, BookOpen, Plus, Trash2, FileText, Mic, Image, Wand2 } from "lucide-react";
+import { Bot, Edit, Loader2, MessageSquare, Save, Sparkles, User, Globe, Eye, EyeOff, Tag, X, Brain, Target, Zap, TrendingUp, BarChart3, Shield, Lock, Users, UserCheck, Check, BookOpen, Plus, Trash2, FileText, Mic, Image, Wand2, Layers, Activity } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
@@ -23,6 +23,8 @@ import { ValueScenarioInterview } from "@/components/ValueScenarioInterview";
 import { CumulativeWaveformChart } from "@/components/CumulativeWaveformChart";
 import { OtherPerspectiveWaveformChart } from "@/components/OtherPerspectiveWaveformChart";
 import { VoiceCapture } from "@/components/VoiceCapture";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export default function MyTwin() {
   usePageMeta({ title: "分身AI", description: "分身AIの作成・編集・性格分析", path: "/twins" });
@@ -693,6 +695,9 @@ export default function MyTwin() {
             {/* 知識ベース */}
             <KnowledgeBaseSection />
 
+            {/* ペルソナ管理 */}
+            <PersonaSection />
+
             {/* プライバシー設定 */}
             <Card className="lg:col-span-2">
               <CardHeader>
@@ -1308,6 +1313,254 @@ function KnowledgeBaseSection() {
                 </Button>
               </div>
             ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+
+/** Persona Management Section */
+function PersonaSection() {
+  const { data: personas, isLoading, refetch } = trpc.myTwin.listPersonas.useQuery();
+  const { data: personaStats } = trpc.myTwin.getPersonaStats.useQuery(undefined as any);
+  const createMut = trpc.myTwin.createPersona.useMutation({
+    onSuccess: () => { refetch(); setIsCreateOpen(false); resetForm(); toast.success("ペルソナを作成しました"); },
+    onError: (err) => toast.error(err.message),
+  });
+  const updateMut = trpc.myTwin.updatePersona.useMutation({
+    onSuccess: () => { refetch(); setEditingId(null); resetForm(); toast.success("ペルソナを更新しました"); },
+    onError: (err) => toast.error(err.message),
+  });
+  const deleteMut = trpc.myTwin.deletePersona.useMutation({
+    onSuccess: () => { refetch(); toast.success("ペルソナを削除しました"); },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [formName, setFormName] = useState("");
+  const [formMode, setFormMode] = useState("営業");
+  const [formCustomMode, setFormCustomMode] = useState("");
+  const [formPersonality, setFormPersonality] = useState("");
+  const [formDescription, setFormDescription] = useState("");
+
+  const resetForm = () => {
+    setFormName("");
+    setFormMode("営業");
+    setFormCustomMode("");
+    setFormPersonality("");
+    setFormDescription("");
+  };
+
+  const handleCreate = () => {
+    if (!formName.trim()) { toast.error("名前を入力してください"); return; }
+    createMut.mutate({
+      name: formName.trim(),
+      mode: formMode === "custom" ? formCustomMode.trim() : formMode,
+      personality: formPersonality.trim() || undefined,
+      description: formDescription.trim() || undefined,
+    });
+  };
+
+  const handleUpdate = () => {
+    if (!editingId || !formName.trim()) return;
+    updateMut.mutate({
+      personaId: editingId,
+      name: formName.trim(),
+      mode: formMode === "custom" ? formCustomMode.trim() : formMode,
+      personality: formPersonality.trim() || undefined,
+      description: formDescription.trim() || undefined,
+    });
+  };
+
+  const startEdit = (persona: any) => {
+    setEditingId(persona.id);
+    setFormName(persona.name);
+    const modeOptions = ["営業", "技術", "カジュアル", "フォーマル"];
+    if (modeOptions.includes(persona.mode)) {
+      setFormMode(persona.mode);
+      setFormCustomMode("");
+    } else {
+      setFormMode("custom");
+      setFormCustomMode(persona.mode || "");
+    }
+    setFormPersonality(persona.personality || "");
+    setFormDescription(persona.description || "");
+    setIsCreateOpen(true);
+  };
+
+  const getStatForPersona = (personaId: number) => {
+    if (!personaStats) return null;
+    return (personaStats as any[]).find((s: any) => s.personaId === personaId);
+  };
+
+  const MODE_COLORS: Record<string, string> = {
+    "営業": "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+    "技術": "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    "カジュアル": "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
+    "フォーマル": "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+  };
+
+  const PersonaForm = () => (
+    <div className="space-y-4 mt-2">
+      <div className="space-y-2">
+        <Label>名前 *</Label>
+        <Input value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="例: 営業モード田中" />
+      </div>
+      <div className="space-y-2">
+        <Label>モード</Label>
+        <Select value={formMode} onValueChange={setFormMode}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="営業">営業</SelectItem>
+            <SelectItem value="技術">技術</SelectItem>
+            <SelectItem value="カジュアル">カジュアル</SelectItem>
+            <SelectItem value="フォーマル">フォーマル</SelectItem>
+            <SelectItem value="custom">カスタム</SelectItem>
+          </SelectContent>
+        </Select>
+        {formMode === "custom" && (
+          <Input value={formCustomMode} onChange={(e) => setFormCustomMode(e.target.value)} placeholder="カスタムモード名を入力" className="mt-2" />
+        )}
+      </div>
+      <div className="space-y-2">
+        <Label>パーソナリティ</Label>
+        <Textarea value={formPersonality} onChange={(e) => setFormPersonality(e.target.value)} placeholder="このペルソナの性格や話し方の特徴を記述..." rows={3} />
+      </div>
+      <div className="space-y-2">
+        <Label>説明</Label>
+        <Textarea value={formDescription} onChange={(e) => setFormDescription(e.target.value)} placeholder="このペルソナの用途や目的を記述..." rows={2} />
+      </div>
+      <Button
+        onClick={editingId ? handleUpdate : handleCreate}
+        className="w-full"
+        disabled={createMut.isPending || updateMut.isPending || !formName.trim()}
+      >
+        {(createMut.isPending || updateMut.isPending) ? (
+          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+        ) : (
+          <Save className="h-4 w-4 mr-2" />
+        )}
+        {editingId ? "更新" : "作成"}
+      </Button>
+    </div>
+  );
+
+  return (
+    <Card className="lg:col-span-2">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Layers className="h-5 w-5" />
+              ペルソナ管理
+            </CardTitle>
+            <CardDescription>
+              場面に応じて分身AIの振る舞いを切り替えるペルソナを管理します
+            </CardDescription>
+          </div>
+          <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) { setEditingId(null); resetForm(); } }}>
+            <DialogTrigger asChild>
+              <Button size="sm" onClick={() => { setEditingId(null); resetForm(); }}>
+                <Plus className="h-4 w-4 mr-1" />
+                新規ペルソナ
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>{editingId ? "ペルソナ編集" : "新規ペルソナ作成"}</DialogTitle>
+                <DialogDescription>
+                  {editingId ? "ペルソナの設定を変更します" : "新しいペルソナを作成して分身AIの振る舞いをカスタマイズします"}
+                </DialogDescription>
+              </DialogHeader>
+              <PersonaForm />
+            </DialogContent>
+          </Dialog>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isLoading ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : !personas || personas.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <Layers className="h-10 w-10 mx-auto mb-3 opacity-50" />
+            <p className="text-sm">ペルソナがまだありません</p>
+            <p className="text-xs mt-1">「新規ペルソナ」ボタンから作成して、場面ごとに分身AIの振る舞いを切り替えましょう</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">{personas.length}件のペルソナ</p>
+            {personas.map((persona: any) => {
+              const stat = getStatForPersona(persona.id);
+              const modeColor = MODE_COLORS[persona.mode] || "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400";
+              return (
+                <div key={persona.id} className="rounded-lg border p-4 bg-card hover:bg-muted/30 transition-colors">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <span className="font-medium text-sm">{persona.name}</span>
+                        <Badge className={`text-[10px] ${modeColor} border-0`}>{persona.mode}</Badge>
+                      </div>
+                      {persona.description && (
+                        <p className="text-xs text-muted-foreground mb-2 line-clamp-2">{persona.description}</p>
+                      )}
+                      {persona.personality && (
+                        <p className="text-xs text-muted-foreground/70 mb-2 line-clamp-1">
+                          <Brain className="inline h-3 w-3 mr-1" />
+                          {persona.personality}
+                        </p>
+                      )}
+                      {/* Stats */}
+                      <div className="flex items-center gap-4 text-[10px] text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Activity className="h-3 w-3" />
+                          使用回数: {persona.useCount ?? stat?.useCount ?? 0}
+                        </span>
+                        {stat?.avgScore != null && (
+                          <span className="flex items-center gap-1">
+                            <BarChart3 className="h-3 w-3" />
+                            平均スコア: {Math.round(stat.avgScore)}%
+                          </span>
+                        )}
+                        {stat?.matchCount != null && stat.matchCount > 0 && (
+                          <span className="flex items-center gap-1">
+                            <Users className="h-3 w-3" />
+                            マッチ数: {stat.matchCount}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => startEdit(persona)}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive"
+                        onClick={() => {
+                          if (confirm("このペルソナを削除しますか？")) {
+                            deleteMut.mutate({ personaId: persona.id });
+                          }
+                        }}
+                        disabled={deleteMut.isPending}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </CardContent>

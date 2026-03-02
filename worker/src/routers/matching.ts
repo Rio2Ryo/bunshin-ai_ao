@@ -2782,4 +2782,140 @@ JSONのみ出力してください。`;
     } catch { return { sent: false, reason: "メール送信に失敗しました" }; }
   }),
 
+
+  // ============ Phase 16: マッチングAIコーチ ============
+
+  getCoachAdvice: protectedProcedure
+    .input(z.object({ sessionId: z.number(), turnNumber: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_sessions WHERE id=? AND (userId=? OR targetUserId=?)`
+      ).bind(input.sessionId, ctx.userId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
+
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber ASC`
+      ).bind(input.sessionId).all<any>();
+      const allTurns = dialogues.results ?? [];
+      const targetTurn = allTurns.find((d: any) => d.turnNumber === input.turnNumber);
+      if (!targetTurn) throw new TRPCError({ code: "NOT_FOUND", message: "指定されたターンが見つかりません" });
+
+      // Get twin info for context
+      const twin1 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+      const twin2 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+
+      const dialogueContext = allTurns
+        .filter((d: any) => d.turnNumber <= input.turnNumber)
+        .map((d: any) => `ターン${d.turnNumber} [Twin${d.speakerTwinId}]: ${d.content}`)
+        .join("\n");
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "AI APIキーが未設定です" });
+      const coachPrompt = `あなたはビジネスマッチングの交渉コーチです。以下の対話を分析し、コーチングアドバイスを提供してください。
+
+## 参加者
+- Twin1: ${twin1?.name ?? "不明"} (${twin1?.description ?? ""})
+- Twin2: ${twin2?.name ?? "不明"} (${twin2?.description ?? ""})
+
+## 対話履歴
+${dialogueContext}
+
+## 分析対象: ターン${input.turnNumber}
+
+以下のJSON形式で回答してください:
+{
+  "techniques": ["使える交渉テクニック1", "交渉テクニック2"],
+  "suggestedQuestions": ["より良い質問案1", "質問案2"],
+  "improvementHints": ["発言改善ヒント1", "改善ヒント2"],
+  "overallAdvice": "全体的なアドバイス"
+}
+
+JSONのみ出力してください。`;
+      const llmResult = await invokeLLM(
+        llmConfig,
+        [{ role: "user", content: coachPrompt }],
+        { temperature: 0.7, maxTokens: 1500 }
+      );
+      const rawResponse = llmResult.content;
+
+      let advice: any;
+      try {
+        const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+        advice = jsonMatch ? JSON.parse(jsonMatch[0]) : {
+          techniques: ["分析できませんでした"],
+          suggestedQuestions: [],
+          improvementHints: [],
+          overallAdvice: rawResponse,
+        };
+      } catch {
+        advice = {
+          techniques: ["分析できませんでした"],
+          suggestedQuestions: [],
+          improvementHints: [],
+          overallAdvice: rawResponse,
+        };
+      }
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO matching_coach_advice (sessionId, turnNumber, userId, advice, createdAt)
+         VALUES (?,?,?,?,datetime('now'))`
+      ).bind(input.sessionId, input.turnNumber, ctx.userId, toJson(advice)).run();
+
+      return {
+        sessionId: input.sessionId,
+        turnNumber: input.turnNumber,
+        techniques: advice.techniques ?? [],
+        suggestedQuestions: advice.suggestedQuestions ?? [],
+        improvementHints: advice.improvementHints ?? [],
+        overallAdvice: advice.overallAdvice ?? "",
+      };
+    }),
+
+  toggleCoachMode: protectedProcedure
+    .input(z.object({ sessionId: z.number(), enabled: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_sessions WHERE id=? AND (userId=? OR targetUserId=?)`
+      ).bind(input.sessionId, ctx.userId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
+
+      const currentSettings = parseJson<any>(session.settings) ?? {};
+      currentSettings.coachMode = input.enabled;
+
+      await ctx.env.DB.prepare(
+        `UPDATE matching_sessions SET settings=? WHERE id=?`
+      ).bind(toJson(currentSettings), input.sessionId).run();
+
+      return { enabled: input.enabled };
+    }),
+
+  getCoachHistory: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(
+        `SELECT id FROM matching_sessions WHERE id=? AND (userId=? OR targetUserId=?)`
+      ).bind(input.sessionId, ctx.userId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
+
+      const rows = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_coach_advice WHERE sessionId=? AND userId=? ORDER BY turnNumber ASC`
+      ).bind(input.sessionId, ctx.userId).all<any>();
+
+      return (rows.results ?? []).map((r: any) => {
+        const advice = parseJson<any>(r.advice) ?? {};
+        return {
+          id: r.id,
+          sessionId: r.sessionId,
+          turnNumber: r.turnNumber,
+          techniques: advice.techniques ?? [],
+          suggestedQuestions: advice.suggestedQuestions ?? [],
+          improvementHints: advice.improvementHints ?? [],
+          overallAdvice: advice.overallAdvice ?? "",
+          createdAt: r.createdAt,
+        };
+      });
+    }),
 });

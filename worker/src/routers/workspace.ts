@@ -362,4 +362,185 @@ export const workspaceRouter = router({
       await ctx.env.DB.prepare(`DELETE FROM workspace_goals WHERE id=?`).bind(input.goalId).run();
       return { success: true };
     }),
+
+  // ============ Phase 16: コラボレーションボード ============
+
+  listBoardItems: protectedProcedure
+    .input(z.object({
+      workspaceId: z.number(),
+      status: z.enum(["backlog", "in_progress", "done"]).optional(),
+      tag: z.string().optional(),
+    }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      const member = await ctx.env.DB.prepare(
+        `SELECT role FROM workspace_members WHERE workspaceId=? AND userId=?`
+      ).bind(input.workspaceId, ctx.userId).first<any>();
+      if (!member) throw new TRPCError({ code: "FORBIDDEN", message: "ワークスペースへのアクセス権がありません" });
+
+      let sql = `SELECT wbi.*, u.name as creatorName FROM workspace_board_items wbi
+        LEFT JOIN users u ON u.id = wbi.userId
+        WHERE wbi.workspaceId=?`;
+      const params: any[] = [input.workspaceId];
+
+      if (input.status) {
+        sql += ` AND wbi.status=?`;
+        params.push(input.status);
+      }
+      if (input.tag) {
+        sql += ` AND wbi.tags LIKE ?`;
+        params.push(`%${input.tag}%`);
+      }
+
+      sql += ` ORDER BY wbi.status, wbi.position ASC, wbi.createdAt DESC`;
+
+      const rows = await ctx.env.DB.prepare(sql).bind(...params).all<any>();
+
+      return (rows.results ?? []).map((r: any) => ({
+        id: r.id,
+        workspaceId: r.workspaceId,
+        userId: r.userId,
+        creatorName: r.creatorName,
+        type: r.type,
+        title: r.title,
+        content: r.content,
+        status: r.status,
+        tags: r.tags,
+        sourceId: r.sourceId,
+        position: r.position,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      }));
+    }),
+
+  createBoardItem: protectedProcedure
+    .input(z.object({
+      workspaceId: z.number(),
+      type: z.enum(["matching_result", "knowledge", "note", "action", "insight"]),
+      title: z.string(),
+      content: z.string().optional(),
+      status: z.enum(["backlog", "in_progress", "done"]).default("backlog"),
+      tags: z.string().optional(),
+      sourceId: z.number().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      const member = await ctx.env.DB.prepare(
+        `SELECT role FROM workspace_members WHERE workspaceId=? AND userId=?`
+      ).bind(input.workspaceId, ctx.userId).first<any>();
+      if (!member) throw new TRPCError({ code: "FORBIDDEN", message: "ワークスペースへのアクセス権がありません" });
+
+      const maxPos = await ctx.env.DB.prepare(
+        `SELECT MAX(position) as maxPos FROM workspace_board_items WHERE workspaceId=? AND status=?`
+      ).bind(input.workspaceId, input.status).first<any>();
+      const nextPosition = (maxPos?.maxPos ?? -1) + 1;
+
+      const result = await ctx.env.DB.prepare(
+        `INSERT INTO workspace_board_items (workspaceId, userId, type, title, content, status, tags, sourceId, position, createdAt, updatedAt)
+         VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))`
+      ).bind(
+        input.workspaceId,
+        ctx.userId,
+        input.type,
+        input.title,
+        input.content ?? null,
+        input.status,
+        input.tags ?? null,
+        input.sourceId ?? null,
+        nextPosition,
+      ).run();
+
+      return { id: result.meta?.last_row_id ?? 0 };
+    }),
+
+  updateBoardItem: protectedProcedure
+    .input(z.object({
+      itemId: z.number(),
+      title: z.string().optional(),
+      content: z.string().optional(),
+      tags: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      const item = await ctx.env.DB.prepare(
+        `SELECT workspaceId FROM workspace_board_items WHERE id=?`
+      ).bind(input.itemId).first<any>();
+      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "ボードアイテムが見つかりません" });
+
+      const member = await ctx.env.DB.prepare(
+        `SELECT role FROM workspace_members WHERE workspaceId=? AND userId=?`
+      ).bind(item.workspaceId, ctx.userId).first<any>();
+      if (!member) throw new TRPCError({ code: "FORBIDDEN", message: "ワークスペースへのアクセス権がありません" });
+
+      const updates: string[] = [];
+      const values: any[] = [];
+      if (input.title !== undefined) { updates.push("title=?"); values.push(input.title); }
+      if (input.content !== undefined) { updates.push("content=?"); values.push(input.content); }
+      if (input.tags !== undefined) { updates.push("tags=?"); values.push(input.tags); }
+
+      if (updates.length > 0) {
+        updates.push("updatedAt=datetime('now')");
+        const sql = `UPDATE workspace_board_items SET ${updates.join(",")} WHERE id=?`;
+        values.push(input.itemId);
+        await ctx.env.DB.prepare(sql).bind(...values).run();
+      }
+
+      return { success: true as const };
+    }),
+
+  moveBoardItem: protectedProcedure
+    .input(z.object({
+      itemId: z.number(),
+      status: z.enum(["backlog", "in_progress", "done"]),
+      position: z.number().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      const item = await ctx.env.DB.prepare(
+        `SELECT workspaceId FROM workspace_board_items WHERE id=?`
+      ).bind(input.itemId).first<any>();
+      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "ボードアイテムが見つかりません" });
+
+      const member = await ctx.env.DB.prepare(
+        `SELECT role FROM workspace_members WHERE workspaceId=? AND userId=?`
+      ).bind(item.workspaceId, ctx.userId).first<any>();
+      if (!member) throw new TRPCError({ code: "FORBIDDEN", message: "ワークスペースへのアクセス権がありません" });
+
+      let position = input.position;
+      if (position === undefined) {
+        const maxPos = await ctx.env.DB.prepare(
+          `SELECT MAX(position) as maxPos FROM workspace_board_items WHERE workspaceId=? AND status=?`
+        ).bind(item.workspaceId, input.status).first<any>();
+        position = (maxPos?.maxPos ?? -1) + 1;
+      }
+
+      await ctx.env.DB.prepare(
+        `UPDATE workspace_board_items SET status=?, position=?, updatedAt=datetime('now') WHERE id=?`
+      ).bind(input.status, position, input.itemId).run();
+
+      return { success: true as const };
+    }),
+
+  deleteBoardItem: protectedProcedure
+    .input(z.object({ itemId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      const item = await ctx.env.DB.prepare(
+        `SELECT workspaceId FROM workspace_board_items WHERE id=?`
+      ).bind(input.itemId).first<any>();
+      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "ボードアイテムが見つかりません" });
+
+      const member = await ctx.env.DB.prepare(
+        `SELECT role FROM workspace_members WHERE workspaceId=? AND userId=?`
+      ).bind(item.workspaceId, ctx.userId).first<any>();
+      if (!member) throw new TRPCError({ code: "FORBIDDEN", message: "ワークスペースへのアクセス権がありません" });
+
+      await ctx.env.DB.prepare(`DELETE FROM workspace_board_items WHERE id=?`).bind(input.itemId).run();
+      return { success: true as const };
+    }),
 });

@@ -1025,6 +1025,45 @@ CREATE TABLE IF NOT EXISTS matching_insights (
   generatedAt TEXT DEFAULT (datetime('now')),
   UNIQUE(userId)
 );
+
+CREATE TABLE IF NOT EXISTS matching_coach_advice (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  turnNumber INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  advice TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, turnNumber, userId)
+);
+
+CREATE TABLE IF NOT EXISTS twin_personas (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  twinId INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'default',
+  personality TEXT,
+  systemPrompt TEXT,
+  description TEXT,
+  tags TEXT,
+  useCount INTEGER DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS workspace_board_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspaceId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  type TEXT NOT NULL DEFAULT 'note',
+  title TEXT NOT NULL,
+  content TEXT,
+  status TEXT NOT NULL DEFAULT 'backlog',
+  tags TEXT,
+  sourceId INTEGER,
+  position INTEGER DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
 `;
 
 let schemaReady = false;

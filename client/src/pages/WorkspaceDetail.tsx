@@ -18,7 +18,7 @@ import { useWorkspaceRoom } from "@/hooks/useWorkspaceRoom";
 import {
   ArrowLeft, Loader2, Plus, Users, Trash2, StickyNote, Target,
   Lightbulb, CheckCircle, AlertTriangle, BarChart3, Wifi, WifiOff,
-  UserPlus, Edit, Save, X, LayoutGrid, Import, Zap,
+  UserPlus, Edit, Save, X, LayoutGrid, Import, Zap, Columns, GripVertical,
 } from "lucide-react";
 
 const ITEM_COLORS: Record<string, string> = {
@@ -67,6 +67,16 @@ export default function WorkspaceDetail() {
   const deleteGoalMut = trpc.workspace.deleteGoal.useMutation();
   const importMatchingMut = trpc.workspace.importMatching.useMutation();
 
+  // Kanban board
+  const { data: boardItems, refetch: refetchBoard } = trpc.workspace.listBoardItems.useQuery(
+    { workspaceId },
+    { enabled: workspaceId > 0 }
+  );
+  const createBoardItemMut = trpc.workspace.createBoardItem.useMutation();
+  const updateBoardItemMut = trpc.workspace.updateBoardItem.useMutation();
+  const moveBoardItemMut = trpc.workspace.moveBoardItem.useMutation();
+  const deleteBoardItemMut = trpc.workspace.deleteBoardItem.useMutation();
+
   const [isAddItemOpen, setIsAddItemOpen] = useState(false);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [isGoalOpen, setIsGoalOpen] = useState(false);
@@ -90,6 +100,18 @@ export default function WorkspaceDetail() {
 
   // Import form
   const [importSessionId, setImportSessionId] = useState("");
+
+  // Kanban board state
+  const [isBoardAddOpen, setIsBoardAddOpen] = useState<string | null>(null); // column name or null
+  const [boardNewTitle, setBoardNewTitle] = useState("");
+  const [boardNewContent, setBoardNewContent] = useState("");
+  const [boardNewType, setBoardNewType] = useState<string>("note");
+  const [boardNewTags, setBoardNewTags] = useState("");
+  const [editingBoardItem, setEditingBoardItem] = useState<number | null>(null);
+  const [boardEditTitle, setBoardEditTitle] = useState("");
+  const [boardEditContent, setBoardEditContent] = useState("");
+  const [boardEditTags, setBoardEditTags] = useState("");
+  const [draggedItemId, setDraggedItemId] = useState<number | null>(null);
 
   // WebSocket real-time
   const onItemUpdate = useCallback((data: any) => { refetch(); }, [refetch]);
@@ -174,6 +196,83 @@ export default function WorkspaceDetail() {
     } catch (e: any) { toast.error(e.message || "インポートに失敗しました"); }
   };
 
+  // Kanban board handlers
+  const handleBoardAdd = async (status: string) => {
+    if (!boardNewTitle.trim()) { toast.error("タイトルを入力してください"); return; }
+    try {
+      await createBoardItemMut.mutateAsync({
+        workspaceId,
+        title: boardNewTitle.trim(),
+        content: boardNewContent.trim() || undefined,
+        type: boardNewType as any,
+        status: status as "backlog" | "in_progress" | "done",
+        tags: boardNewTags.trim() ? boardNewTags.split(",").map(t => t.trim()).filter(Boolean).join(",") : undefined,
+      });
+      setIsBoardAddOpen(null);
+      setBoardNewTitle("");
+      setBoardNewContent("");
+      setBoardNewType("note");
+      setBoardNewTags("");
+      refetchBoard();
+      toast.success("アイテムを追加しました");
+    } catch (e: any) { toast.error(e.message || "追加に失敗しました"); }
+  };
+
+  const handleBoardUpdate = async (itemId: number) => {
+    try {
+      await updateBoardItemMut.mutateAsync({
+        itemId,
+        title: boardEditTitle,
+        content: boardEditContent,
+        tags: boardEditTags.trim() ? boardEditTags.split(",").map(t => t.trim()).filter(Boolean).join(",") : undefined,
+      });
+      setEditingBoardItem(null);
+      refetchBoard();
+      toast.success("更新しました");
+    } catch (e: any) { toast.error(e.message || "更新に失敗しました"); }
+  };
+
+  const handleBoardDelete = async (itemId: number) => {
+    try {
+      await deleteBoardItemMut.mutateAsync({ itemId });
+      refetchBoard();
+      toast.success("削除しました");
+    } catch (e: any) { toast.error(e.message || "削除に失敗しました"); }
+  };
+
+  const handleDragStart = (e: React.DragEvent, itemId: number) => {
+    setDraggedItemId(itemId);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(itemId));
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetStatus: string) => {
+    e.preventDefault();
+    const itemId = parseInt(e.dataTransfer.getData("text/plain"));
+    if (!itemId || isNaN(itemId)) return;
+    setDraggedItemId(null);
+    try {
+      await moveBoardItemMut.mutateAsync({ itemId, status: targetStatus as "backlog" | "in_progress" | "done" });
+      refetchBoard();
+    } catch (e: any) { toast.error(e.message || "移動に失敗しました"); }
+  };
+
+  const kanbanColumns = [
+    { key: "backlog", label: "検討中", color: "border-t-yellow-400", icon: Lightbulb },
+    { key: "in_progress", label: "進行中", color: "border-t-blue-400", icon: Zap },
+    { key: "done", label: "完了", color: "border-t-green-400", icon: CheckCircle },
+  ];
+
+  const getBoardItemsByStatus = (status: string) => {
+    if (!boardItems) return [];
+    return (boardItems as any[]).filter((item: any) => item.status === status);
+  };
+
   if (isLoading) {
     return <DashboardLayout><div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin" /></div></DashboardLayout>;
   }
@@ -216,6 +315,7 @@ export default function WorkspaceDetail() {
         <Tabs defaultValue="board">
           <TabsList>
             <TabsTrigger value="board"><LayoutGrid className="h-4 w-4 mr-1" />ボード</TabsTrigger>
+            <TabsTrigger value="kanban"><Columns className="h-4 w-4 mr-1" />カンバン</TabsTrigger>
             <TabsTrigger value="goals"><Target className="h-4 w-4 mr-1" />目標</TabsTrigger>
             <TabsTrigger value="members"><Users className="h-4 w-4 mr-1" />メンバー</TabsTrigger>
           </TabsList>
@@ -339,6 +439,124 @@ export default function WorkspaceDetail() {
                 })}
               </div>
             )}
+          </TabsContent>
+
+
+          {/* Kanban Board Tab */}
+          <TabsContent value="kanban">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {kanbanColumns.map((col) => {
+                const colItems = getBoardItemsByStatus(col.key);
+                const ColIcon = col.icon;
+                return (
+                  <div
+                    key={col.key}
+                    className={`rounded-lg border ${col.color} border-t-4 bg-muted/20 min-h-[300px]`}
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(e, col.key)}
+                  >
+                    <div className="p-3 flex items-center justify-between border-b">
+                      <div className="flex items-center gap-2">
+                        <ColIcon className="h-4 w-4" />
+                        <span className="font-medium text-sm">{col.label}</span>
+                        <Badge variant="secondary" className="text-[10px] h-5">{colItems.length}</Badge>
+                      </div>
+                      <Dialog open={isBoardAddOpen === col.key} onOpenChange={(open) => { setIsBoardAddOpen(open ? col.key : null); if (!open) { setBoardNewTitle(""); setBoardNewContent(""); setBoardNewType("note"); setBoardNewTags(""); } }}>
+                        <DialogTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-7 w-7"><Plus className="h-4 w-4" /></Button>
+                        </DialogTrigger>
+                        <DialogContent>
+                          <DialogHeader>
+                            <DialogTitle>{col.label}にアイテムを追加</DialogTitle>
+                          </DialogHeader>
+                          <div className="space-y-4 mt-2">
+                            <div>
+                              <Label>タイプ</Label>
+                              <Select value={boardNewType} onValueChange={setBoardNewType}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  {Object.entries(ITEM_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div><Label>タイトル *</Label><Input value={boardNewTitle} onChange={(e) => setBoardNewTitle(e.target.value)} placeholder="タイトル" /></div>
+                            <div><Label>内容</Label><Textarea value={boardNewContent} onChange={(e) => setBoardNewContent(e.target.value)} placeholder="内容（任意）" rows={3} /></div>
+                            <div><Label>タグ（カンマ区切り）</Label><Input value={boardNewTags} onChange={(e) => setBoardNewTags(e.target.value)} placeholder="例: 重要, フォローアップ" /></div>
+                            <Button onClick={() => handleBoardAdd(col.key)} className="w-full" disabled={!boardNewTitle.trim() || createBoardItemMut.isPending}>
+                              {createBoardItemMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}追加
+                            </Button>
+                          </div>
+                        </DialogContent>
+                      </Dialog>
+                    </div>
+                    <div className="p-2 space-y-2">
+                      {colItems.length === 0 ? (
+                        <p className="text-xs text-muted-foreground text-center py-6">ドラッグ＆ドロップでアイテムを移動</p>
+                      ) : (
+                        colItems.map((item: any) => {
+                          const Icon = ITEM_ICONS[item.type] || StickyNote;
+                          const colorClass = ITEM_COLORS[item.type] || "border-gray-300";
+                          const isEditing = editingBoardItem === item.id;
+
+                          return (
+                            <div
+                              key={item.id}
+                              draggable={!isEditing}
+                              onDragStart={(e) => handleDragStart(e, item.id)}
+                              className={`rounded-lg border ${colorClass} p-3 bg-card cursor-grab active:cursor-grabbing transition-all ${draggedItemId === item.id ? "opacity-50 scale-95" : "hover:shadow-md"}`}
+                            >
+                              {isEditing ? (
+                                <div className="space-y-2">
+                                  <Input value={boardEditTitle} onChange={(e) => setBoardEditTitle(e.target.value)} className="h-7 text-sm" placeholder="タイトル" />
+                                  <Textarea value={boardEditContent} onChange={(e) => setBoardEditContent(e.target.value)} className="text-sm min-h-[40px]" placeholder="内容" rows={2} />
+                                  <Input value={boardEditTags} onChange={(e) => setBoardEditTags(e.target.value)} className="h-7 text-xs" placeholder="タグ（カンマ区切り）" />
+                                  <div className="flex gap-1">
+                                    <Button size="sm" className="h-6 text-xs" onClick={() => handleBoardUpdate(item.id)} disabled={updateBoardItemMut.isPending}>
+                                      <Save className="h-3 w-3 mr-1" />保存
+                                    </Button>
+                                    <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setEditingBoardItem(null)}>
+                                      <X className="h-3 w-3 mr-1" />キャンセル
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="flex items-start justify-between gap-1 mb-1">
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <GripVertical className="h-3 w-3 text-muted-foreground shrink-0" />
+                                      <Icon className="h-3.5 w-3.5 shrink-0" />
+                                      <span className="text-sm font-medium truncate">{item.title}</span>
+                                    </div>
+                                    <div className="flex items-center gap-0.5 shrink-0">
+                                      <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => { setEditingBoardItem(item.id); setBoardEditTitle(item.title); setBoardEditContent(item.content || ""); setBoardEditTags(item.tags?.join(", ") || ""); }}>
+                                        <Edit className="h-3 w-3" />
+                                      </Button>
+                                      <Button size="icon" variant="ghost" className="h-6 w-6 text-destructive" onClick={() => { if (confirm("削除しますか？")) handleBoardDelete(item.id); }}>
+                                        <Trash2 className="h-3 w-3" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                  {item.content && <p className="text-xs text-muted-foreground line-clamp-2 mb-1.5">{item.content}</p>}
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <Badge variant="outline" className="text-[9px] h-4">{ITEM_LABELS[item.type] || item.type}</Badge>
+                                    {item.tags?.map((tag: string, ti: number) => (
+                                      <Badge key={ti} variant="secondary" className="text-[9px] h-4">{tag}</Badge>
+                                    ))}
+                                  </div>
+                                  {item.creatorName && (
+                                    <p className="text-[9px] text-muted-foreground mt-1.5">{item.creatorName}</p>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </TabsContent>
 
           {/* Goals Tab */}

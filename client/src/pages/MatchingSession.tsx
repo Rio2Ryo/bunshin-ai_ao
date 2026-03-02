@@ -5,11 +5,12 @@ import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc, API_BASE } from "@/lib/trpc";
 import { useParams, Link } from "wouter";
 import { useState, useCallback, useRef, useEffect } from "react";
-import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, Users, Calendar, DollarSign, Target, Rocket, Share2, Link as LinkIcon, ExternalLink, Search, Globe, Zap, ThumbsUp, ThumbsDown, Send as SendIcon, Eye, Play } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, Users, Calendar, DollarSign, Target, Rocket, Share2, Link as LinkIcon, ExternalLink, Search, Globe, Zap, ThumbsUp, ThumbsDown, Send as SendIcon, Eye, Play, GraduationCap, ChevronDown, ChevronUp } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { LazyStreamdown as Streamdown } from "@/components/LazyStreamdown";
 import { toast } from "sonner";
@@ -32,6 +33,11 @@ export default function MatchingSession() {
   const [reactions, setReactions] = useState<Map<number, { count: number; reacted: boolean }>>(new Map());
   const [commentInput, setCommentInput] = useState("");
   const [commentTurn, setCommentTurn] = useState<number | null>(null);
+
+  // Coach mode state
+  const [coachMode, setCoachMode] = useState(false);
+  const [coachAdvice, setCoachAdvice] = useState<Record<number, any>>({});
+  const [expandedCoach, setExpandedCoach] = useState<Record<number, boolean>>({});
 
   const { data, isLoading, isError, refetch } = trpc.matching.getSession.useQuery(
     { id: sessionId },
@@ -98,6 +104,49 @@ export default function MatchingSession() {
     setCommentInput("");
     setCommentTurn(null);
   }, [commentInput, commentTurn, sendComment]);
+
+  // Coach mode mutations
+  const toggleCoachMut = trpc.matching.toggleCoachMode.useMutation();
+  const getCoachAdviceMut = trpc.matching.getCoachAdvice.useMutation();
+  const { data: coachHistoryData } = trpc.matching.getCoachHistory.useQuery(
+    { sessionId },
+    { enabled: coachMode && sessionId > 0 }
+  );
+
+  // Pre-populate coach advice from history
+  useEffect(() => {
+    if (coachHistoryData && coachHistoryData.length > 0) {
+      const adviceMap: Record<number, any> = {};
+      for (const item of coachHistoryData) {
+        adviceMap[item.turnNumber] = { techniques: item.techniques, suggestedQuestions: item.suggestedQuestions, improvementHints: item.improvementHints, overallAdvice: item.overallAdvice };
+      }
+      setCoachAdvice((prev) => ({ ...prev, ...adviceMap }));
+    }
+  }, [coachHistoryData]);
+
+  const handleToggleCoachMode = async () => {
+    try {
+      await toggleCoachMut.mutateAsync({ sessionId, enabled: !coachMode });
+      setCoachMode(!coachMode);
+      toast.success(coachMode ? "コーチモードをOFFにしました" : "コーチモードをONにしました");
+    } catch (e: any) {
+      toast.error(e.message || "コーチモードの切替に失敗しました");
+    }
+  };
+
+  const handleGetCoachAdvice = async (turnNumber: number) => {
+    if (coachAdvice[turnNumber]) {
+      setExpandedCoach((prev) => ({ ...prev, [turnNumber]: !prev[turnNumber] }));
+      return;
+    }
+    try {
+      const result = await getCoachAdviceMut.mutateAsync({ sessionId, turnNumber });
+      setCoachAdvice((prev) => ({ ...prev, [turnNumber]: result }));
+      setExpandedCoach((prev) => ({ ...prev, [turnNumber]: true }));
+    } catch (e: any) {
+      toast.error(e.message || "コーチアドバイスの取得に失敗しました");
+    }
+  };
 
   const handleLike = useCallback((turnNumber: number) => {
     sendReaction(turnNumber, "like");
@@ -344,6 +393,24 @@ export default function MatchingSession() {
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
+
+            {/* Coach Mode Toggle */}
+            {(session.status === "running" || session.status === "completed") && (
+              <Button
+                variant={coachMode ? "default" : "outline"}
+                size="sm"
+                onClick={handleToggleCoachMode}
+                disabled={toggleCoachMut.isPending}
+                className={coachMode ? "bg-amber-500 hover:bg-amber-600 text-white" : ""}
+              >
+                {toggleCoachMut.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <GraduationCap className="h-4 w-4 mr-2" />
+                )}
+                {coachMode ? "コーチON" : "コーチ"}
+              </Button>
+            )}
 
             {/* Export Button */}
             <Button
@@ -666,6 +733,77 @@ export default function MatchingSession() {
                                     <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={handleSendComment} disabled={!commentInput.trim()} aria-label="コメント送信">
                                       <SendIcon className="h-3 w-3" aria-hidden="true" />
                                     </Button>
+                                  </div>
+                                )}
+                                {/* Coach Advice Button */}
+                                {coachMode && (session.status === "completed" || phase === "complete" || session.status === "running") && (
+                                  <div className="mt-2">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-7 text-xs gap-1 border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-900/20"
+                                      onClick={() => handleGetCoachAdvice(turnNum)}
+                                      disabled={getCoachAdviceMut.isPending}
+                                    >
+                                      {getCoachAdviceMut.isPending ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <GraduationCap className="h-3 w-3" />
+                                      )}
+                                      コーチ
+                                      {coachAdvice[turnNum] && (expandedCoach[turnNum] ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                                    </Button>
+                                    {/* Coach advice card */}
+                                    {coachAdvice[turnNum] && expandedCoach[turnNum] && (
+                                      <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-900/10 p-3 space-y-3 animate-in fade-in-0 slide-in-from-top-1 duration-200">
+                                        {/* Techniques */}
+                                        {coachAdvice[turnNum].techniques && coachAdvice[turnNum].techniques.length > 0 && (
+                                          <div>
+                                            <p className="text-xs font-medium text-amber-800 dark:text-amber-300 mb-1.5">交渉テクニック</p>
+                                            <div className="flex flex-wrap gap-1">
+                                              {coachAdvice[turnNum].techniques.map((t: string, ti: number) => (
+                                                <Badge key={ti} variant="outline" className="text-[10px] border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400">{t}</Badge>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                        {/* Suggested Questions */}
+                                        {coachAdvice[turnNum].suggestedQuestions && coachAdvice[turnNum].suggestedQuestions.length > 0 && (
+                                          <div>
+                                            <p className="text-xs font-medium text-amber-800 dark:text-amber-300 mb-1.5">質問サジェスト</p>
+                                            <ul className="space-y-1">
+                                              {coachAdvice[turnNum].suggestedQuestions.map((q: string, qi: number) => (
+                                                <li key={qi} className="text-xs text-muted-foreground flex items-start gap-1.5">
+                                                  <Lightbulb className="h-3 w-3 mt-0.5 shrink-0 text-amber-500" />
+                                                  {q}
+                                                </li>
+                                              ))}
+                                            </ul>
+                                          </div>
+                                        )}
+                                        {/* Improvement Hints */}
+                                        {coachAdvice[turnNum].improvementHints && coachAdvice[turnNum].improvementHints.length > 0 && (
+                                          <div>
+                                            <p className="text-xs font-medium text-amber-800 dark:text-amber-300 mb-1.5">発言改善ヒント</p>
+                                            <ul className="space-y-1">
+                                              {coachAdvice[turnNum].improvementHints.map((h: string, hi: number) => (
+                                                <li key={hi} className="text-xs text-muted-foreground flex items-start gap-1.5">
+                                                  <Target className="h-3 w-3 mt-0.5 shrink-0 text-amber-500" />
+                                                  {h}
+                                                </li>
+                                              ))}
+                                            </ul>
+                                          </div>
+                                        )}
+                                        {/* Overall Advice */}
+                                        {coachAdvice[turnNum].overallAdvice && (
+                                          <div>
+                                            <p className="text-xs font-medium text-amber-800 dark:text-amber-300 mb-1">総合アドバイス</p>
+                                            <p className="text-xs text-muted-foreground">{coachAdvice[turnNum].overallAdvice}</p>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                               </div>
