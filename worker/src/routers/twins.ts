@@ -1380,4 +1380,274 @@ JSON形式のみ出力:
         };
       });
     }),
+
+  // ============ Phase 18: ツイン進化マップ ============
+
+  getEvolutionTimeline: protectedProcedure
+    .query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const events: Array<{ date: string; type: string; title: string; description: string; data?: any }> = [];
+
+      // 1. Milestones
+      const milestones = await ctx.env.DB
+        .prepare(`SELECT * FROM twin_milestones WHERE twinId = ? AND userId = ? ORDER BY achievedAt ASC`)
+        .bind(twin.id, ctx.userId)
+        .all<any>();
+      for (const m of (milestones.results || [])) {
+        events.push({
+          date: m.achievedAt,
+          type: "milestone",
+          title: m.name || m.milestoneId,
+          description: m.description || `マイルストーン「${m.milestoneId}」を達成`,
+        });
+      }
+
+      // 2. Skill level changes
+      const skills = await ctx.env.DB
+        .prepare(`SELECT * FROM twin_skill_levels WHERE twinId = ? AND userId = ? ORDER BY createdAt ASC`)
+        .bind(twin.id, ctx.userId)
+        .all<any>();
+      for (const s of (skills.results || [])) {
+        events.push({
+          date: s.updatedAt || s.createdAt,
+          type: "skill_up",
+          title: `${s.skillType} Lv.${s.level}`,
+          description: `スキル「${s.skillType}」がレベル${s.level}に到達`,
+          data: { skillType: s.skillType, level: s.level },
+        });
+      }
+
+      // 3. Matching scores over time
+      const matchings = await ctx.env.DB
+        .prepare(`
+          SELECT ms.id, ms.theme, ms.createdAt, mr.compatibilityScore
+          FROM matching_sessions ms
+          LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+          WHERE ms.initiatorUserId = ? AND mr.compatibilityScore IS NOT NULL
+          ORDER BY ms.createdAt ASC
+        `)
+        .bind(ctx.userId)
+        .all<any>();
+      for (const m of (matchings.results || [])) {
+        events.push({
+          date: m.createdAt,
+          type: "matching",
+          title: `マッチング: ${m.theme}`,
+          description: `スコア ${Math.round(m.compatibilityScore)}点`,
+          data: { sessionId: m.id, score: m.compatibilityScore },
+        });
+      }
+
+      // 4. Dialogue feedback (personality change signals)
+      const feedback = await ctx.env.DB
+        .prepare(`
+          SELECT df.createdAt, df.rating, df.comment, ms.theme
+          FROM dialogue_feedback df
+          JOIN matching_sessions ms ON ms.id = df.sessionId
+          WHERE df.userId = ?
+          ORDER BY df.createdAt ASC
+        `)
+        .bind(ctx.userId)
+        .all<any>();
+      for (const f of (feedback.results || [])) {
+        events.push({
+          date: f.createdAt,
+          type: "personality_change",
+          title: `フィードバック: ${f.rating === "up" ? "Good" : "Improve"}`,
+          description: f.comment || `マッチング「${f.theme}」へのフィードバック`,
+        });
+      }
+
+      // 5. Knowledge added
+      const knowledge = await ctx.env.DB
+        .prepare(`SELECT id, title, sourceType, createdAt FROM knowledge_base WHERE twinId = ? ORDER BY createdAt ASC`)
+        .bind(twin.id)
+        .all<any>();
+      for (const k of (knowledge.results || [])) {
+        events.push({
+          date: k.createdAt,
+          type: "knowledge_added",
+          title: k.title || "ナレッジ追加",
+          description: `${k.sourceType}からナレッジを追加`,
+        });
+      }
+
+      // Sort all events by date
+      events.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+
+      return { twinId: twin.id, events };
+    }),
+
+  getEvolutionComparison: protectedProcedure
+    .input(z.object({ period: z.enum(["week", "month", "quarter"]).default("month") }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const periodDays = input.period === "week" ? 7 : input.period === "month" ? 30 : 90;
+      const cutoffDate = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000).toISOString().replace("T", " ").slice(0, 19);
+
+      // Current state
+      const currentSkills = await ctx.env.DB
+        .prepare(`SELECT * FROM twin_skill_levels WHERE twinId = ? AND userId = ?`)
+        .bind(twin.id, ctx.userId)
+        .all<any>();
+      const currentKnowledge = await ctx.env.DB
+        .prepare(`SELECT COUNT(*) as cnt FROM knowledge_base WHERE twinId = ?`)
+        .bind(twin.id)
+        .first<any>();
+
+      // Recent matching scores (after cutoff)
+      const recentMatchings = await ctx.env.DB
+        .prepare(`
+          SELECT mr.compatibilityScore
+          FROM matching_sessions ms
+          JOIN matching_results mr ON mr.sessionId = ms.id
+          WHERE ms.initiatorUserId = ? AND ms.createdAt >= ?
+        `)
+        .bind(ctx.userId, cutoffDate)
+        .all<any>();
+      const recentScores = (recentMatchings.results || []).map((r: any) => r.compatibilityScore).filter((s: any) => s != null);
+      const afterAvgScore = recentScores.length > 0 ? Math.round(recentScores.reduce((a: number, b: number) => a + b, 0) / recentScores.length) : 0;
+
+      // Before period matching scores (before cutoff)
+      const olderMatchings = await ctx.env.DB
+        .prepare(`
+          SELECT mr.compatibilityScore
+          FROM matching_sessions ms
+          JOIN matching_results mr ON mr.sessionId = ms.id
+          WHERE ms.initiatorUserId = ? AND ms.createdAt < ?
+        `)
+        .bind(ctx.userId, cutoffDate)
+        .all<any>();
+      const olderScores = (olderMatchings.results || []).map((r: any) => r.compatibilityScore).filter((s: any) => s != null);
+      const beforeAvgScore = olderScores.length > 0 ? Math.round(olderScores.reduce((a: number, b: number) => a + b, 0) / olderScores.length) : 0;
+
+      // Skills before period
+      const olderSkills = await ctx.env.DB
+        .prepare(`SELECT COUNT(*) as cnt FROM twin_skill_levels WHERE twinId = ? AND userId = ? AND createdAt < ?`)
+        .bind(twin.id, ctx.userId, cutoffDate)
+        .first<any>();
+
+      // Knowledge before period
+      const olderKnowledge = await ctx.env.DB
+        .prepare(`SELECT COUNT(*) as cnt FROM knowledge_base WHERE twinId = ? AND createdAt < ?`)
+        .bind(twin.id, cutoffDate)
+        .first<any>();
+
+      const personality = twin.personality ? parseJson<any>(twin.personality) : null;
+
+      const after = {
+        personality,
+        avgScore: afterAvgScore,
+        skillCount: (currentSkills.results || []).length,
+        knowledgeCount: currentKnowledge?.cnt || 0,
+      };
+
+      const before = {
+        personality: personality, // We don't have historical personality snapshots, use current
+        avgScore: beforeAvgScore,
+        skillCount: olderSkills?.cnt || 0,
+        knowledgeCount: olderKnowledge?.cnt || 0,
+      };
+
+      return {
+        period: input.period,
+        before,
+        after,
+        changes: {
+          scoreChange: afterAvgScore - beforeAvgScore,
+          newSkills: after.skillCount - before.skillCount,
+          newKnowledge: after.knowledgeCount - before.knowledgeCount,
+          personalityShift: null, // Would need historical snapshots
+        },
+      };
+    }),
+
+  predictEvolutionPath: protectedProcedure
+    .mutation(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      // Gather context
+      const milestones = await ctx.env.DB
+        .prepare(`SELECT * FROM twin_milestones WHERE twinId = ? AND userId = ? ORDER BY achievedAt DESC LIMIT 10`)
+        .bind(twin.id, ctx.userId)
+        .all<any>();
+      const skills = await ctx.env.DB
+        .prepare(`SELECT * FROM twin_skill_levels WHERE twinId = ? AND userId = ? ORDER BY level DESC`)
+        .bind(twin.id, ctx.userId)
+        .all<any>();
+      const matchings = await ctx.env.DB
+        .prepare(`
+          SELECT ms.theme, ms.createdAt, mr.compatibilityScore, mr.summary
+          FROM matching_sessions ms
+          LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+          WHERE ms.initiatorUserId = ?
+          ORDER BY ms.createdAt DESC LIMIT 20
+        `)
+        .bind(ctx.userId)
+        .all<any>();
+
+      const twinInfo = `ツイン名: ${twin.name}\n説明: ${twin.description || "N/A"}\nパーソナリティ: ${twin.personality || "N/A"}`;
+      const milestoneList = (milestones.results || []).map((m: any) => `- ${m.name || m.milestoneId}: ${m.description || ""} (${m.achievedAt})`).join("\n");
+      const skillList = (skills.results || []).map((s: any) => `- ${s.skillType}: Lv.${s.level}`).join("\n");
+      const matchingHistory = (matchings.results || []).map((m: any) => `- ${m.theme}: スコア${m.compatibilityScore || "N/A"} (${m.createdAt})`).join("\n");
+
+      const systemPrompt = `あなたはデジタルツインの成長予測エキスパートです。ツインの現在の状態と履歴から将来の成長パスを予測してください。
+返答は必ず以下のJSON形式のみで返してください。説明文は不要です。
+{
+  "predictions": [
+    {
+      "timeframe": "<例: 1ヶ月後>",
+      "milestone": "<予測されるマイルストーン>",
+      "likelihood": "high" | "medium" | "low",
+      "description": "<詳細説明>"
+    }
+  ],
+  "overallTrajectory": "<全体的な成長方向性の説明>",
+  "suggestedActions": ["<推奨アクション1>", "<推奨アクション2>"]
+}`;
+
+      const userPrompt = `以下のツイン情報から将来の成長パスを予測してください:
+
+${twinInfo}
+
+=== マイルストーン ===
+${milestoneList || "なし"}
+
+=== スキル ===
+${skillList || "なし"}
+
+=== マッチング履歴 ===
+${matchingHistory || "なし"}`;
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "analysis", ctx.env);
+      if (!llmConfig) { return { predictions: [], overallTrajectory: "LLM APIキーが未設定です", suggestedActions: ["AI API設定でキーを登録してください"] }; }
+      const llmResult = await invokeLLM(llmConfig, [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }], { maxTokens: 2048, temperature: 0.7 });
+      const raw = llmResult.content;
+
+      let result: any;
+      try {
+        const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+        result = JSON.parse(cleaned);
+      } catch {
+        result = {
+          predictions: [{ timeframe: "1ヶ月後", milestone: "分析データ不足", likelihood: "low" as const, description: "より多くのマッチングを実行することで予測精度が向上します" }],
+          overallTrajectory: "データ不足のため予測できませんでした",
+          suggestedActions: ["マッチングを実施してデータを蓄積してください"],
+        };
+      }
+
+      return {
+        predictions: result.predictions || [],
+        overallTrajectory: result.overallTrajectory || "",
+        suggestedActions: result.suggestedActions || [],
+      };
+    }),
 });

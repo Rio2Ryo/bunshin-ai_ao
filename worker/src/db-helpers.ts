@@ -1108,6 +1108,48 @@ CREATE TABLE IF NOT EXISTS smart_matching_recommendations (
   generatedAt TEXT DEFAULT (datetime('now')),
   UNIQUE(userId)
 );
+
+CREATE TABLE IF NOT EXISTS matching_highlights (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  highlights TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId)
+);
+
+CREATE TABLE IF NOT EXISTS twin_evolution_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  twinId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  eventType TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  eventData TEXT,
+  eventDate TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS matching_challenges (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  creatorId INTEGER NOT NULL,
+  theme TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  startsAt TEXT DEFAULT (datetime('now')),
+  endsAt TEXT,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS challenge_participants (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  challengeId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  sessionId INTEGER,
+  score INTEGER,
+  pointsAwarded INTEGER DEFAULT 0,
+  joinedAt TEXT DEFAULT (datetime('now')),
+  submittedAt TEXT,
+  UNIQUE(challengeId, userId)
+);
 `;
 
 let schemaReady = false;

@@ -3406,4 +3406,346 @@ JSONのみ出力してください。`;
       return { sent: res.ok };
     } catch { return { sent: false, reason: "メール送信に失敗しました" }; }
   }),
+
+  // ============ Phase 18: マッチングリプレイ・ハイライト ============
+
+  generateHighlights: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB
+        .prepare(`SELECT * FROM matching_sessions WHERE id = ?`)
+        .bind(input.sessionId)
+        .first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
+      if (session.initiatorUserId !== ctx.userId) {
+        // Check if user is twin2 owner
+        const twin2 = await ctx.env.DB.prepare(`SELECT userId FROM digital_twins WHERE id = ?`).bind(session.twin2Id).first<any>();
+        if (!twin2 || twin2.userId !== ctx.userId) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "このセッションへのアクセス権がありません" });
+        }
+      }
+
+      const dialogues = await ctx.env.DB
+        .prepare(`SELECT * FROM matching_dialogues WHERE sessionId = ? ORDER BY turnNumber ASC`)
+        .bind(input.sessionId)
+        .all<any>();
+      if (!dialogues.results || dialogues.results.length === 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "対話が見つかりません" });
+      }
+
+      const results = await ctx.env.DB
+        .prepare(`SELECT * FROM matching_results WHERE sessionId = ?`)
+        .bind(input.sessionId)
+        .first<any>();
+
+      const dialogueText = dialogues.results.map((d: any) =>
+        `Turn ${d.turnNumber} (Twin ${d.speakerTwinId}): ${d.content}`
+      ).join("\n");
+
+      const resultSummary = results ? `\nマッチング結果: スコア ${results.compatibilityScore}, サマリー: ${results.summary || "N/A"}` : "";
+
+      const systemPrompt = `あなたはマッチング対話の分析エキスパートです。対話のターンを分析し、最も重要な3〜5つのモーメントを特定してください。
+返答は必ず以下のJSON形式のみで返してください。説明文は不要です。
+{
+  "highlights": [
+    {
+      "turnNumber": <number>,
+      "title": "<短いタイトル>",
+      "reason": "<なぜ重要か>",
+      "impact": "high" | "medium" | "low",
+      "category": "turning_point" | "agreement" | "insight" | "conflict" | "breakthrough"
+    }
+  ]
+}`;
+
+      const userPrompt = `以下のマッチング対話を分析し、最も重要なモーメントを特定してください:\n\n${dialogueText}${resultSummary}`;
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) { return { highlights: [{ turnNumber: 1, title: "API未設定", reason: "LLM APIキーが設定されていません", impact: "low" as const, category: "insight" as const }] }; }
+      const llmResult = await invokeLLM(llmConfig, [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }], { maxTokens: 2048, temperature: 0.5 });
+      const raw = llmResult.content;
+
+      let highlights: any[] = [];
+      try {
+        const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+        const parsed = JSON.parse(cleaned);
+        highlights = parsed.highlights || [];
+      } catch {
+        highlights = [{ turnNumber: 1, title: "対話開始", reason: "解析に失敗しました", impact: "low" as const, category: "insight" as const }];
+      }
+
+      await ctx.env.DB
+        .prepare(`INSERT OR REPLACE INTO matching_highlights (sessionId, highlights, createdAt) VALUES (?, ?, datetime('now'))`)
+        .bind(input.sessionId, toJson(highlights))
+        .run();
+
+      return { highlights };
+    }),
+
+  getHighlights: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB
+        .prepare(`SELECT * FROM matching_highlights WHERE sessionId = ?`)
+        .bind(input.sessionId)
+        .first<any>();
+      if (!row) return { highlights: [] };
+      return { highlights: parseJson<any[]>(row.highlights) || [] };
+    }),
+
+  shareHighlights: protectedProcedure
+    .input(z.object({ sessionId: z.number(), postToFeed: z.boolean().default(false) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB
+        .prepare(`SELECT * FROM matching_sessions WHERE id = ? AND initiatorUserId = ?`)
+        .bind(input.sessionId, ctx.userId)
+        .first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
+
+      // Generate share token
+      const bytes = new Uint8Array(8);
+      crypto.getRandomValues(bytes);
+      const shareToken = Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+
+      // Save share token to session settings
+      const currentSettings = parseJson<any>(session.settings) || {};
+      currentSettings.highlightShareToken = shareToken;
+      await ctx.env.DB
+        .prepare(`UPDATE matching_sessions SET settings = ? WHERE id = ?`)
+        .bind(toJson(currentSettings), input.sessionId)
+        .run();
+
+      let feedPosted = false;
+      if (input.postToFeed) {
+        const highlightRow = await ctx.env.DB
+          .prepare(`SELECT highlights FROM matching_highlights WHERE sessionId = ?`)
+          .bind(input.sessionId)
+          .first<any>();
+        const highlights = highlightRow ? parseJson<any[]>(highlightRow.highlights) || [] : [];
+        const summary = highlights.slice(0, 3).map((h: any) => h.title).join(", ");
+        const feedData = toJson({ sessionId: input.sessionId, shareToken, highlightsSummary: summary, theme: session.theme });
+        await ctx.env.DB
+          .prepare(`INSERT INTO feed_items (userId, type, data, visibility, createdAt) VALUES (?, 'highlight', ?, 'friends', datetime('now'))`)
+          .bind(ctx.userId, feedData)
+          .run();
+        feedPosted = true;
+      }
+
+      return { shareToken, feedPosted };
+    }),
+
+  // ============ Phase 18: マッチングチャレンジモード ============
+
+  createChallenge: protectedProcedure
+    .input(z.object({
+      theme: z.string(),
+      description: z.string().optional(),
+      endsAt: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const endsAt = input.endsAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().replace("T", " ").slice(0, 19);
+      const result = await ctx.env.DB
+        .prepare(`INSERT INTO matching_challenges (creatorId, theme, description, status, startsAt, endsAt, createdAt) VALUES (?, ?, ?, 'active', datetime('now'), ?, datetime('now'))`)
+        .bind(ctx.userId, input.theme, input.description || null, endsAt)
+        .run();
+      return { challengeId: result.meta.last_row_id };
+    }),
+
+  joinChallenge: protectedProcedure
+    .input(z.object({ challengeId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const challenge = await ctx.env.DB
+        .prepare(`SELECT * FROM matching_challenges WHERE id = ?`)
+        .bind(input.challengeId)
+        .first<any>();
+      if (!challenge) throw new TRPCError({ code: "NOT_FOUND", message: "チャレンジが見つかりません" });
+      if (challenge.status !== "active") throw new TRPCError({ code: "BAD_REQUEST", message: "このチャレンジは終了しています" });
+
+      // Check if already joined
+      const existing = await ctx.env.DB
+        .prepare(`SELECT id FROM challenge_participants WHERE challengeId = ? AND userId = ?`)
+        .bind(input.challengeId, ctx.userId)
+        .first<any>();
+      if (existing) throw new TRPCError({ code: "CONFLICT", message: "すでに参加しています" });
+
+      await ctx.env.DB
+        .prepare(`INSERT INTO challenge_participants (challengeId, userId, joinedAt) VALUES (?, ?, datetime('now'))`)
+        .bind(input.challengeId, ctx.userId)
+        .run();
+      return { joined: true };
+    }),
+
+  submitChallengeResult: protectedProcedure
+    .input(z.object({ challengeId: z.number(), sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      // Verify participant
+      const participant = await ctx.env.DB
+        .prepare(`SELECT * FROM challenge_participants WHERE challengeId = ? AND userId = ?`)
+        .bind(input.challengeId, ctx.userId)
+        .first<any>();
+      if (!participant) throw new TRPCError({ code: "BAD_REQUEST", message: "チャレンジに参加していません" });
+
+      // Verify session belongs to user
+      const session = await ctx.env.DB
+        .prepare(`SELECT * FROM matching_sessions WHERE id = ? AND initiatorUserId = ?`)
+        .bind(input.sessionId, ctx.userId)
+        .first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "マッチングセッションが見つかりません" });
+
+      // Get score from results
+      const result = await ctx.env.DB
+        .prepare(`SELECT compatibilityScore FROM matching_results WHERE sessionId = ?`)
+        .bind(input.sessionId)
+        .first<any>();
+      if (!result) throw new TRPCError({ code: "BAD_REQUEST", message: "マッチング結果がまだありません" });
+
+      const score = Math.round(result.compatibilityScore || 0);
+
+      // Update participant with result
+      await ctx.env.DB
+        .prepare(`UPDATE challenge_participants SET sessionId = ?, score = ?, submittedAt = datetime('now') WHERE challengeId = ? AND userId = ?`)
+        .bind(input.sessionId, score, input.challengeId, ctx.userId)
+        .run();
+
+      // Calculate rank
+      const allParticipants = await ctx.env.DB
+        .prepare(`SELECT userId, score FROM challenge_participants WHERE challengeId = ? AND score IS NOT NULL ORDER BY score DESC`)
+        .bind(input.challengeId)
+        .all<any>();
+      const rank = (allParticipants.results || []).findIndex((p: any) => p.userId === ctx.userId) + 1;
+
+      // Award points: 10 for participation
+      let pointsToAward = 10;
+      // Extra 50 if top score
+      if (rank === 1) pointsToAward += 50;
+
+      // Ensure user_points row exists
+      await ctx.env.DB
+        .prepare(`INSERT OR IGNORE INTO user_points (userId, balance, totalEarned, totalSpent, totalExpired) VALUES (?, 0, 0, 0, 0)`)
+        .bind(ctx.userId)
+        .run();
+
+      // Get current balance for balanceAfter calculation
+      const currentPoints = await ctx.env.DB
+        .prepare(`SELECT balance FROM user_points WHERE userId = ?`)
+        .bind(ctx.userId)
+        .first<any>();
+      const newBalance = (currentPoints?.balance || 0) + pointsToAward;
+
+      await ctx.env.DB
+        .prepare(`UPDATE user_points SET balance = balance + ?, totalEarned = totalEarned + ?, lastActivityAt = datetime('now'), updatedAt = datetime('now') WHERE userId = ?`)
+        .bind(pointsToAward, pointsToAward, ctx.userId)
+        .run();
+
+      await ctx.env.DB
+        .prepare(`INSERT INTO point_transactions (userId, amount, type, balanceAfter, actionType, description, createdAt) VALUES (?, ?, 'earned', ?, 'challenge', ?, datetime('now'))`)
+        .bind(ctx.userId, pointsToAward, newBalance, `チャレンジ参加${rank === 1 ? " + トップスコアボーナス" : ""}`)
+        .run();
+
+      // Update pointsAwarded on participant
+      await ctx.env.DB
+        .prepare(`UPDATE challenge_participants SET pointsAwarded = ? WHERE challengeId = ? AND userId = ?`)
+        .bind(pointsToAward, input.challengeId, ctx.userId)
+        .run();
+
+      return { score, rank };
+    }),
+
+  getChallengeLeaderboard: protectedProcedure
+    .input(z.object({ challengeId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const challenge = await ctx.env.DB
+        .prepare(`SELECT * FROM matching_challenges WHERE id = ?`)
+        .bind(input.challengeId)
+        .first<any>();
+      if (!challenge) throw new TRPCError({ code: "NOT_FOUND", message: "チャレンジが見つかりません" });
+
+      const participants = await ctx.env.DB
+        .prepare(`
+          SELECT cp.userId, cp.score, cp.sessionId, cp.joinedAt, cp.submittedAt, cp.pointsAwarded,
+                 u.email, up.displayName, up.avatarUrl
+          FROM challenge_participants cp
+          LEFT JOIN users u ON u.id = cp.userId
+          LEFT JOIN user_profiles up ON up.userId = cp.userId
+          WHERE cp.challengeId = ?
+          ORDER BY cp.score DESC NULLS LAST, cp.joinedAt ASC
+        `)
+        .bind(input.challengeId)
+        .all<any>();
+
+      const leaderboard = (participants.results || []).map((p: any, idx: number) => ({
+        rank: p.score != null ? idx + 1 : null,
+        userId: p.userId,
+        name: p.displayName || p.email || "Unknown",
+        avatarUrl: p.avatarUrl || null,
+        score: p.score,
+        sessionId: p.sessionId,
+        joinedAt: p.joinedAt,
+        submittedAt: p.submittedAt,
+        pointsAwarded: p.pointsAwarded,
+      }));
+
+      return {
+        challenge: {
+          id: challenge.id,
+          theme: challenge.theme,
+          description: challenge.description,
+          status: challenge.status,
+          startsAt: challenge.startsAt,
+          endsAt: challenge.endsAt,
+          creatorId: challenge.creatorId,
+        },
+        leaderboard,
+      };
+    }),
+
+  listChallenges: protectedProcedure
+    .query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const challenges = await ctx.env.DB
+        .prepare(`SELECT * FROM matching_challenges WHERE status = 'active' OR createdAt > datetime('now', '-30 days') ORDER BY createdAt DESC LIMIT 50`)
+        .all<any>();
+
+      const result = [];
+      for (const c of (challenges.results || [])) {
+        const stats = await ctx.env.DB
+          .prepare(`SELECT COUNT(*) as participantCount, MAX(score) as topScore FROM challenge_participants WHERE challengeId = ?`)
+          .bind(c.id)
+          .first<any>();
+
+        const myParticipation = await ctx.env.DB
+          .prepare(`SELECT * FROM challenge_participants WHERE challengeId = ? AND userId = ?`)
+          .bind(c.id, ctx.userId)
+          .first<any>();
+
+        result.push({
+          id: c.id,
+          theme: c.theme,
+          description: c.description,
+          status: c.status,
+          startsAt: c.startsAt,
+          endsAt: c.endsAt,
+          creatorId: c.creatorId,
+          createdAt: c.createdAt,
+          participantCount: stats?.participantCount || 0,
+          topScore: stats?.topScore || null,
+          myParticipation: myParticipation ? {
+            joined: true,
+            score: myParticipation.score,
+            sessionId: myParticipation.sessionId,
+            submittedAt: myParticipation.submittedAt,
+          } : null,
+        });
+      }
+
+      return result;
+    }),
 });

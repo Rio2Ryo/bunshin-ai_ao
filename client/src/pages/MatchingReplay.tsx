@@ -10,7 +10,7 @@ import { trpc } from "@/lib/trpc";
 import { useParams, Link } from "wouter";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, Bot, Play, Pause, SkipBack, SkipForward, Loader2, MessageSquare, StickyNote, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, Bot, Play, Pause, SkipBack, SkipForward, Loader2, MessageSquare, StickyNote, Save, Trash2, Sparkles, Share2, Star } from "lucide-react";
 
 export default function MatchingReplay() {
   const { id } = useParams<{ id: string }>();
@@ -23,6 +23,14 @@ export default function MatchingReplay() {
   );
   const saveNoteMut = trpc.matching.saveNote.useMutation();
 
+  // Highlights
+  const { data: highlightsData, refetch: refetchHighlights } = trpc.matching.getHighlights.useQuery(
+    { sessionId },
+    { enabled: sessionId > 0 }
+  );
+  const generateHighlightsMut = trpc.matching.generateHighlights.useMutation();
+  const shareHighlightsMut = trpc.matching.shareHighlights.useMutation();
+
   const [currentTurn, setCurrentTurn] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(2000); // ms per turn
@@ -33,6 +41,7 @@ export default function MatchingReplay() {
 
   const dialogues = data?.dialogues ?? [];
   const totalTurns = dialogues.length;
+  const highlights = (highlightsData as any)?.highlights ?? [];
 
   // Playback control
   useEffect(() => {
@@ -85,6 +94,47 @@ export default function MatchingReplay() {
   const startEditNote = (turnNumber: number) => {
     setEditingTurn(turnNumber);
     setNoteText(getNote(turnNumber));
+  };
+
+  const handleGenerateHighlights = async () => {
+    try {
+      await generateHighlightsMut.mutateAsync({ sessionId });
+      toast.success("ハイライトを生成しました");
+      refetchHighlights();
+    } catch (e: any) {
+      toast.error(e.message || "ハイライト生成に失敗しました");
+    }
+  };
+
+  const handleShareHighlights = async () => {
+    try {
+      await shareHighlightsMut.mutateAsync({ sessionId, postToFeed: true });
+      toast.success("ハイライトをフィードに共有しました");
+    } catch (e: any) {
+      toast.error(e.message || "共有に失敗しました");
+    }
+  };
+
+  const getHighlightForTurn = (turnNumber: number) => {
+    return highlights.find((h: any) => h.turnNumber === turnNumber);
+  };
+
+  const getImpactColor = (impact: string) => {
+    switch (impact) {
+      case "high": return "bg-red-500/10 text-red-600 border-red-300";
+      case "medium": return "bg-yellow-500/10 text-yellow-600 border-yellow-300";
+      case "low": return "bg-green-500/10 text-green-600 border-green-300";
+      default: return "bg-muted text-muted-foreground";
+    }
+  };
+
+  const getImpactLabel = (impact: string) => {
+    switch (impact) {
+      case "high": return "高インパクト";
+      case "medium": return "中インパクト";
+      case "low": return "低インパクト";
+      default: return impact;
+    }
   };
 
   if (isLoading) {
@@ -159,6 +209,86 @@ export default function MatchingReplay() {
           </CardContent>
         </Card>
 
+        {/* Highlights Section */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-yellow-500" />
+                ハイライト
+              </CardTitle>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleGenerateHighlights}
+                  disabled={generateHighlightsMut.isPending}
+                >
+                  {generateHighlightsMut.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                  ) : (
+                    <Sparkles className="h-4 w-4 mr-1" />
+                  )}
+                  ハイライト生成
+                </Button>
+                {highlights.length > 0 && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleShareHighlights}
+                    disabled={shareHighlightsMut.isPending}
+                  >
+                    {shareHighlightsMut.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                    ) : (
+                      <Share2 className="h-4 w-4 mr-1" />
+                    )}
+                    共有
+                  </Button>
+                )}
+              </div>
+            </div>
+            <CardDescription>対話の中で注目すべきポイントを自動検出</CardDescription>
+          </CardHeader>
+          {highlights.length > 0 && (
+            <CardContent>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {highlights.map((h: any, i: number) => (
+                  <div
+                    key={i}
+                    className="relative p-3 rounded-lg border bg-card hover:shadow-md transition-shadow cursor-pointer"
+                    onClick={() => {
+                      setIsPlaying(false);
+                      setCurrentTurn(h.turnNumber);
+                    }}
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <Star className="h-4 w-4 text-yellow-500 flex-shrink-0" />
+                        <span className="font-medium text-sm">{h.title}</span>
+                      </div>
+                      <Badge variant="outline" className="text-xs flex-shrink-0">
+                        Turn {(h.turnNumber ?? 0) + 1}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-2">{h.reason}</p>
+                    <div className="flex items-center gap-2">
+                      <Badge className={`text-xs ${getImpactColor(h.impact)}`}>
+                        {getImpactLabel(h.impact)}
+                      </Badge>
+                      {h.category && (
+                        <Badge variant="secondary" className="text-xs">
+                          {h.category}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          )}
+        </Card>
+
         {/* Dialogue with replay */}
         <Card>
           <CardHeader>
@@ -175,6 +305,7 @@ export default function MatchingReplay() {
                   const isVisible = i <= currentTurn;
                   const isCurrent = i === currentTurn;
                   const turnNote = getNote(d.turnNumber ?? i);
+                  const highlight = getHighlightForTurn(d.turnNumber ?? i);
 
                   return (
                     <div
@@ -184,6 +315,25 @@ export default function MatchingReplay() {
                         isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none h-0 overflow-hidden"
                       } ${isCurrent ? "ring-2 ring-primary/30 rounded-lg" : ""}`}
                     >
+                      {/* Highlight overlay */}
+                      {highlight && isVisible && (
+                        <div className={`mb-2 p-2 rounded-lg border-l-4 ${
+                          highlight.impact === "high" ? "border-l-red-500 bg-red-50 dark:bg-red-900/10" :
+                          highlight.impact === "medium" ? "border-l-yellow-500 bg-yellow-50 dark:bg-yellow-900/10" :
+                          "border-l-green-500 bg-green-50 dark:bg-green-900/10"
+                        }`}>
+                          <div className="flex items-center gap-2">
+                            <Star className="h-3.5 w-3.5 text-yellow-500" />
+                            <span className="text-xs font-medium">{highlight.title}</span>
+                            <Badge className={`text-[10px] px-1.5 py-0 ${getImpactColor(highlight.impact)}`}>
+                              {getImpactLabel(highlight.impact)}
+                            </Badge>
+                            {highlight.category && (
+                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{highlight.category}</Badge>
+                            )}
+                          </div>
+                        </div>
+                      )}
                       <div className={`flex gap-3 p-2 rounded-lg ${isTwin1 ? "" : "flex-row-reverse"}`}>
                         <div className={`h-10 w-10 rounded-full flex items-center justify-center flex-shrink-0 ${isTwin1 ? "bg-primary/20" : "bg-accent/20"}`}>
                           <Bot className={`h-5 w-5 ${isTwin1 ? "text-primary" : "text-accent"}`} />

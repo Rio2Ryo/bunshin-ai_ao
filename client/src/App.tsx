@@ -74,6 +74,8 @@ const NotificationDashboard = lazy(() => import("./pages/NotificationDashboard")
 const MatchingInsights = lazy(() => import("./pages/MatchingInsights"));
 const NegotiationSimulator = lazy(() => import("./pages/NegotiationSimulator"));
 const EmotionDashboard = lazy(() => import("./pages/EmotionDashboard"));
+const TwinEvolution = lazy(() => import("./pages/TwinEvolution"));
+const Challenges = lazy(() => import("./pages/Challenges"));
 
 function PageLoader() {
   return (
@@ -152,6 +154,8 @@ function Router() {
         <Route path="/notifications" component={NotificationDashboard} />
         <Route path="/negotiation" component={NegotiationSimulator} />
         <Route path="/emotions" component={EmotionDashboard} />
+        <Route path="/evolution" component={TwinEvolution} />
+        <Route path="/challenges" component={Challenges} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>
