@@ -1338,6 +1338,61 @@ CREATE TABLE IF NOT EXISTS twin_versions (
   diff TEXT,
   createdAt TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS roi_goals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  targetAmount REAL DEFAULT 0,
+  targetMatchCount INTEGER DEFAULT 0,
+  period TEXT NOT NULL DEFAULT 'monthly',
+  label TEXT,
+  currentAmount REAL DEFAULT 0,
+  currentMatchCount INTEGER DEFAULT 0,
+  milestones TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS twin_coaching_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  twinId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  status TEXT DEFAULT 'active',
+  personalityBefore TEXT,
+  personalityAfter TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS twin_coaching_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS matching_calendar_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  scheduledAt TEXT NOT NULL,
+  notes TEXT,
+  settings TEXT,
+  status TEXT DEFAULT 'scheduled',
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS matching_reminders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  eventId INTEGER NOT NULL,
+  reminderAt TEXT NOT NULL,
+  channel TEXT DEFAULT 'app',
+  isSent INTEGER DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
 `;
 
 let schemaReady = false;

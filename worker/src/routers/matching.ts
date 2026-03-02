@@ -4991,4 +4991,257 @@ ${historyContext ? `\nユーザーの過去マッチング傾向:\n${historyCont
       ...r, decisions: parseJson<string[]>(r.decisions), actionItems: parseJson<any[]>(r.actionItems), nextAgenda: parseJson<string[]>(r.nextAgenda),
     }));
   }),
+
+  // ============ ROI Dashboard ============
+
+  getROIData: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    // Get all completed matchings with outcomes
+    const matchings = await ctx.env.DB.prepare(
+      `SELECT ms.id, ms.theme, ms.createdAt, mr.compatibilityScore,
+              ms.settings, ms.initiatorUserId,
+              (SELECT json_group_array(json_object('type', mo.outcomeType, 'amount', mo.amount))
+               FROM matching_outcomes mo WHERE mo.sessionId = ms.id) as outcomes
+       FROM matching_sessions ms
+       LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+       WHERE (ms.initiatorUserId = ? OR json_extract(ms.settings, '$.friendId') = ?)
+       ORDER BY ms.createdAt DESC`
+    ).bind(ctx.userId, ctx.userId).all<any>();
+
+    // Friend-level ROI aggregation
+    const friendROI: Record<number, { friendId: number; friendName: string; totalOutcomeAmount: number; matchCount: number; avgScore: number; scores: number[] }> = {};
+    const monthlyData: Record<string, { month: string; matchCount: number; totalAmount: number; avgScore: number; scores: number[] }> = {};
+
+    for (const m of matchings.results ?? []) {
+      const settings = parseJson<any>(m.settings) || {};
+      const friendId = m.initiatorUserId === ctx.userId ? settings.friendId : m.initiatorUserId;
+      const outcomes = parseJson<any[]>(m.outcomes) || [];
+      const totalAmount = outcomes.reduce((sum: number, o: any) => sum + (o.amount || 0), 0);
+      const month = (m.createdAt || '').substring(0, 7); // YYYY-MM
+      const score = m.compatibilityScore || 0;
+
+      if (friendId) {
+        if (!friendROI[friendId]) {
+          friendROI[friendId] = { friendId, friendName: '', totalOutcomeAmount: 0, matchCount: 0, avgScore: 0, scores: [] };
+        }
+        friendROI[friendId].totalOutcomeAmount += totalAmount;
+        friendROI[friendId].matchCount++;
+        if (score) friendROI[friendId].scores.push(score);
+      }
+
+      if (month) {
+        if (!monthlyData[month]) {
+          monthlyData[month] = { month, matchCount: 0, totalAmount: 0, avgScore: 0, scores: [] };
+        }
+        monthlyData[month].matchCount++;
+        monthlyData[month].totalAmount += totalAmount;
+        if (score) monthlyData[month].scores.push(score);
+      }
+    }
+
+    // Resolve friend names
+    for (const fid of Object.keys(friendROI)) {
+      const u = await ctx.env.DB.prepare(`SELECT name FROM users WHERE id=?`).bind(Number(fid)).first<any>();
+      friendROI[Number(fid)].friendName = u?.name || `User ${fid}`;
+      const scores = friendROI[Number(fid)].scores;
+      friendROI[Number(fid)].avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+    }
+
+    // Calculate monthly averages
+    for (const key of Object.keys(monthlyData)) {
+      const scores = monthlyData[key].scores;
+      monthlyData[key].avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+    }
+
+    const friendRanking = Object.values(friendROI).sort((a, b) => b.totalOutcomeAmount - a.totalOutcomeAmount);
+    const monthly = Object.values(monthlyData).sort((a, b) => a.month.localeCompare(b.month));
+
+    const totalMatchings = (matchings.results ?? []).length;
+    const totalOutcome = friendRanking.reduce((s, f) => s + f.totalOutcomeAmount, 0);
+
+    return { totalMatchings, totalOutcome, friendRanking, monthly };
+  }),
+
+  getROIGoals: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT * FROM roi_goals WHERE userId=? ORDER BY createdAt DESC`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, milestones: parseJson<any[]>(r.milestones) || [] }));
+  }),
+
+  setROIGoal: protectedProcedure
+    .input(z.object({
+      targetAmount: z.number(),
+      targetMatchCount: z.number(),
+      period: z.enum(["monthly", "quarterly", "yearly"]),
+      label: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO roi_goals (userId, targetAmount, targetMatchCount, period, label) VALUES (?, ?, ?, ?, ?)`
+      ).bind(ctx.userId, input.targetAmount, input.targetMatchCount, input.period, input.label || null).run();
+      return { id: Number(res.meta.last_row_id) };
+    }),
+
+  deleteROIGoal: protectedProcedure
+    .input(z.object({ goalId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM roi_goals WHERE id=? AND userId=?`).bind(input.goalId, ctx.userId).run();
+      return { deleted: true };
+    }),
+
+  getROISuggestions: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+    // Gather ROI data
+    const matchings = await ctx.env.DB.prepare(
+      `SELECT ms.theme, mr.compatibilityScore, ms.createdAt,
+              (SELECT SUM(mo.amount) FROM matching_outcomes mo WHERE mo.sessionId = ms.id) as outcomeAmount
+       FROM matching_sessions ms
+       LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+       WHERE ms.initiatorUserId = ? ORDER BY ms.createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+
+    const goals = await ctx.env.DB.prepare(`SELECT * FROM roi_goals WHERE userId=? ORDER BY createdAt DESC LIMIT 3`).bind(ctx.userId).all<any>();
+
+    const prompt = `以下のマッチングROIデータを分析し、ROI改善のための具体的な提案を3-5件JSON配列で返してください。
+
+マッチング履歴:
+${JSON.stringify(matchings.results ?? [])}
+
+目標:
+${JSON.stringify(goals.results ?? [])}
+
+JSON形式: [{"title":"提案タイトル","description":"具体的な説明","impact":"high|medium|low","category":"frequency|quality|targeting|followup"}]`;
+
+    const result = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+    let suggestions: any[] = [];
+    try {
+      const parsed = JSON.parse(result.content);
+      suggestions = Array.isArray(parsed) ? parsed : parsed.suggestions || [];
+    } catch {
+      suggestions = [{ title: "データ分析中", description: "マッチングデータを増やして再度お試しください", impact: "medium", category: "frequency" }];
+    }
+    return { suggestions };
+  }),
+
+  // ============ Calendar View ============
+
+  getCalendarEvents: protectedProcedure
+    .input(z.object({ year: z.number(), month: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const startDate = `${input.year}-${String(input.month).padStart(2, '0')}-01`;
+      const endMonth = input.month === 12 ? 1 : input.month + 1;
+      const endYear = input.month === 12 ? input.year + 1 : input.year;
+      const endDate = `${endYear}-${String(endMonth).padStart(2, '0')}-01`;
+
+      // Past matchings
+      const matchings = await ctx.env.DB.prepare(
+        `SELECT ms.id, ms.theme, ms.status, ms.createdAt, mr.compatibilityScore
+         FROM matching_sessions ms
+         LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+         WHERE (ms.initiatorUserId = ? OR json_extract(ms.settings, '$.friendId') = ?)
+         AND ms.createdAt >= ? AND ms.createdAt < ?
+         ORDER BY ms.createdAt ASC`
+      ).bind(ctx.userId, ctx.userId, startDate, endDate).all<any>();
+
+      // Scheduled events
+      const scheduled = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_calendar_events WHERE userId=? AND scheduledAt >= ? AND scheduledAt < ? ORDER BY scheduledAt ASC`
+      ).bind(ctx.userId, startDate, endDate).all<any>();
+
+      return {
+        matchings: matchings.results ?? [],
+        scheduled: (scheduled.results ?? []).map((r: any) => ({ ...r, settings: parseJson<any>(r.settings) })),
+      };
+    }),
+
+  createCalendarEvent: protectedProcedure
+    .input(z.object({
+      title: z.string(),
+      friendId: z.number().optional(),
+      theme: z.string().optional(),
+      scheduledAt: z.string(),
+      notes: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const settings = toJson({ friendId: input.friendId, theme: input.theme });
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO matching_calendar_events (userId, title, scheduledAt, notes, settings) VALUES (?, ?, ?, ?, ?)`
+      ).bind(ctx.userId, input.title, input.scheduledAt, input.notes || null, settings).run();
+      return { id: Number(res.meta.last_row_id) };
+    }),
+
+  updateCalendarEvent: protectedProcedure
+    .input(z.object({
+      eventId: z.number(),
+      title: z.string().optional(),
+      scheduledAt: z.string().optional(),
+      notes: z.string().optional(),
+      status: z.enum(["scheduled", "completed", "cancelled"]).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const sets: string[] = [];
+      const vals: any[] = [];
+      if (input.title) { sets.push("title=?"); vals.push(input.title); }
+      if (input.scheduledAt) { sets.push("scheduledAt=?"); vals.push(input.scheduledAt); }
+      if (input.notes !== undefined) { sets.push("notes=?"); vals.push(input.notes); }
+      if (input.status) { sets.push("status=?"); vals.push(input.status); }
+      if (sets.length === 0) return { updated: false };
+      sets.push("updatedAt=datetime('now')");
+      await ctx.env.DB.prepare(
+        `UPDATE matching_calendar_events SET ${sets.join(", ")} WHERE id=? AND userId=?`
+      ).bind(...vals, input.eventId, ctx.userId).run();
+      return { updated: true };
+    }),
+
+  deleteCalendarEvent: protectedProcedure
+    .input(z.object({ eventId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM matching_calendar_events WHERE id=? AND userId=?`).bind(input.eventId, ctx.userId).run();
+      return { deleted: true };
+    }),
+
+  setReminder: protectedProcedure
+    .input(z.object({
+      eventId: z.number(),
+      reminderAt: z.string(),
+      channel: z.enum(["app", "email", "line", "slack"]).default("app"),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO matching_reminders (userId, eventId, reminderAt, channel) VALUES (?, ?, ?, ?)`
+      ).bind(ctx.userId, input.eventId, input.reminderAt, input.channel).run();
+      return { id: Number(res.meta.last_row_id) };
+    }),
+
+  listReminders: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT mr.*, mce.title as eventTitle, mce.scheduledAt
+       FROM matching_reminders mr
+       JOIN matching_calendar_events mce ON mce.id = mr.eventId
+       WHERE mr.userId=? AND mr.isSent=0
+       ORDER BY mr.reminderAt ASC`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
+  deleteReminder: protectedProcedure
+    .input(z.object({ reminderId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM matching_reminders WHERE id=? AND userId=?`).bind(input.reminderId, ctx.userId).run();
+      return { deleted: true };
+    }),
 });

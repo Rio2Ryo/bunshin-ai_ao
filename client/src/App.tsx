@@ -91,6 +91,9 @@ const CustomWidgets = lazy(() => import("./pages/CustomWidgets"));
 const MatchingMinutes = lazy(() => import("./pages/MatchingMinutes"));
 const TwinVersionManager = lazy(() => import("./pages/TwinVersionManager"));
 const VoiceReplay = lazy(() => import("./pages/VoiceReplay"));
+const ROIDashboard = lazy(() => import("./pages/ROIDashboard"));
+const TwinCoaching = lazy(() => import("./pages/TwinCoaching"));
+const MatchingCalendar = lazy(() => import("./pages/MatchingCalendar"));
 
 function PageLoader() {
   return (
@@ -186,6 +189,9 @@ function Router() {
         <Route path="/minutes" component={MatchingMinutes} />
         <Route path="/versions" component={TwinVersionManager} />
         <Route path="/voice-replay" component={VoiceReplay} />
+        <Route path="/roi" component={ROIDashboard} />
+        <Route path="/coaching" component={TwinCoaching} />
+        <Route path="/calendar" component={MatchingCalendar} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

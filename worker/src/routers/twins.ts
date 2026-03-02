@@ -2237,4 +2237,153 @@ ${entrySummaries}
     }
     return result;
   }),
+
+  // ============ Twin AI Coach Dialogue ============
+
+  startCoaching: protectedProcedure
+    .input(z.object({ twinId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=? AND userId=?`).bind(input.twinId, ctx.userId).first<any>();
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO twin_coaching_sessions (twinId, userId, status, personalityBefore) VALUES (?, ?, 'active', ?)`
+      ).bind(input.twinId, ctx.userId, twin.personality || '').run();
+      const sessionId = Number(res.meta.last_row_id);
+
+      // Create initial system message
+      await ctx.env.DB.prepare(
+        `INSERT INTO twin_coaching_messages (sessionId, role, content) VALUES (?, 'system', ?)`
+      ).bind(sessionId, `あなたのツイン「${twin.name}」のコーチングセッションを開始しました。\n\n現在の人格設定:\n${twin.personality || '(未設定)'}\n\n説明:\n${twin.description || '(未設定)'}\n\nどのような改善をしたいですか？例：\n• 「もっと積極的に」\n• 「専門用語を減らして」\n• 「相手の話をもっと聞くように」`).run();
+
+      return { sessionId };
+    }),
+
+  sendCoachingMessage: protectedProcedure
+    .input(z.object({ sessionId: z.number(), message: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(
+        `SELECT tcs.*, dt.name as twinName, dt.personality, dt.description, dt.systemPrompt, dt.tags
+         FROM twin_coaching_sessions tcs
+         JOIN digital_twins dt ON dt.id = tcs.twinId
+         WHERE tcs.id=? AND tcs.userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+
+      // Save user message
+      await ctx.env.DB.prepare(
+        `INSERT INTO twin_coaching_messages (sessionId, role, content) VALUES (?, 'user', ?)`
+      ).bind(input.sessionId, input.message).run();
+
+      // Get conversation history
+      const history = await ctx.env.DB.prepare(
+        `SELECT role, content FROM twin_coaching_messages WHERE sessionId=? ORDER BY createdAt ASC`
+      ).bind(input.sessionId).all<any>();
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "chat", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      const systemPrompt = `あなたはデジタルツインのコーチングアシスタントです。ユーザーがツインの改善指示を出すのを手伝います。
+
+現在のツイン設定:
+- 名前: ${session.twinName}
+- 人格: ${session.personality || '未設定'}
+- 説明: ${session.description || '未設定'}
+- システムプロンプト: ${session.systemPrompt || '未設定'}
+
+ユーザーの指示に基づいて:
+1. 指示を理解し確認する
+2. 具体的にどのパラメータを調整すべきか提案する
+3. ユーザーが「適用」「反映」と言ったら、以下のJSON形式で調整内容を返す:
+---TWIN_UPDATE---
+{"personality":"新しい人格","description":"新しい説明","systemPrompt":"新しいシステムプロンプト"}
+---END_UPDATE---
+
+適用指示がなければ自然な対話で改善案を議論してください。`;
+
+      const messages = [
+        { role: "system" as const, content: systemPrompt },
+        ...(history.results ?? []).filter((m: any) => m.role !== 'system').map((m: any) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        })),
+      ];
+
+      const result = await invokeLLM(llmConfig, messages);
+      const aiContent = result.content;
+
+      // Save AI response
+      await ctx.env.DB.prepare(
+        `INSERT INTO twin_coaching_messages (sessionId, role, content) VALUES (?, 'assistant', ?)`
+      ).bind(input.sessionId, aiContent).run();
+
+      // Check if there's a twin update directive
+      const updateMatch = aiContent.match(/---TWIN_UPDATE---\s*([\s\S]*?)\s*---END_UPDATE---/);
+      let applied = false;
+      if (updateMatch) {
+        try {
+          const updates = JSON.parse(updateMatch[1]);
+          const setClauses: string[] = [];
+          const values: any[] = [];
+          if (updates.personality) { setClauses.push("personality=?"); values.push(updates.personality); }
+          if (updates.description) { setClauses.push("description=?"); values.push(updates.description); }
+          if (updates.systemPrompt) { setClauses.push("systemPrompt=?"); values.push(updates.systemPrompt); }
+          if (setClauses.length > 0) {
+            setClauses.push("updatedAt=datetime('now')");
+            await ctx.env.DB.prepare(
+              `UPDATE digital_twins SET ${setClauses.join(", ")} WHERE id=? AND userId=?`
+            ).bind(...values, session.twinId, ctx.userId).run();
+            await ctx.env.DB.prepare(
+              `UPDATE twin_coaching_sessions SET personalityAfter=?, updatedAt=datetime('now') WHERE id=?`
+            ).bind(updates.personality || session.personality, input.sessionId).run();
+            applied = true;
+          }
+        } catch { /* ignore parse errors */ }
+      }
+
+      return { content: aiContent.replace(/---TWIN_UPDATE---[\s\S]*?---END_UPDATE---/g, '').trim(), applied };
+    }),
+
+  listCoachingSessions: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT tcs.*, dt.name as twinName,
+              (SELECT COUNT(*) FROM twin_coaching_messages tcm WHERE tcm.sessionId = tcs.id AND tcm.role='user') as messageCount
+       FROM twin_coaching_sessions tcs
+       JOIN digital_twins dt ON dt.id = tcs.twinId
+       WHERE tcs.userId=? ORDER BY tcs.updatedAt DESC LIMIT 30`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
+  getCoachingSession: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(
+        `SELECT tcs.*, dt.name as twinName, dt.personality as currentPersonality
+         FROM twin_coaching_sessions tcs
+         JOIN digital_twins dt ON dt.id = tcs.twinId
+         WHERE tcs.id=? AND tcs.userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const messages = await ctx.env.DB.prepare(
+        `SELECT * FROM twin_coaching_messages WHERE sessionId=? ORDER BY createdAt ASC`
+      ).bind(input.sessionId).all<any>();
+
+      return { ...session, messages: messages.results ?? [] };
+    }),
+
+  endCoaching: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(
+        `UPDATE twin_coaching_sessions SET status='completed', updatedAt=datetime('now') WHERE id=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).run();
+      return { ended: true };
+    }),
 });
