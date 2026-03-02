@@ -4881,4 +4881,114 @@ ${historyContext ? `\nユーザーの過去マッチング傾向:\n${historyCont
       await ctx.env.DB.prepare(`UPDATE custom_widgets SET isShared=1, shareCode=?, updatedAt=datetime('now') WHERE id=?`).bind(shareCode, input.widgetId).run();
       return { shareCode };
     }),
+
+  // ============ Feature 23-1: マッチング自動議事録・アクションアイテム抽出 ============
+
+  generateMinutes: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+      const dialogues = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionId).all<any>();
+      if (!dialogues.results?.length) throw new TRPCError({ code: "BAD_REQUEST", message: "対話データがありません" });
+      const result = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(input.sessionId).first<any>();
+
+      const dialogueText = (dialogues.results ?? []).map((d: any) => `Turn ${d.turnNumber} [${d.speaker}]: ${d.content}`).join("\n");
+      const scoreInfo = result ? `スコア: ${result.compatibilityScore}` : "";
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM未設定" });
+      const llmResult = await invokeLLM(llmConfig, [
+        { role: "system", content: "あなたはビジネスミーティングの議事録作成の専門家です。マッチング対話を分析して構造化された議事録を作成してください。" },
+        { role: "user", content: `テーマ: ${session.theme}\n${scoreInfo}\n\n対話:\n${dialogueText}\n\nJSON形式で出力:\n{\n  "summary": "対話の要約（2-3文）",\n  "decisions": ["決定事項1", "決定事項2"],\n  "actionItems": [\n    { "task": "タスク内容", "owner": "担当者", "priority": "high/medium/low", "dueDescription": "期限目安" }\n  ],\n  "nextAgenda": ["次回アジェンダ1", "次回アジェンダ2"],\n  "keyPoints": ["重要ポイント1", "ポイント2"],\n  "agreements": ["合意事項1"],\n  "openIssues": ["未解決課題1"]\n}` },
+      ], { maxTokens: 2048, temperature: 0.5 });
+
+      let minutes: any = {};
+      try { const match = llmResult.content.match(/\{[\s\S]*\}/); if (match) minutes = JSON.parse(match[0]); } catch { minutes = { summary: "", decisions: [], actionItems: [], nextAgenda: [], keyPoints: [], agreements: [], openIssues: [] }; }
+
+      // Generate Markdown
+      const md = [
+        `# 議事録: ${session.theme}`,
+        `\n日時: ${session.createdAt}\n${scoreInfo}\n`,
+        `## 概要\n${minutes.summary || ""}`,
+        minutes.decisions?.length ? `\n## 決定事項\n${minutes.decisions.map((d: string) => `- ${d}`).join("\n")}` : "",
+        minutes.actionItems?.length ? `\n## アクションアイテム\n${minutes.actionItems.map((a: any) => `- **[${a.priority || "medium"}]** ${a.task} (${a.owner || "未定"}) ${a.dueDescription ? `— ${a.dueDescription}` : ""}`).join("\n")}` : "",
+        minutes.nextAgenda?.length ? `\n## 次回アジェンダ\n${minutes.nextAgenda.map((n: string) => `- ${n}`).join("\n")}` : "",
+        minutes.keyPoints?.length ? `\n## 重要ポイント\n${minutes.keyPoints.map((k: string) => `- ${k}`).join("\n")}` : "",
+        minutes.agreements?.length ? `\n## 合意事項\n${minutes.agreements.map((a: string) => `- ${a}`).join("\n")}` : "",
+        minutes.openIssues?.length ? `\n## 未解決課題\n${minutes.openIssues.map((o: string) => `- ${o}`).join("\n")}` : "",
+      ].filter(Boolean).join("\n");
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO matching_minutes (sessionId, userId, summary, decisions, actionItems, nextAgenda, markdownContent, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+      ).bind(input.sessionId, ctx.userId, minutes.summary || "", toJson(minutes.decisions), toJson(minutes.actionItems), toJson(minutes.nextAgenda), md).run();
+
+      // Auto-create action items in matching_action_items for OutcomeTracker integration
+      for (const ai of (minutes.actionItems || [])) {
+        await ctx.env.DB.prepare(
+          `INSERT INTO matching_action_items (sessionId, userId, title, description, status, priority, createdAt, updatedAt) VALUES (?, ?, ?, ?, 'pending', ?, datetime('now'), datetime('now'))`
+        ).bind(input.sessionId, ctx.userId, ai.task || "タスク", ai.dueDescription || "", ai.priority || "medium").run();
+      }
+
+      return { ...minutes, markdownContent: md };
+    }),
+
+  getMinutes: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(`SELECT * FROM matching_minutes WHERE sessionId=? AND userId=?`).bind(input.sessionId, ctx.userId).first<any>();
+      if (!row) return null;
+      return {
+        ...row,
+        decisions: parseJson<string[]>(row.decisions),
+        actionItems: parseJson<any[]>(row.actionItems),
+        nextAgenda: parseJson<string[]>(row.nextAgenda),
+      };
+    }),
+
+  sendMinutesEmail: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      if (!ctx.env.RESEND_API_KEY) return { sent: false, reason: "メール未設定" };
+      const user = await ctx.env.DB.prepare(`SELECT * FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      if (!user?.email) return { sent: false, reason: "メールアドレス未設定" };
+      const minutes = await ctx.env.DB.prepare(`SELECT * FROM matching_minutes WHERE sessionId=? AND userId=?`).bind(input.sessionId, ctx.userId).first<any>();
+      if (!minutes) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const fromEmail = ctx.env.RESEND_FROM_EMAIL || "noreply@bunshin-ai.pages.dev";
+      const decisions = parseJson<string[]>(minutes.decisions) || [];
+      const actionItems = parseJson<any[]>(minutes.actionItems) || [];
+
+      const emailHtml = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"></head><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+<div style="background:linear-gradient(135deg,#6366f1,#818cf8);padding:24px;border-radius:12px 12px 0 0;color:#fff;text-align:center">
+  <h1 style="margin:0;font-size:22px">マッチング議事録</h1>
+</div>
+<div style="background:#f8fafc;padding:24px;border:1px solid #e5e7eb;border-top:0">
+  <p style="color:#374151">${minutes.summary || ""}</p>
+  ${decisions.length ? `<h3 style="color:#6366f1">決定事項</h3><ul>${decisions.map((d: string) => `<li>${d}</li>`).join("")}</ul>` : ""}
+  ${actionItems.length ? `<h3 style="color:#6366f1">アクションアイテム</h3><ul>${actionItems.map((a: any) => `<li><strong>[${a.priority}]</strong> ${a.task}</li>`).join("")}</ul>` : ""}
+</div></body></html>`;
+
+      try {
+        const res = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${ctx.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ from: `分身AI <${fromEmail}>`, to: [user.email], subject: `【分身AI】マッチング議事録`, html: emailHtml }),
+        });
+        return { sent: res.ok };
+      } catch { return { sent: false, reason: "送信失敗" }; }
+    }),
+
+  listMinutes: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT mm.*, ms.theme FROM matching_minutes mm JOIN matching_sessions ms ON ms.id = mm.sessionId WHERE mm.userId=? ORDER BY mm.createdAt DESC LIMIT 30`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({
+      ...r, decisions: parseJson<string[]>(r.decisions), actionItems: parseJson<any[]>(r.actionItems), nextAgenda: parseJson<string[]>(r.nextAgenda),
+    }));
+  }),
 });

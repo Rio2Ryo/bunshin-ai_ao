@@ -23,7 +23,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useRealtimeNotifications } from "@/hooks/useRealtimeNotifications";
 import { useWebPush } from "@/hooks/useWebPush";
 import { toast } from "sonner";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare, FileCheck, History, Mic } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -250,6 +250,9 @@ function DashboardLayoutContent({
         { icon: Database, label: language === "en" ? "Memory Bank" : "メモリーバンク", path: "/memory-bank" },
         { icon: GitCompare, label: language === "en" ? "Scenarios" : "シナリオ比較", path: "/scenario-compare" },
         { icon: LayoutGrid, label: language === "en" ? "Widgets" : "ウィジェット", path: "/widgets" },
+        { icon: FileCheck, label: language === "en" ? "Minutes" : "議事録", path: "/minutes" },
+        { icon: History, label: language === "en" ? "Versions" : "バージョン", path: "/versions" },
+        { icon: Mic, label: language === "en" ? "Voice Replay" : "音声リプレイ", path: "/voice-replay" },
       ],
     },
   ], [t, language]);

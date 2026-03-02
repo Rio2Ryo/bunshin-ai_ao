@@ -88,6 +88,9 @@ const MatchingNetwork = lazy(() => import("./pages/MatchingNetwork"));
 const TwinMemoryBank = lazy(() => import("./pages/TwinMemoryBank"));
 const ScenarioComparison = lazy(() => import("./pages/ScenarioComparison"));
 const CustomWidgets = lazy(() => import("./pages/CustomWidgets"));
+const MatchingMinutes = lazy(() => import("./pages/MatchingMinutes"));
+const TwinVersionManager = lazy(() => import("./pages/TwinVersionManager"));
+const VoiceReplay = lazy(() => import("./pages/VoiceReplay"));
 
 function PageLoader() {
   return (
@@ -180,6 +183,9 @@ function Router() {
         <Route path="/memory-bank" component={TwinMemoryBank} />
         <Route path="/scenario-compare" component={ScenarioComparison} />
         <Route path="/widgets" component={CustomWidgets} />
+        <Route path="/minutes" component={MatchingMinutes} />
+        <Route path="/versions" component={TwinVersionManager} />
+        <Route path="/voice-replay" component={VoiceReplay} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

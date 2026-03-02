@@ -1311,6 +1311,33 @@ CREATE TABLE IF NOT EXISTS custom_widgets (
   createdAt TEXT DEFAULT (datetime('now')),
   updatedAt TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS matching_minutes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  summary TEXT,
+  decisions TEXT,
+  actionItems TEXT,
+  nextAgenda TEXT,
+  markdownContent TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, userId)
+);
+
+CREATE TABLE IF NOT EXISTS twin_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  twinId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  label TEXT,
+  personality TEXT,
+  description TEXT,
+  systemPrompt TEXT,
+  tags TEXT,
+  diff TEXT,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
 `;
 
 let schemaReady = false;

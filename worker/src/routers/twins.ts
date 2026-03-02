@@ -2110,4 +2110,131 @@ ${entrySummaries}
       await ctx.env.DB.prepare(`DELETE FROM twin_memories WHERE id=? AND userId=?`).bind(input.memoryId, ctx.userId).run();
       return { deleted: true };
     }),
+
+  // ============ Feature 23-2: ツインバージョン管理 ============
+
+  createVersion: protectedProcedure
+    .input(z.object({ label: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND" });
+
+      // Get latest version number
+      const latest = await ctx.env.DB.prepare(
+        `SELECT MAX(version) as maxVer FROM twin_versions WHERE twinId=?`
+      ).bind(twin.id).first<any>();
+      const newVersion = (latest?.maxVer ?? 0) + 1;
+
+      // Compute diff from previous version
+      let diff: any = null;
+      if (newVersion > 1) {
+        const prev = await ctx.env.DB.prepare(
+          `SELECT * FROM twin_versions WHERE twinId=? AND version=?`
+        ).bind(twin.id, newVersion - 1).first<any>();
+        if (prev) {
+          diff = {
+            personality: prev.personality !== twin.personality ? { from: (prev.personality || "").slice(0, 100), to: (twin.personality || "").slice(0, 100) } : null,
+            description: prev.description !== twin.description ? { from: (prev.description || "").slice(0, 100), to: (twin.description || "").slice(0, 100) } : null,
+            tags: prev.tags !== twin.tags ? { from: prev.tags, to: twin.tags } : null,
+          };
+        }
+      }
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO twin_versions (twinId, userId, version, label, personality, description, systemPrompt, tags, diff, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+      ).bind(twin.id, ctx.userId, newVersion, input.label || `v${newVersion}`, twin.personality || "", twin.description || "", twin.systemPrompt || "", twin.tags || "", toJson(diff)).run();
+
+      return { id: Number(res.meta.last_row_id), version: newVersion };
+    }),
+
+  listVersions: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) return [];
+    const rows = await ctx.env.DB.prepare(
+      `SELECT * FROM twin_versions WHERE twinId=? ORDER BY version DESC`
+    ).bind(twin.id).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, diff: parseJson<any>(r.diff) }));
+  }),
+
+  rollbackVersion: protectedProcedure
+    .input(z.object({ versionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND" });
+      const version = await ctx.env.DB.prepare(
+        `SELECT * FROM twin_versions WHERE id=? AND twinId=?`
+      ).bind(input.versionId, twin.id).first<any>();
+      if (!version) throw new TRPCError({ code: "NOT_FOUND", message: "バージョンが見つかりません" });
+
+      // Apply the version's state to the twin
+      const sets: string[] = [];
+      const binds: any[] = [];
+      if (version.personality != null) { sets.push("personality=?"); binds.push(version.personality); }
+      if (version.description != null) { sets.push("description=?"); binds.push(version.description); }
+      if (version.systemPrompt != null) { sets.push("systemPrompt=?"); binds.push(version.systemPrompt); }
+      if (version.tags != null) { sets.push("tags=?"); binds.push(version.tags); }
+      if (sets.length > 0) {
+        sets.push("updatedAt=datetime('now')");
+        binds.push(twin.id);
+        await ctx.env.DB.prepare(`UPDATE digital_twins SET ${sets.join(",")} WHERE id=?`).bind(...binds).run();
+      }
+
+      return { rolledBack: true, version: version.version };
+    }),
+
+  compareVersions: protectedProcedure
+    .input(z.object({ versionIdA: z.number(), versionIdB: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND" });
+      const vA = await ctx.env.DB.prepare(`SELECT * FROM twin_versions WHERE id=? AND twinId=?`).bind(input.versionIdA, twin.id).first<any>();
+      const vB = await ctx.env.DB.prepare(`SELECT * FROM twin_versions WHERE id=? AND twinId=?`).bind(input.versionIdB, twin.id).first<any>();
+      if (!vA || !vB) throw new TRPCError({ code: "NOT_FOUND" });
+
+      return {
+        versionA: { id: vA.id, version: vA.version, label: vA.label, personality: vA.personality, description: vA.description, tags: vA.tags, createdAt: vA.createdAt },
+        versionB: { id: vB.id, version: vB.version, label: vB.label, personality: vB.personality, description: vB.description, tags: vB.tags, createdAt: vB.createdAt },
+        diff: {
+          personality: vA.personality !== vB.personality,
+          description: vA.description !== vB.description,
+          systemPrompt: vA.systemPrompt !== vB.systemPrompt,
+          tags: vA.tags !== vB.tags,
+        },
+      };
+    }),
+
+  getVersionPerformance: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) return [];
+    const versions = await ctx.env.DB.prepare(
+      `SELECT * FROM twin_versions WHERE twinId=? ORDER BY version ASC`
+    ).bind(twin.id).all<any>();
+
+    const result: any[] = [];
+    for (const v of (versions.results ?? [])) {
+      // Get matching scores created after this version but before next
+      const nextVersion = (versions.results ?? []).find((nv: any) => nv.version === v.version + 1);
+      const scoreRows = await ctx.env.DB.prepare(
+        `SELECT AVG(mr.compatibilityScore) as avgScore, COUNT(mr.id) as matchCount
+         FROM matching_results mr
+         JOIN matching_sessions ms ON ms.id = mr.sessionId
+         WHERE ms.initiatorUserId = ? AND ms.createdAt >= ? ${nextVersion ? "AND ms.createdAt < ?" : ""}
+         AND mr.compatibilityScore IS NOT NULL`
+      ).bind(...[ctx.userId, v.createdAt, ...(nextVersion ? [nextVersion.createdAt] : [])]).first<any>();
+
+      result.push({
+        version: v.version,
+        label: v.label,
+        createdAt: v.createdAt,
+        avgScore: Math.round(scoreRows?.avgScore ?? 0),
+        matchCount: scoreRows?.matchCount ?? 0,
+      });
+    }
+    return result;
+  }),
 });
