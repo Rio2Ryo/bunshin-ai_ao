@@ -1393,6 +1393,47 @@ CREATE TABLE IF NOT EXISTS matching_reminders (
   isSent INTEGER DEFAULT 0,
   createdAt TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS sandbox_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  theme TEXT NOT NULL,
+  opponentPersonality TEXT,
+  opponentDescription TEXT,
+  turnCount INTEGER DEFAULT 5,
+  dialogues TEXT,
+  result TEXT,
+  settings TEXT,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS matching_peer_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  reviewerId INTEGER NOT NULL,
+  targetUserId INTEGER NOT NULL,
+  persuasion INTEGER DEFAULT 0,
+  sincerity INTEGER DEFAULT 0,
+  expertise INTEGER DEFAULT 0,
+  flexibility INTEGER DEFAULT 0,
+  originality INTEGER DEFAULT 0,
+  comment TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, reviewerId, targetUserId)
+);
+
+CREATE TABLE IF NOT EXISTS twin_benchmarks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  benchmarkData TEXT,
+  percentiles TEXT,
+  weaknesses TEXT,
+  topPatterns TEXT,
+  improvements TEXT,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
 `;
 
 let schemaReady = false;

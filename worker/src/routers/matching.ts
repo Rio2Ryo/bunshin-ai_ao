@@ -5244,4 +5244,285 @@ JSON形式: [{"title":"提案タイトル","description":"具体的な説明","i
       await ctx.env.DB.prepare(`DELETE FROM matching_reminders WHERE id=? AND userId=?`).bind(input.reminderId, ctx.userId).run();
       return { deleted: true };
     }),
+
+  // ============ Sandbox Simulation ============
+
+  sandboxCreate: protectedProcedure
+    .input(z.object({
+      theme: z.string().min(1),
+      opponentPersonality: z.string().optional(),
+      opponentDescription: z.string().optional(),
+      turnCount: z.number().min(1).max(10).default(5),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      const myPrompt = `あなたは${twin.name}です。${twin.personality || ''}。${twin.description || ''}。ビジネスマッチングの対話で自分の立場を主張してください。`;
+      const oppPrompt = `あなたは仮想の対話相手です。${input.opponentPersonality || '積極的なビジネスパーソン'}。${input.opponentDescription || '幅広い業界経験を持つ'}。ビジネスマッチングの対話で自分の立場を主張してください。`;
+
+      const dialogues: { turn: number; speaker: string; content: string }[] = [];
+      const history: { role: "user" | "assistant"; content: string }[] = [];
+
+      for (let i = 0; i < input.turnCount; i++) {
+        // My twin speaks
+        const myMessages = [
+          { role: "system" as const, content: myPrompt },
+          ...history.map(h => ({ ...h, role: h.role as "user" | "assistant" })),
+          { role: "user" as const, content: i === 0 ? `テーマ「${input.theme}」について対話を始めてください。` : `相手の発言に応答してください。` },
+        ];
+        const myResp = await invokeLLM(llmConfig, myMessages, { maxTokens: 300 });
+        dialogues.push({ turn: i * 2 + 1, speaker: twin.name, content: myResp.content });
+        history.push({ role: "assistant", content: myResp.content });
+
+        // Opponent speaks
+        const oppMessages = [
+          { role: "system" as const, content: oppPrompt },
+          ...history.map(h => ({ ...h, role: (h.role === "assistant" ? "user" : "assistant") as "user" | "assistant" })),
+          { role: "user" as const, content: "相手の発言に応答してください。" },
+        ];
+        const oppResp = await invokeLLM(llmConfig, oppMessages, { maxTokens: 300 });
+        dialogues.push({ turn: i * 2 + 2, speaker: "仮想相手", content: oppResp.content });
+        history.push({ role: "user", content: oppResp.content });
+      }
+
+      // Analysis
+      const analysisPrompt = `以下のビジネス対話を分析してJSON形式で返してください。
+対話:
+${dialogues.map(d => `[${d.speaker}] ${d.content}`).join('\n')}
+
+JSON形式:
+{"score":0-100,"strengths":["強み1","強み2"],"weaknesses":["弱み1"],"recommendedSettings":{"personality":"推奨人格設定","tips":["ヒント1"]},"summary":"総評"}`;
+
+      const analysisResp = await invokeLLM(llmConfig, [{ role: "user", content: analysisPrompt }]);
+      let result: any = {};
+      try { result = JSON.parse(analysisResp.content); } catch { result = { score: 50, summary: "分析結果を取得できませんでした", strengths: [], weaknesses: [], recommendedSettings: {} }; }
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO sandbox_sessions (userId, twinId, theme, opponentPersonality, opponentDescription, turnCount, dialogues, result, settings) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(ctx.userId, twin.id, input.theme, input.opponentPersonality || null, input.opponentDescription || null, input.turnCount, toJson(dialogues), toJson(result), toJson({ twinPersonality: twin.personality })).run();
+
+      return { id: Number(res.meta.last_row_id), dialogues, result };
+    }),
+
+  sandboxList: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT id, theme, opponentPersonality, turnCount, createdAt, result FROM sandbox_sessions WHERE userId=? ORDER BY createdAt DESC LIMIT 30`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, result: parseJson<any>(r.result) }));
+  }),
+
+  sandboxGet: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM sandbox_sessions WHERE id=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!row) throw new TRPCError({ code: "NOT_FOUND" });
+      return { ...row, dialogues: parseJson<any[]>(row.dialogues), result: parseJson<any>(row.result), settings: parseJson<any>(row.settings) };
+    }),
+
+  sandboxApplySettings: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(
+        `SELECT result FROM sandbox_sessions WHERE id=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+      const result = parseJson<any>(session.result) || {};
+      const recommended = result.recommendedSettings || {};
+      if (recommended.personality) {
+        await ctx.env.DB.prepare(
+          `UPDATE digital_twins SET personality=?, updatedAt=datetime('now') WHERE userId=?`
+        ).bind(recommended.personality, ctx.userId).run();
+      }
+      return { applied: true, personality: recommended.personality };
+    }),
+
+  // ============ Peer Review (360-degree feedback) ============
+
+  submitPeerReview: protectedProcedure
+    .input(z.object({
+      sessionId: z.number(),
+      targetUserId: z.number(),
+      persuasion: z.number().min(1).max(5),
+      sincerity: z.number().min(1).max(5),
+      expertise: z.number().min(1).max(5),
+      flexibility: z.number().min(1).max(5),
+      originality: z.number().min(1).max(5),
+      comment: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      if (ctx.userId === input.targetUserId) throw new TRPCError({ code: "BAD_REQUEST", message: "自分自身を評価できません" });
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO matching_peer_reviews (sessionId, reviewerId, targetUserId, persuasion, sincerity, expertise, flexibility, originality, comment) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(input.sessionId, ctx.userId, input.targetUserId, input.persuasion, input.sincerity, input.expertise, input.flexibility, input.originality, input.comment || null).run();
+      return { submitted: true };
+    }),
+
+  getPeerReviews: protectedProcedure
+    .input(z.object({ sessionId: z.number().optional() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      let query = `SELECT mpr.*, u.name as reviewerName FROM matching_peer_reviews mpr LEFT JOIN users u ON u.id = mpr.reviewerId WHERE mpr.targetUserId = ?`;
+      const binds: any[] = [ctx.userId];
+      if (input.sessionId) { query += ` AND mpr.sessionId = ?`; binds.push(input.sessionId); }
+      query += ` ORDER BY mpr.createdAt DESC`;
+      const rows = await ctx.env.DB.prepare(query).bind(...binds).all<any>();
+      return rows.results ?? [];
+    }),
+
+  getSelfVsPeerGap: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    // Peer averages (received reviews)
+    const peerAvg = await ctx.env.DB.prepare(
+      `SELECT AVG(persuasion) as avgPersuasion, AVG(sincerity) as avgSincerity, AVG(expertise) as avgExpertise, AVG(flexibility) as avgFlexibility, AVG(originality) as avgOriginality, COUNT(*) as reviewCount FROM matching_peer_reviews WHERE targetUserId=?`
+    ).bind(ctx.userId).first<any>();
+
+    // Self reviews (reviews I gave to myself — actually we'll use matching scores as self-assessment proxy)
+    const selfAvg = await ctx.env.DB.prepare(
+      `SELECT AVG(persuasion) as avgPersuasion, AVG(sincerity) as avgSincerity, AVG(expertise) as avgExpertise, AVG(flexibility) as avgFlexibility, AVG(originality) as avgOriginality, COUNT(*) as reviewCount FROM matching_peer_reviews WHERE reviewerId=? AND targetUserId != ?`
+    ).bind(ctx.userId, ctx.userId).first<any>();
+
+    return {
+      peer: {
+        persuasion: Math.round((peerAvg?.avgPersuasion || 0) * 10) / 10,
+        sincerity: Math.round((peerAvg?.avgSincerity || 0) * 10) / 10,
+        expertise: Math.round((peerAvg?.avgExpertise || 0) * 10) / 10,
+        flexibility: Math.round((peerAvg?.avgFlexibility || 0) * 10) / 10,
+        originality: Math.round((peerAvg?.avgOriginality || 0) * 10) / 10,
+        reviewCount: peerAvg?.reviewCount || 0,
+      },
+      selfGiven: {
+        persuasion: Math.round((selfAvg?.avgPersuasion || 0) * 10) / 10,
+        sincerity: Math.round((selfAvg?.avgSincerity || 0) * 10) / 10,
+        expertise: Math.round((selfAvg?.avgExpertise || 0) * 10) / 10,
+        flexibility: Math.round((selfAvg?.avgFlexibility || 0) * 10) / 10,
+        originality: Math.round((selfAvg?.avgOriginality || 0) * 10) / 10,
+        reviewCount: selfAvg?.reviewCount || 0,
+      },
+    };
+  }),
+
+  getPeerReviewAISuggestions: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+    const reviews = await ctx.env.DB.prepare(
+      `SELECT persuasion, sincerity, expertise, flexibility, originality, comment FROM matching_peer_reviews WHERE targetUserId=? ORDER BY createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+
+    const prompt = `以下は私のツインに対する相手からの360度評価データです。改善優先度を分析し、JSON配列で返してください。
+
+評価データ:
+${JSON.stringify(reviews.results ?? [])}
+
+5軸: 説得力(persuasion), 誠実さ(sincerity), 専門性(expertise), 柔軟性(flexibility), 独自性(originality) (各1-5)
+
+JSON形式: [{"dimension":"軸名","currentAvg":数値,"priority":"high|medium|low","suggestion":"具体的改善提案"}]`;
+
+    const result = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+    let suggestions: any[] = [];
+    try { const p = JSON.parse(result.content); suggestions = Array.isArray(p) ? p : p.suggestions || []; } catch { suggestions = [{ dimension: "総合", currentAvg: 0, priority: "medium", suggestion: "評価データを増やしてください" }]; }
+    return { suggestions };
+  }),
+
+  // ============ Twin Performance Benchmark ============
+
+  generateBenchmark: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+    // Gather my twin's stats
+    const myScores = await ctx.env.DB.prepare(
+      `SELECT mr.compatibilityScore, mr.scoreBreakdown FROM matching_results mr JOIN matching_sessions ms ON ms.id = mr.sessionId WHERE ms.initiatorUserId = ? AND mr.compatibilityScore IS NOT NULL ORDER BY mr.id DESC LIMIT 30`
+    ).bind(ctx.userId).all<any>();
+
+    // Gather anonymous global stats
+    const globalStats = await ctx.env.DB.prepare(
+      `SELECT AVG(mr.compatibilityScore) as globalAvg, COUNT(mr.id) as globalCount, MIN(mr.compatibilityScore) as globalMin, MAX(mr.compatibilityScore) as globalMax FROM matching_results mr WHERE mr.compatibilityScore IS NOT NULL`
+    ).first<any>();
+
+    // Skill levels
+    const skills = await ctx.env.DB.prepare(
+      `SELECT * FROM twin_skill_levels WHERE twinId=?`
+    ).bind(twin.id).all<any>();
+
+    // Profile info
+    const profile = await ctx.env.DB.prepare(
+      `SELECT industry, position FROM user_profiles WHERE userId=?`
+    ).bind(ctx.userId).first<any>();
+
+    const myAvg = (myScores.results ?? []).length > 0
+      ? Math.round((myScores.results ?? []).reduce((s: number, r: any) => s + (r.compatibilityScore || 0), 0) / (myScores.results ?? []).length)
+      : 0;
+
+    const prompt = `以下のデータを分析し、ツインのパフォーマンスベンチマークをJSON形式で返してください。
+
+自分のツイン:
+- 名前: ${twin.name}
+- 人格: ${twin.personality || '未設定'}
+- 業界: ${profile?.industry || '不明'}
+- 平均スコア: ${myAvg}
+- マッチング数: ${(myScores.results ?? []).length}
+- スキル: ${JSON.stringify(skills.results ?? [])}
+
+グローバル統計:
+- 全体平均: ${Math.round(globalStats?.globalAvg || 0)}
+- 全体件数: ${globalStats?.globalCount || 0}
+- 最低: ${globalStats?.globalMin || 0}
+- 最高: ${globalStats?.globalMax || 0}
+
+JSON形式:
+{"percentile":0-100,"industryPercentile":0-100,"skillPercentiles":{"skillName":数値},"weaknesses":[{"area":"弱点","score":数値,"suggestion":"改善案"}],"topPatterns":["トップ10%の特徴1","特徴2"],"improvements":[{"action":"具体的アクション","impact":"high|medium|low","description":"詳細"}],"summary":"総合評価"}`;
+
+    const result = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+    let benchmark: any = {};
+    try { benchmark = JSON.parse(result.content); } catch { benchmark = { percentile: 50, summary: "ベンチマーク分析中", weaknesses: [], topPatterns: [], improvements: [] }; }
+
+    const percentiles = toJson({ overall: benchmark.percentile, industry: benchmark.industryPercentile, skills: benchmark.skillPercentiles });
+
+    await ctx.env.DB.prepare(
+      `INSERT INTO twin_benchmarks (userId, twinId, benchmarkData, percentiles, weaknesses, topPatterns, improvements) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).bind(ctx.userId, twin.id, toJson(benchmark), percentiles, toJson(benchmark.weaknesses), toJson(benchmark.topPatterns), toJson(benchmark.improvements)).run();
+
+    return benchmark;
+  }),
+
+  getBenchmark: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const row = await ctx.env.DB.prepare(
+      `SELECT * FROM twin_benchmarks WHERE userId=? ORDER BY createdAt DESC LIMIT 1`
+    ).bind(ctx.userId).first<any>();
+    if (!row) return null;
+    return {
+      ...row,
+      benchmarkData: parseJson<any>(row.benchmarkData),
+      percentiles: parseJson<any>(row.percentiles),
+      weaknesses: parseJson<any[]>(row.weaknesses),
+      topPatterns: parseJson<string[]>(row.topPatterns),
+      improvements: parseJson<any[]>(row.improvements),
+    };
+  }),
+
+  getBenchmarkHistory: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT id, percentiles, createdAt FROM twin_benchmarks WHERE userId=? ORDER BY createdAt DESC LIMIT 10`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, percentiles: parseJson<any>(r.percentiles) }));
+  }),
 });

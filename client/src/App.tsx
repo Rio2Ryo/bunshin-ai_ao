@@ -94,6 +94,9 @@ const VoiceReplay = lazy(() => import("./pages/VoiceReplay"));
 const ROIDashboard = lazy(() => import("./pages/ROIDashboard"));
 const TwinCoaching = lazy(() => import("./pages/TwinCoaching"));
 const MatchingCalendar = lazy(() => import("./pages/MatchingCalendar"));
+const SandboxSimulation = lazy(() => import("./pages/SandboxSimulation"));
+const PeerReview = lazy(() => import("./pages/PeerReview"));
+const TwinBenchmark = lazy(() => import("./pages/TwinBenchmark"));
 
 function PageLoader() {
   return (
@@ -192,6 +195,9 @@ function Router() {
         <Route path="/roi" component={ROIDashboard} />
         <Route path="/coaching" component={TwinCoaching} />
         <Route path="/calendar" component={MatchingCalendar} />
+        <Route path="/sandbox" component={SandboxSimulation} />
+        <Route path="/peer-review" component={PeerReview} />
+        <Route path="/benchmark" component={TwinBenchmark} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>
