@@ -4102,4 +4102,338 @@ ${JSON.stringify(strategy, null, 2)}
       outcomeRate: totalM > 0 ? withOutcomes / totalM : 0,
     };
   }),
+
+  // ============ Phase 20: AIマッチング品質スコアカード ============
+
+  evaluateQuality: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_sessions WHERE id=? AND (userId=? OR targetUserId=?)`
+      ).bind(input.sessionId, ctx.userId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
+
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber ASC`
+      ).bind(input.sessionId).all<any>();
+      const turns = dialogues.results ?? [];
+      if (turns.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "対話データがありません" });
+
+      const results = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_results WHERE sessionId=?`
+      ).bind(input.sessionId).first<any>();
+
+      const twin1 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+      const twin2 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+
+      const dialogueText = turns.map((d: any) =>
+        `ターン${d.turnNumber} [${d.speakerTwinId === session.twin1Id ? (twin1?.name ?? "Twin1") : (twin2?.name ?? "Twin2")}]: ${d.content}`
+      ).join("\n");
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "AI APIキーが未設定です" });
+
+      const systemPrompt = `あなたはビジネスマッチング対話の品質評価の専門家です。以下の対話を5つの軸で0-100のスコアで評価してください。必ず以下のJSON形式で返してください。
+
+{
+  "scores": {
+    "logic": <0-100 論理性>,
+    "creativity": <0-100 創造性>,
+    "cooperation": <0-100 協調性>,
+    "specificity": <0-100 具体性>,
+    "feasibility": <0-100 実行可能性>
+  },
+  "overallQuality": <0-100 総合品質>,
+  "strengths": ["強み1", "強み2", ...],
+  "weaknesses": ["弱み1", "弱み2", ...],
+  "improvements": ["改善提案1", "改善提案2", ...]
+}`;
+
+      const userPrompt = `## マッチングセッション
+テーマ: ${session.theme || "ビジネスマッチング"}
+参加者: ${twin1?.name ?? "Twin1"} × ${twin2?.name ?? "Twin2"}
+
+## 対話内容
+${dialogueText}
+
+${results ? `## マッチング結果\nスコア: ${results.score || "N/A"}\n分析: ${results.analysis || "N/A"}` : ""}
+
+上記の対話を5軸で評価し、JSON形式で回答してください。`;
+
+      const llmResult = await invokeLLM(llmConfig, [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ], { maxTokens: 2048 });
+
+      let evaluation: any;
+      try {
+        const cleaned = llmResult.content.replace(/```json?\s*/g, "").replace(/```/g, "").trim();
+        evaluation = JSON.parse(cleaned);
+      } catch {
+        evaluation = {
+          scores: { logic: 60, creativity: 60, cooperation: 60, specificity: 60, feasibility: 60 },
+          overallQuality: 60,
+          strengths: ["対話が成立している"],
+          weaknesses: ["評価の解析に失敗しました"],
+          improvements: ["再評価をお試しください"],
+        };
+      }
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO matching_quality_scores (sessionId, userId, scores, overallQuality, strengths, weaknesses, improvements, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        input.sessionId,
+        ctx.userId,
+        toJson(evaluation.scores),
+        evaluation.overallQuality ?? 60,
+        toJson(evaluation.strengths ?? []),
+        toJson(evaluation.weaknesses ?? []),
+        toJson(evaluation.improvements ?? []),
+        now()
+      ).run();
+
+      return evaluation;
+    }),
+
+  getQualityScore: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_quality_scores WHERE sessionId=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!row) return null;
+      return {
+        id: row.id,
+        sessionId: row.sessionId,
+        scores: parseJson<any>(row.scores),
+        overallQuality: row.overallQuality,
+        strengths: parseJson<string[]>(row.strengths) ?? [],
+        weaknesses: parseJson<string[]>(row.weaknesses) ?? [],
+        improvements: parseJson<string[]>(row.improvements) ?? [],
+        createdAt: row.createdAt,
+      };
+    }),
+
+  getQualityTrend: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT q.sessionId, q.overallQuality, q.scores, q.createdAt, s.theme
+       FROM matching_quality_scores q
+       JOIN matching_sessions s ON s.id = q.sessionId
+       WHERE q.userId=?
+       ORDER BY q.createdAt ASC`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({
+      sessionId: r.sessionId,
+      theme: r.theme,
+      date: r.createdAt,
+      overallQuality: r.overallQuality,
+      scores: parseJson<any>(r.scores),
+    }));
+  }),
+
+  // ============ Phase 20: マッチングダイジェスト ============
+
+  generateDigest: protectedProcedure
+    .input(z.object({ period: z.enum(["weekly", "monthly"]).default("weekly") }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const days = input.period === "monthly" ? 30 : 7;
+      const sinceDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().replace("T", " ").slice(0, 19);
+
+      // Collect matching sessions in period
+      const sessions = await ctx.env.DB.prepare(
+        `SELECT s.*, r.score, r.analysis FROM matching_sessions s
+         LEFT JOIN matching_results r ON r.sessionId = s.id
+         WHERE (s.userId=? OR s.targetUserId=?) AND s.createdAt >= ?
+         ORDER BY s.createdAt DESC`
+      ).bind(ctx.userId, ctx.userId, sinceDate).all<any>();
+      const sessionList = sessions.results ?? [];
+      const matchCount = sessionList.length;
+      const scores = sessionList.filter((s: any) => s.score != null).map((s: any) => Number(s.score));
+      const avgScore = scores.length > 0 ? Math.round(scores.reduce((a: number, b: number) => a + b, 0) / scores.length) : 0;
+
+      // Quality scores
+      const qualityRows = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_quality_scores WHERE userId=? AND createdAt >= ?`
+      ).bind(ctx.userId, sinceDate).all<any>();
+      const qualityScores = qualityRows.results ?? [];
+
+      // Action items
+      const actionRows = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_action_items WHERE userId=? AND createdAt >= ?`
+      ).bind(ctx.userId, sinceDate).all<any>();
+      const actions = actionRows.results ?? [];
+      const actionsCompleted = actions.filter((a: any) => a.status === "completed").length;
+      const actionsPending = actions.filter((a: any) => a.status !== "completed").length;
+
+      // Outcomes
+      const outcomeRows = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_outcomes WHERE userId=? AND createdAt >= ?`
+      ).bind(ctx.userId, sinceDate).all<any>();
+      const outcomes = outcomeRows.results ?? [];
+      const outcomeValue = outcomes.reduce((sum: number, o: any) => sum + (o.monetaryValue || 0), 0);
+
+      // Build summary data for LLM
+      const summaryData = {
+        period: input.period === "monthly" ? "月間" : "週間",
+        matchCount,
+        avgScore,
+        actionsCompleted,
+        actionsPending,
+        outcomeValue,
+        topSessions: sessionList.slice(0, 5).map((s: any) => ({
+          theme: s.theme,
+          score: s.score,
+          status: s.status,
+        })),
+        qualityAvg: qualityScores.length > 0
+          ? Math.round(qualityScores.reduce((sum: number, q: any) => sum + (q.overallQuality || 0), 0) / qualityScores.length)
+          : null,
+      };
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "AI APIキーが未設定です" });
+
+      const systemPrompt = `あなたはビジネスマッチング活動の分析レポーターです。ユーザーの活動データを分析し、ダイジェストを生成してください。必ず以下のJSON形式で返してください。
+
+{
+  "summary": "活動の総括（2-3文）",
+  "highlights": ["ハイライト1", "ハイライト2", ...],
+  "topPerformance": { "sessionId": <number or 0>, "theme": "テーマ名", "score": <number> },
+  "areaOfGrowth": "成長のための重点分野",
+  "recommendation": "次のアクションの提案",
+  "stats": { "matchCount": <number>, "avgScore": <number>, "outcomeValue": <number>, "actionsCompleted": <number> }
+}`;
+
+      const userPrompt = `## ${summaryData.period}ダイジェスト生成
+
+### 活動データ
+- マッチング数: ${matchCount}件
+- 平均スコア: ${avgScore}点
+- 完了アクション: ${actionsCompleted}件 / 保留: ${actionsPending}件
+- 成果価値: ¥${outcomeValue.toLocaleString()}
+${summaryData.qualityAvg != null ? `- 品質平均スコア: ${summaryData.qualityAvg}点` : ""}
+
+### 直近セッション
+${summaryData.topSessions.map((s: any) => `- ${s.theme || "未設定"} (スコア: ${s.score ?? "未評価"}, ステータス: ${s.status || "N/A"})`).join("\n")}
+
+上記データを分析し、JSON形式でダイジェストを返してください。`;
+
+      const llmResult = await invokeLLM(llmConfig, [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ], { maxTokens: 2048 });
+
+      let digest: any;
+      try {
+        const cleaned = llmResult.content.replace(/```json?\s*/g, "").replace(/```/g, "").trim();
+        digest = JSON.parse(cleaned);
+      } catch {
+        digest = {
+          summary: `${input.period === "monthly" ? "月間" : "週間"}で${matchCount}件のマッチングを実施しました。平均スコアは${avgScore}点です。`,
+          highlights: matchCount > 0 ? ["マッチング活動を継続しています"] : ["まだマッチング活動がありません"],
+          topPerformance: { sessionId: 0, theme: "N/A", score: avgScore },
+          areaOfGrowth: "継続的なマッチング参加",
+          recommendation: "新しいマッチング相手との対話を試みてください",
+          stats: { matchCount, avgScore, outcomeValue, actionsCompleted },
+        };
+      }
+
+      // Ensure stats are populated
+      digest.stats = digest.stats || { matchCount, avgScore, outcomeValue, actionsCompleted };
+
+      const result = await ctx.env.DB.prepare(
+        `INSERT INTO matching_digests (userId, period, digestData, generatedAt) VALUES (?, ?, ?, ?)`
+      ).bind(ctx.userId, input.period, toJson(digest), now()).run();
+
+      return { id: result.meta?.last_row_id ?? 0, ...digest, period: input.period, generatedAt: now() };
+    }),
+
+  getDigest: protectedProcedure
+    .input(z.object({ period: z.enum(["weekly", "monthly"]).optional() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      let row: any;
+      if (input.period) {
+        row = await ctx.env.DB.prepare(
+          `SELECT * FROM matching_digests WHERE userId=? AND period=? ORDER BY generatedAt DESC LIMIT 1`
+        ).bind(ctx.userId, input.period).first<any>();
+      } else {
+        row = await ctx.env.DB.prepare(
+          `SELECT * FROM matching_digests WHERE userId=? ORDER BY generatedAt DESC LIMIT 1`
+        ).bind(ctx.userId).first<any>();
+      }
+      if (!row) return null;
+      const data = parseJson<any>(row.digestData) ?? {};
+      return { id: row.id, period: row.period, ...data, generatedAt: row.generatedAt };
+    }),
+
+  sendDigestEmail: protectedProcedure
+    .input(z.object({ digestId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      if (!ctx.env.RESEND_API_KEY) return { sent: false, reason: "メール送信未設定" };
+
+      const user = await ctx.env.DB.prepare(`SELECT email, name FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      if (!user?.email) return { sent: false, reason: "メールアドレス未設定" };
+
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_digests WHERE id=? AND userId=?`
+      ).bind(input.digestId, ctx.userId).first<any>();
+      if (!row) return { sent: false, reason: "ダイジェストが見つかりません" };
+
+      const digest = parseJson<any>(row.digestData) ?? {};
+      const fromEmail = ctx.env.RESEND_FROM_EMAIL || "noreply@bunshin-ai.pages.dev";
+      const frontendUrl = ctx.env.FRONTEND_URL || "https://bunshin-ai.pages.dev";
+      const periodLabel = row.period === "monthly" ? "月間" : "週間";
+
+      const emailHtml = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"></head><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+<div style="background:linear-gradient(135deg,#6366f1,#818cf8);padding:24px;border-radius:12px 12px 0 0;color:#fff;text-align:center">
+  <h1 style="margin:0;font-size:24px">${periodLabel}マッチングダイジェスト</h1>
+  <p style="margin:8px 0 0;opacity:0.9">${user.name || "ユーザー"}さんの活動レポート</p>
+</div>
+<div style="background:#f8fafc;padding:24px;border:1px solid #e5e7eb;border-top:0">
+  ${digest.summary ? `<p style="color:#374151;font-size:16px;margin-bottom:16px">${digest.summary}</p>` : ""}
+  ${digest.stats ? `<div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:12px;flex:1;min-width:120px;text-align:center">
+      <div style="font-size:24px;font-weight:bold;color:#6366f1">${digest.stats.matchCount ?? 0}</div>
+      <div style="font-size:12px;color:#6b7280">マッチング数</div>
+    </div>
+    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:12px;flex:1;min-width:120px;text-align:center">
+      <div style="font-size:24px;font-weight:bold;color:#6366f1">${digest.stats.avgScore ?? 0}</div>
+      <div style="font-size:12px;color:#6b7280">平均スコア</div>
+    </div>
+    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:12px;flex:1;min-width:120px;text-align:center">
+      <div style="font-size:24px;font-weight:bold;color:#6366f1">${digest.stats.actionsCompleted ?? 0}</div>
+      <div style="font-size:12px;color:#6b7280">完了アクション</div>
+    </div>
+  </div>` : ""}
+  ${digest.highlights?.length ? `<h3 style="color:#6366f1;margin-top:20px">ハイライト</h3><ul>${digest.highlights.map((h: string) => `<li style="color:#4b5563;margin:4px 0">${h}</li>`).join("")}</ul>` : ""}
+  ${digest.areaOfGrowth ? `<h3 style="color:#6366f1;margin-top:20px">成長ポイント</h3><p style="color:#374151">${digest.areaOfGrowth}</p>` : ""}
+  ${digest.recommendation ? `<div style="background:#eff6ff;border-left:4px solid #6366f1;padding:12px;margin-top:16px;border-radius:0 8px 8px 0"><p style="color:#374151;margin:0"><strong>おすすめ:</strong> ${digest.recommendation}</p></div>` : ""}
+  <div style="text-align:center;margin:24px 0">
+    <a href="${frontendUrl}/matching" style="background:#6366f1;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">ダッシュボードを見る</a>
+  </div>
+</div>
+<div style="padding:16px;text-align:center;color:#9ca3af;font-size:12px">分身AI ${periodLabel}ダイジェスト | <a href="${frontendUrl}" style="color:#6366f1">bunshin-ai.pages.dev</a></div>
+</body></html>`;
+
+      try {
+        const res = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${ctx.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: `分身AI <${fromEmail}>`,
+            to: [user.email],
+            subject: `【分身AI】${periodLabel}マッチングダイジェスト`,
+            html: emailHtml,
+          }),
+        });
+        return { sent: res.ok };
+      } catch { return { sent: false, reason: "メール送信に失敗しました" }; }
+    }),
 });

@@ -1207,6 +1207,35 @@ CREATE TABLE IF NOT EXISTS matching_outcomes (
   monetaryValue REAL DEFAULT 0,
   createdAt TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS matching_quality_scores (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  scores TEXT,
+  overallQuality INTEGER DEFAULT 0,
+  strengths TEXT,
+  weaknesses TEXT,
+  improvements TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, userId)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_graphs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  twinId INTEGER NOT NULL,
+  graphData TEXT,
+  generatedAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(twinId)
+);
+
+CREATE TABLE IF NOT EXISTS matching_digests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  period TEXT NOT NULL DEFAULT 'weekly',
+  digestData TEXT,
+  generatedAt TEXT DEFAULT (datetime('now'))
+);
 `;
 
 let schemaReady = false;

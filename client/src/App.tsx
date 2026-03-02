@@ -79,6 +79,9 @@ const Challenges = lazy(() => import("./pages/Challenges"));
 const StrategyPlanner = lazy(() => import("./pages/StrategyPlanner"));
 const TwinCollaboration = lazy(() => import("./pages/TwinCollaboration"));
 const OutcomeTracker = lazy(() => import("./pages/OutcomeTracker"));
+const QualityScorecard = lazy(() => import("./pages/QualityScorecard"));
+const KnowledgeGraph = lazy(() => import("./pages/KnowledgeGraph"));
+const MatchingDigest = lazy(() => import("./pages/MatchingDigest"));
 
 function PageLoader() {
   return (
@@ -162,6 +165,9 @@ function Router() {
         <Route path="/strategy" component={StrategyPlanner} />
         <Route path="/collaboration" component={TwinCollaboration} />
         <Route path="/outcomes" component={OutcomeTracker} />
+        <Route path="/quality" component={QualityScorecard} />
+        <Route path="/knowledge-graph" component={KnowledgeGraph} />
+        <Route path="/digest" component={MatchingDigest} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

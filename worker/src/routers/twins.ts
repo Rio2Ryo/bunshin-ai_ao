@@ -1828,4 +1828,146 @@ ${conversationHistory.length > 0 ? "これまでの会話を踏まえて、新�
       createdAt: r.createdAt,
     }));
   }),
+
+  // ============ Phase 20: ツインナレッジグラフ ============
+
+  generateKnowledgeGraph: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+    const entries = await ctx.env.DB.prepare(
+      `SELECT * FROM knowledge_base WHERE twinId=? ORDER BY createdAt DESC`
+    ).bind(twin.id).all<any>();
+    const entryList = entries.results ?? [];
+    if (entryList.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "ナレッジベースにエントリがありません" });
+
+    const entrySummaries = entryList.map((e: any, i: number) =>
+      `[${i + 1}] タイトル: ${e.title || "無題"}\nカテゴリ: ${e.category || "未分類"}\n内容: ${(e.content || e.summary || "").slice(0, 300)}`
+    ).join("\n\n");
+
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "chat", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "AI APIキーが未設定です" });
+
+    const systemPrompt = `あなたはナレッジグラフ生成の専門家です。与えられた知識エントリを分析し、エントリ間の関係性をグラフ構造として表現してください。必ず以下のJSON形式で返してください。
+
+{
+  "nodes": [
+    { "id": <エントリ番号>, "label": "ノードラベル", "category": "カテゴリ名", "size": <1-10 重要度> }
+  ],
+  "edges": [
+    { "source": <ソースノードid>, "target": <ターゲットノードid>, "label": "関係ラベル", "strength": <1-10 関係の強さ> }
+  ],
+  "clusters": [
+    { "name": "クラスター名", "nodeIds": [<関連ノードidの配列>] }
+  ]
+}
+
+ノードのidはエントリの番号（1から始まる整数）を使用してください。`;
+
+    const userPrompt = `以下のナレッジベースエントリを分析し、関係性をグラフ構造で表現してください。
+
+${entrySummaries}
+
+エントリ間の関連性・類似性・依存関係・補完関係を見つけ、JSON形式で返してください。`;
+
+    const llmResult = await invokeLLM(llmConfig, [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ], { maxTokens: 4096 });
+
+    let graph: any;
+    try {
+      const cleaned = llmResult.content.replace(/```json?\s*/g, "").replace(/```/g, "").trim();
+      graph = JSON.parse(cleaned);
+    } catch {
+      // Fallback: create simple nodes from entries with no edges
+      graph = {
+        nodes: entryList.map((e: any, i: number) => ({
+          id: i + 1,
+          label: e.title || `エントリ${i + 1}`,
+          category: e.category || "未分類",
+          size: 5,
+        })),
+        edges: [],
+        clusters: [{ name: "全エントリ", nodeIds: entryList.map((_: any, i: number) => i + 1) }],
+      };
+    }
+
+    const graphJson = toJson(graph);
+    const generatedAt = new Date().toISOString().replace("T", " ").slice(0, 19);
+
+    await ctx.env.DB.prepare(
+      `INSERT OR REPLACE INTO knowledge_graphs (twinId, graphData, generatedAt) VALUES (?, ?, ?)`
+    ).bind(twin.id, graphJson, generatedAt).run();
+
+    return graph;
+  }),
+
+  getKnowledgeGraph: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) return null;
+
+    const row = await ctx.env.DB.prepare(
+      `SELECT * FROM knowledge_graphs WHERE twinId=?`
+    ).bind(twin.id).first<any>();
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      twinId: row.twinId,
+      ...parseJson<any>(row.graphData),
+      generatedAt: row.generatedAt,
+    };
+  }),
+
+  getRelatedKnowledge: protectedProcedure
+    .input(z.object({ entryId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) return [];
+
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM knowledge_graphs WHERE twinId=?`
+      ).bind(twin.id).first<any>();
+      if (!row) return [];
+
+      const graph = parseJson<any>(row.graphData);
+      if (!graph || !graph.edges || !graph.nodes) return [];
+
+      // Find all edges connected to the given entry
+      const connectedEdges = (graph.edges as any[]).filter(
+        (e: any) => e.source === input.entryId || e.target === input.entryId
+      );
+
+      // Get connected node IDs
+      const relatedNodeIds = connectedEdges.map((e: any) =>
+        e.source === input.entryId ? e.target : e.source
+      );
+
+      // Get knowledge entries for the related nodes
+      const entries = await ctx.env.DB.prepare(
+        `SELECT * FROM knowledge_base WHERE twinId=? ORDER BY createdAt DESC`
+      ).bind(twin.id).all<any>();
+      const entryList = entries.results ?? [];
+
+      // Map node IDs back to entries (1-indexed)
+      return relatedNodeIds.map((nodeId: number) => {
+        const entry = entryList[nodeId - 1];
+        const edge = connectedEdges.find(
+          (e: any) => (e.source === input.entryId ? e.target : e.source) === nodeId
+        );
+        const node = (graph.nodes as any[]).find((n: any) => n.id === nodeId);
+        return {
+          entryId: entry?.id ?? nodeId,
+          title: entry?.title ?? node?.label ?? `エントリ${nodeId}`,
+          category: entry?.category ?? node?.category ?? "未分類",
+          relationship: edge?.label ?? "関連",
+          strength: edge?.strength ?? 5,
+          summary: (entry?.content || entry?.summary || "").slice(0, 200),
+        };
+      }).filter((r: any) => r.entryId != null);
+    }),
 });

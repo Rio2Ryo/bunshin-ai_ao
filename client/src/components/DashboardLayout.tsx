@@ -23,7 +23,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useRealtimeNotifications } from "@/hooks/useRealtimeNotifications";
 import { useWebPush } from "@/hooks/useWebPush";
 import { toast } from "sonner";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -221,6 +221,8 @@ function DashboardLayoutContent({
         { icon: Heart, label: language === "en" ? "Emotions" : "感情分析", path: "/emotions" },
         { icon: Map, label: language === "en" ? "Strategy" : "戦略プランナー", path: "/strategy" },
         { icon: ClipboardList, label: language === "en" ? "Outcomes" : "成果トラッカー", path: "/outcomes" },
+        { icon: Award, label: language === "en" ? "Quality" : "品質評価", path: "/quality" },
+        { icon: FileText, label: language === "en" ? "Digest" : "ダイジェスト", path: "/digest" },
       ],
     },
     {
@@ -241,6 +243,7 @@ function DashboardLayoutContent({
         { icon: GitBranch, label: language === "en" ? "Evolution" : "進化マップ", path: "/evolution" },
         { icon: Trophy, label: language === "en" ? "Challenges" : "チャレンジ", path: "/challenges" },
         { icon: Users, label: language === "en" ? "Collab" : "ツイン共同", path: "/collaboration" },
+        { icon: Network, label: language === "en" ? "Knowledge Graph" : "ナレッジグラフ", path: "/knowledge-graph" },
       ],
     },
   ], [t, language]);
