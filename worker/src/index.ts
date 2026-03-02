@@ -20,6 +20,7 @@ import { requestLogger } from "./middleware";
 // Re-export Durable Object classes (required by Cloudflare Workers runtime)
 export { ChatRoom } from "./chat-room";
 export { MatchingRoom } from "./matching-room";
+export { WorkspaceRoom } from "./workspace-room";
 
 // ============ Router Imports ============
 
@@ -44,6 +45,9 @@ import { schedulerRouter } from "./routers/scheduler";
 import { adminRouter, reportRouter, marketplaceRouter, notificationRouter } from "./routers/admin";
 import { blocksRouter } from "./routers/blocks";
 import { personalityProfilerRouter } from "./routers/personality-profiler";
+import { mentorRouter } from "./routers/mentor";
+import { workspaceRouter } from "./routers/workspace";
+import { apiPublicRouter } from "./routers/api-public";
 
 // ============ Composed tRPC Router ============
 
@@ -83,6 +87,9 @@ const appRouter = router({
   notification: notificationRouter,
   blocks: blocksRouter,
   personalityProfiler: personalityProfilerRouter,
+  mentor: mentorRouter,
+  workspace: workspaceRouter,
+  apiPublic: apiPublicRouter,
 });
 
 export type AppRouter = typeof appRouter;
@@ -805,6 +812,84 @@ api.get("/api/matching/ws/:sessionId", async (c) => {
     headers: c.req.raw.headers,
   }));
 });
+
+// ============ WebSocket Workspace Room (Durable Object) ============
+
+api.get("/api/workspace/ws/:workspaceId", async (c) => {
+  const env = c.env as Env;
+  await ensureSchema(env.DB);
+
+  // Authenticate via JWT cookie
+  const cookieHeader = c.req.header("cookie") || null;
+  const token = parseCookie(cookieHeader, COOKIE_NAME);
+  if (!token) return c.json({ error: "Unauthorized" }, 401);
+  const sess = await verifySessionToken(token, env);
+  if (!sess) return c.json({ error: "Unauthorized" }, 401);
+
+  const workspaceId = parseInt(c.req.param("workspaceId") || "0");
+  if (!workspaceId) return c.json({ error: "Invalid workspace ID" }, 400);
+
+  // Verify membership
+  const member = await env.DB.prepare(
+    `SELECT * FROM workspace_members WHERE workspaceId=? AND userId=?`
+  ).bind(workspaceId, sess.userId).first<any>();
+  if (!member) return c.json({ error: "Not a member" }, 403);
+
+  // Get user name
+  const user = await env.DB.prepare(`SELECT name FROM users WHERE id=?`).bind(sess.userId).first<any>();
+
+  // Get Durable Object stub
+  const doId = env.WORKSPACE_ROOMS.idFromName(`workspace-${workspaceId}`);
+  const stub = env.WORKSPACE_ROOMS.get(doId);
+
+  // Forward the WebSocket upgrade to the Durable Object
+  const url = new URL(c.req.url);
+  url.searchParams.set("userId", String(sess.userId));
+  url.searchParams.set("workspaceId", String(workspaceId));
+  url.searchParams.set("userName", user?.name || "User");
+
+  return stub.fetch(new Request(url.toString(), {
+    headers: c.req.raw.headers,
+  }));
+});
+
+// ============ Public API (API Key Auth) ============
+
+api.get("/api/v1/twin", async (c) => {
+  const env = c.env as Env;
+  await ensureSchema(env.DB);
+  const apiKey = c.req.header("x-api-key") || c.req.header("authorization")?.replace("Bearer ", "");
+  if (!apiKey || !apiKey.startsWith("bai_")) return c.json({ error: "Invalid API key" }, 401);
+  const rawKey = apiKey.replace("bai_", "");
+  const encoder = new TextEncoder();
+  const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(rawKey));
+  const keyHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
+  const keyRow = await env.DB.prepare(`SELECT * FROM api_keys WHERE keyHash=? AND revokedAt IS NULL`).bind(keyHash).first<any>();
+  if (!keyRow) return c.json({ error: "Invalid or revoked API key" }, 401);
+  await env.DB.prepare(`UPDATE api_keys SET lastUsedAt=datetime('now') WHERE id=?`).bind(keyRow.id).run();
+  const twin = await env.DB.prepare(`SELECT id, name, description, personality, tags, status, isPublic FROM digital_twins WHERE userId=?`).bind(keyRow.userId).first<any>();
+  return c.json({ twin: twin || null });
+});
+
+api.get("/api/v1/matchings", async (c) => {
+  const env = c.env as Env;
+  await ensureSchema(env.DB);
+  const apiKey = c.req.header("x-api-key") || c.req.header("authorization")?.replace("Bearer ", "");
+  if (!apiKey || !apiKey.startsWith("bai_")) return c.json({ error: "Invalid API key" }, 401);
+  const rawKey = apiKey.replace("bai_", "");
+  const encoder = new TextEncoder();
+  const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(rawKey));
+  const keyHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
+  const keyRow = await env.DB.prepare(`SELECT * FROM api_keys WHERE keyHash=? AND revokedAt IS NULL`).bind(keyHash).first<any>();
+  if (!keyRow) return c.json({ error: "Invalid or revoked API key" }, 401);
+  await env.DB.prepare(`UPDATE api_keys SET lastUsedAt=datetime('now') WHERE id=?`).bind(keyRow.id).run();
+  const limit = Math.min(parseInt(c.req.query("limit") || "20"), 100);
+  const rows = await env.DB.prepare(
+    `SELECT ms.id, ms.theme, ms.status, ms.createdAt, ms.completedAt, mr.compatibilityScore, mr.summary FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id WHERE ms.initiatorUserId=? ORDER BY ms.createdAt DESC LIMIT ?`
+  ).bind(keyRow.userId, limit).all<any>();
+  return c.json({ matchings: rows.results ?? [] });
+});
+
 
 api.all("/api/trpc/*", async (c) => {
   const env = c.env as Env;

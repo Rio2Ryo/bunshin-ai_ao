@@ -22,7 +22,8 @@ bucket_name = "bunshin-ai-assets"
 [durable_objects]
 bindings = [
   { name = "CHAT_ROOMS", class_name = "ChatRoom" },
-  { name = "MATCHING_ROOMS", class_name = "MatchingRoom" }
+  { name = "MATCHING_ROOMS", class_name = "MatchingRoom" },
+  { name = "WORKSPACE_ROOMS", class_name = "WorkspaceRoom" }
 ]
 
 [[migrations]]
@@ -32,6 +33,10 @@ new_sqlite_classes = ["ChatRoom"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["MatchingRoom"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["WorkspaceRoom"]
 
 # Cron triggers for auto matching scheduler
 [triggers]

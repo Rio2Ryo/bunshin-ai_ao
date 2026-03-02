@@ -20,7 +20,7 @@ import {
   UserPlus, Bot, MessageSquare, Shield, Star, TrendingUp,
   ArrowRight, Sparkles, Search, Send, Inbox, History,
   ArrowUpRight, ArrowDownRight, Minus, Check, X,
-  CalendarClock, Trash2, Bell,
+  CalendarClock, Trash2, Bell, BarChart3, Globe,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -86,12 +86,26 @@ export default function Matching() {
   const acceptRequestMut = trpc.matching.acceptRequest.useMutation();
   const rejectRequestMut = trpc.matching.rejectRequest.useMutation();
 
+  const createGroupMut = trpc.matching.createGroup.useMutation();
+
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isGroupOpen, setIsGroupOpen] = useState(false);
   const [selectedFriendId, setSelectedFriendId] = useState("");
+  const [groupFriendIds, setGroupFriendIds] = useState<number[]>([]);
+  const [groupTheme, setGroupTheme] = useState("");
+  const [groupTurns, setGroupTurns] = useState(3);
   const [theme, setTheme] = useState("");
   const [turns, setTurns] = useState(5);
   const [requestMsg, setRequestMsg] = useState("");
   const [requestTargetId, setRequestTargetId] = useState<number | null>(null);
+
+  // Multilingual matching state
+  const [isMultilingualOpen, setIsMultilingualOpen] = useState(false);
+  const [multiLang1, setMultiLang1] = useState("日本語");
+  const [multiLang2, setMultiLang2] = useState("English");
+  const [multiTheme, setMultiTheme] = useState("");
+  const [multiSelectedFriend, setMultiSelectedFriend] = useState("");
+  const createMultilingualMut = trpc.matching.createMultilingual.useMutation();
 
   const handleCreate = async () => {
     if (!selectedFriendId || !theme.trim()) { toast.error("友達とテーマを選択してください"); return; }
@@ -104,6 +118,34 @@ export default function Matching() {
       setIsCreateOpen(false); setSelectedFriendId(""); setTheme(""); setTurns(5);
       navigate(`/matching/${result.sessionId}`);
     } catch (error: any) { toast.error(error?.message || "作成に失敗しました"); }
+  };
+
+  const handleCreateGroup = async () => {
+    if (groupFriendIds.length < 2 || !groupTheme.trim()) { toast.error("2人以上の友達とテーマを選択してください"); return; }
+    if (!myTwin) { toast.error("まず自分の分身AIを作成してください"); return; }
+    try {
+      const result = await createGroupMut.mutateAsync({ friendIds: groupFriendIds, theme: groupTheme, turns: groupTurns });
+      setIsGroupOpen(false); setGroupFriendIds([]); setGroupTheme(""); setGroupTurns(3);
+      navigate(`/matching/group/${result.sessionId}`);
+    } catch (error: any) { toast.error(error?.message || "グループマッチング作成に失敗しました"); }
+  };
+
+  const toggleGroupFriend = (id: number) => {
+    setGroupFriendIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : prev.length < 4 ? [...prev, id] : prev);
+  };
+
+  const handleCreateMultilingual = async () => {
+    if (!multiSelectedFriend || !multiTheme.trim()) { toast.error("友達とテーマを選択してください"); return; }
+    try {
+      const result = await createMultilingualMut.mutateAsync({
+        friendId: parseInt(multiSelectedFriend),
+        theme: multiTheme,
+        language1: multiLang1,
+        language2: multiLang2,
+      });
+      setIsMultilingualOpen(false);
+      navigate(`/matching/${result.sessionId}`);
+    } catch (e: any) { toast.error(e.message || "作成に失敗しました"); }
   };
 
   const handleQuickMatch = (friendId: number, friendName: string) => {
@@ -179,9 +221,122 @@ export default function Matching() {
               信頼度スコアが近いユーザーとマッチングしましょう
             </p>
           </div>
+          <div className="flex items-center gap-2">
+          <Link href="/matching/analytics">
+            <Button variant="outline" size="sm"><BarChart3 className="h-4 w-4 mr-2" />分析</Button>
+          </Link>
+          <Dialog open={isGroupOpen} onOpenChange={setIsGroupOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm" disabled={!myTwin || friendsWithTwin.length < 2}><Users className="h-4 w-4 mr-2" />グループ</Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>グループマッチング（3〜5人）</DialogTitle>
+                <DialogDescription>複数の友達と同時にマッチング対話を行います</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 mt-4">
+                <div>
+                  <Label>参加者を選択（2〜4人）</Label>
+                  <div className="space-y-2 mt-2 max-h-40 overflow-y-auto">
+                    {friendsWithTwin.map((f: any) => (
+                      <label key={f.friend.id} className="flex items-center gap-2 p-2 rounded-lg hover:bg-muted cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={groupFriendIds.includes(f.friend.id)}
+                          onChange={() => toggleGroupFriend(f.friend.id)}
+                          disabled={!groupFriendIds.includes(f.friend.id) && groupFriendIds.length >= 4}
+                          className="rounded border-gray-300"
+                        />
+                        <span className="text-sm font-medium">{f.friend.name}</span>
+                        {f.twin?.name && <span className="text-xs text-muted-foreground">({f.twin.name})</span>}
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">{groupFriendIds.length}/4 選択中（あなたを含めて{groupFriendIds.length + 1}人）</p>
+                </div>
+                <div>
+                  <Label htmlFor="group-theme">テーマ</Label>
+                  <Input id="group-theme" placeholder="例: 新規事業アイデアのブレインストーミング" value={groupTheme} onChange={(e) => setGroupTheme(e.target.value)} />
+                </div>
+                <div>
+                  <Label>ラウンド数（各参加者の発言回数）</Label>
+                  <Slider min={1} max={5} step={1} value={[groupTurns]} onValueChange={([v]) => setGroupTurns(v)} />
+                  <p className="text-xs text-muted-foreground mt-1">{groupTurns}ラウンド（計{groupTurns * (groupFriendIds.length + 1)}ターン）</p>
+                </div>
+                <Button onClick={handleCreateGroup} disabled={groupFriendIds.length < 2 || !groupTheme.trim() || createGroupMut.isPending} className="w-full">
+                  {createGroupMut.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />作成中...</> : <><Users className="h-4 w-4 mr-2" />グループマッチング開始</>}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={isMultilingualOpen} onOpenChange={setIsMultilingualOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm" disabled={!myTwin || friendsWithTwin.length === 0}><Globe className="h-4 w-4 mr-2" />多言語</Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>多言語マッチング対話</DialogTitle>
+                <DialogDescription>異なる言語でツインが対話し、リアルタイム翻訳を表示します</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 mt-4">
+                <div>
+                  <Label>友達を選択</Label>
+                  <Select value={multiSelectedFriend} onValueChange={setMultiSelectedFriend}>
+                    <SelectTrigger><SelectValue placeholder="友達を選択" /></SelectTrigger>
+                    <SelectContent>
+                      {friendsWithTwin.map((f: any) => (
+                        <SelectItem key={f.friend.id} value={f.friend.id.toString()}>
+                          {f.friend.name} ({f.twin?.name})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>テーマ</Label>
+                  <Input placeholder="例: 国際ビジネス展開の戦略" value={multiTheme} onChange={(e) => setMultiTheme(e.target.value)} />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>あなたの言語</Label>
+                    <Select value={multiLang1} onValueChange={setMultiLang1}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="日本語">日本語</SelectItem>
+                        <SelectItem value="English">English</SelectItem>
+                        <SelectItem value="中文">中文</SelectItem>
+                        <SelectItem value="한국어">한국어</SelectItem>
+                        <SelectItem value="Español">Español</SelectItem>
+                        <SelectItem value="Français">Français</SelectItem>
+                        <SelectItem value="Deutsch">Deutsch</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>相手の言語</Label>
+                    <Select value={multiLang2} onValueChange={setMultiLang2}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="日本語">日本語</SelectItem>
+                        <SelectItem value="English">English</SelectItem>
+                        <SelectItem value="中文">中文</SelectItem>
+                        <SelectItem value="한국어">한국어</SelectItem>
+                        <SelectItem value="Español">Español</SelectItem>
+                        <SelectItem value="Français">Français</SelectItem>
+                        <SelectItem value="Deutsch">Deutsch</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <Button onClick={handleCreateMultilingual} disabled={!multiSelectedFriend || !multiTheme.trim() || createMultilingualMut.isPending} className="w-full">
+                  {createMultilingualMut.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />作成中...</> : <><Globe className="h-4 w-4 mr-2" />多言語マッチング開始</>}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button disabled={!myTwin}><Plus className="h-4 w-4 mr-2" />新規マッチング</Button>
+              <Button size="sm" disabled={!myTwin}><Plus className="h-4 w-4 mr-2" />新規マッチング</Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-md">
               <DialogHeader>
@@ -228,6 +383,7 @@ export default function Matching() {
               </div>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         {/* Warning banners */}
@@ -528,8 +684,9 @@ export default function Matching() {
                               <div className="flex items-center gap-2">
                                 <p className="font-medium text-sm truncate">{session.theme}</p>
                                 {session.isNpcSession && <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">チュートリアル</Badge>}
+                                {session.isGroup && <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0"><Users className="h-2.5 w-2.5 mr-0.5" />{session.participantCount}人</Badge>}
                               </div>
-                              <p className="text-xs text-muted-foreground">{session.twin1?.name || `Twin #${session.twin1Id}`} × {session.twin2?.name || `Twin #${session.twin2Id}`}</p>
+                              <p className="text-xs text-muted-foreground">{session.isGroup ? `グループ（${session.participantCount}人参加）` : `${session.twin1?.name || `Twin #${session.twin1Id}`} × ${session.twin2?.name || `Twin #${session.twin2Id}`}`}</p>
                               {session.resultSummary && <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{session.resultSummary}</p>}
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
@@ -539,7 +696,7 @@ export default function Matching() {
                               </div>
                               <div className="flex gap-1">
                                 {session.status === "pending" && <Button size="sm" variant="outline" onClick={() => handleRunDialogue(session.id)} disabled={runDialogue.isPending}><Play className="h-3 w-3" /></Button>}
-                                <Link href={`/matching/${session.id}`}><Button size="sm" variant="outline">詳細</Button></Link>
+                                <Link href={session.isGroup ? `/matching/group/${session.id}` : `/matching/${session.id}`}><Button size="sm" variant="outline">詳細</Button></Link>
                               </div>
                             </div>
                           </div>

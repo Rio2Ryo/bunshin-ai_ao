@@ -475,4 +475,33 @@ export const notificationRouter = router({
       await ctx.env.DB.prepare(`UPDATE notifications SET isRead=1 WHERE userId=? AND isRead=0`).bind(ctx.userId).run();
       return { success: true };
     }),
+    // --- WebPush subscriptions ---
+    getVapidPublicKey: protectedProcedure.query(async ({ ctx }) => {
+      const key = ctx.env.VAPID_PUBLIC_KEY || "";
+      return { vapidPublicKey: key };
+    }),
+    subscribePush: protectedProcedure
+      .input(z.object({
+        endpoint: z.string().url(),
+        p256dh: z.string().min(1),
+        auth: z.string().min(1),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        // Upsert — unique on endpoint
+        await ctx.env.DB.prepare(
+          `INSERT INTO push_subscriptions (userId, endpoint, p256dh, auth) VALUES (?,?,?,?)
+           ON CONFLICT(endpoint) DO UPDATE SET userId=?, p256dh=?, auth=?, createdAt=datetime('now')`
+        ).bind(ctx.userId, input.endpoint, input.p256dh, input.auth, ctx.userId, input.p256dh, input.auth).run();
+        return { success: true };
+      }),
+    unsubscribePush: protectedProcedure
+      .input(z.object({ endpoint: z.string().url() }))
+      .mutation(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        await ctx.env.DB.prepare(
+          `DELETE FROM push_subscriptions WHERE userId=? AND endpoint=?`
+        ).bind(ctx.userId, input.endpoint).run();
+        return { success: true };
+      }),
 });

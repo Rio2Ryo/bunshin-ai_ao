@@ -11,7 +11,7 @@ import { usePageMeta } from "@/hooks/usePageMeta";
 import { Link } from "wouter";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { Bot, Edit, Loader2, MessageSquare, Save, Sparkles, User, Globe, Eye, EyeOff, Tag, X, Brain, Target, Zap, TrendingUp, BarChart3, Shield, Lock, Users, UserCheck, Check, BookOpen, Plus, Trash2, FileText } from "lucide-react";
+import { Bot, Edit, Loader2, MessageSquare, Save, Sparkles, User, Globe, Eye, EyeOff, Tag, X, Brain, Target, Zap, TrendingUp, BarChart3, Shield, Lock, Users, UserCheck, Check, BookOpen, Plus, Trash2, FileText, Mic, Image, Wand2 } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
@@ -22,6 +22,7 @@ import { ValueWaveformChart } from "@/components/ValueWaveformChart";
 import { ValueScenarioInterview } from "@/components/ValueScenarioInterview";
 import { CumulativeWaveformChart } from "@/components/CumulativeWaveformChart";
 import { OtherPerspectiveWaveformChart } from "@/components/OtherPerspectiveWaveformChart";
+import { VoiceCapture } from "@/components/VoiceCapture";
 
 export default function MyTwin() {
   usePageMeta({ title: "分身AI", description: "分身AIの作成・編集・性格分析", path: "/twins" });
@@ -33,6 +34,8 @@ export default function MyTwin() {
   const generateSelfWaveformMutation = trpc.myTwin.generateSelfWaveform.useMutation();
   const evaluateByAllTwinsMutation = trpc.myTwin.evaluateByAllTwins.useMutation();
   const generateFriendPredictionsMutation = trpc.friends.generateFriendPredictions.useMutation();
+  const applyFeedbackMutation = trpc.matching.applyFeedback.useMutation();
+  const generateAvatarMut = trpc.myTwin.generateAvatar.useMutation();
 
   // Visibility settings
   const { data: visibilityData, refetch: refetchVisibility } = trpc.myTwin.getVisibilitySettings.useQuery();
@@ -70,6 +73,16 @@ export default function MyTwin() {
       prev.includes(friendId) ? prev.filter((id) => id !== friendId) : [...prev, friendId]
     );
   };
+  const handleGenerateAvatar = async () => {
+    try {
+      const result = await generateAvatarMut.mutateAsync();
+      toast.success("アバターを生成しました");
+      refetch();
+    } catch (e: any) {
+      toast.error(e.message || "アバター生成に失敗しました");
+    }
+  };
+
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isGeneratingWaveform, setIsGeneratingWaveform] = useState(false);
@@ -123,6 +136,21 @@ export default function MyTwin() {
       toast.error("分析中にエラーが発生しました");
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  const handleApplyFeedback = async () => {
+    if (!twin?.id) return;
+    try {
+      const result = await applyFeedbackMutation.mutateAsync({ twinId: twin.id });
+      if (result.adjusted) {
+        toast.success(`フィードバックを反映しました: ${result.reasoning}`);
+        refetch();
+      } else {
+        toast.info(result.message || "フィードバックデータがありません");
+      }
+    } catch (e: any) {
+      toast.error(e.message || "フィードバック反映に失敗しました");
     }
   };
 
@@ -484,6 +512,36 @@ export default function MyTwin() {
               </CardContent>
             </Card>
 
+            {/* AIアバター生成 */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Wand2 className="h-5 w-5 text-purple-500" />
+                  AIアバター
+                </CardTitle>
+                <CardDescription>AIがあなたのプロフィールからアバター画像を生成します</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-4">
+                  {twin?.avatarUrl ? (
+                    <img src={twin.avatarUrl} alt="ツインアバター" className="w-24 h-24 rounded-full object-cover border-2 border-primary/20" />
+                  ) : (
+                    <div className="w-24 h-24 rounded-full bg-muted flex items-center justify-center">
+                      <Image className="h-8 w-8 text-muted-foreground" />
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <Button onClick={handleGenerateAvatar} disabled={generateAvatarMut.isPending} variant="outline">
+                      {generateAvatarMut.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />生成中...</> : <><Wand2 className="h-4 w-4 mr-2" />アバター生成</>}
+                    </Button>
+                    <p className="text-xs text-muted-foreground">OpenAI APIキー設定済みの場合はDALL-E 3で生成</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* 音声入力で人格キャプチャ */}
+            <VoiceCapture onComplete={() => refetch()} />
             {/* 知識ベース */}
             <KnowledgeBaseSection />
 
@@ -626,23 +684,44 @@ export default function MyTwin() {
                       ビッグ・ファイブ性格診断・9つの判断基準・分身AI精度
                     </CardDescription>
                   </div>
-                  <Button 
-                    onClick={handleRunAnalysis} 
-                    disabled={isAnalyzing || !twin.rawInput}
-                    variant="outline"
-                  >
-                    {isAnalyzing ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                        分析中...
-                      </>
-                    ) : (
-                      <>
-                        <Zap className="h-4 w-4 mr-2" />
-                        分析を実行
-                      </>
-                    )}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      onClick={handleApplyFeedback}
+                      disabled={applyFeedbackMutation.isPending}
+                      variant="outline"
+                      size="sm"
+                    >
+                      {applyFeedbackMutation.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          反映中...
+                        </>
+                      ) : (
+                        <>
+                          <TrendingUp className="h-4 w-4 mr-2" />
+                          フィードバック反映
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      onClick={handleRunAnalysis}
+                      disabled={isAnalyzing || !twin.rawInput}
+                      variant="outline"
+                      size="sm"
+                    >
+                      {isAnalyzing ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          分析中...
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="h-4 w-4 mr-2" />
+                          分析を実行
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-6">

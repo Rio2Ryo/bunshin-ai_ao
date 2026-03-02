@@ -9,7 +9,7 @@ import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc, API_BASE } from "@/lib/trpc";
 import { useParams, Link } from "wouter";
 import { useState, useCallback, useRef, useEffect } from "react";
-import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, Users, Calendar, DollarSign, Target, Rocket, Share2, Link as LinkIcon, ExternalLink, Search, Globe, Zap, ThumbsUp, Send as SendIcon, Eye } from "lucide-react";
+import { ArrowLeft, Bot, Loader2, BarChart3, MessageSquare, Lightbulb, AlertTriangle, CheckCircle, Download, Users, Calendar, DollarSign, Target, Rocket, Share2, Link as LinkIcon, ExternalLink, Search, Globe, Zap, ThumbsUp, ThumbsDown, Send as SendIcon, Eye, Play } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { LazyStreamdown as Streamdown } from "@/components/LazyStreamdown";
 import { toast } from "sonner";
@@ -112,6 +112,15 @@ export default function MatchingSession() {
     });
   }, [sendReaction]);
 
+  // Helper to parse multilingual content
+  const parseDialogueContent = (content: string) => {
+    try {
+      const parsed = JSON.parse(content);
+      if (parsed.original && parsed.translated) return parsed;
+    } catch {}
+    return null;
+  };
+
   // Auto-scroll streaming dialogue
   useEffect(() => {
     if (streamingTurns.length > 0 && scrollRef.current) {
@@ -123,6 +132,38 @@ export default function MatchingSession() {
     { sessionId },
     { enabled: false }
   );
+
+  // Feature 1: Friend invite mutation
+  const inviteMutation = trpc.matching.inviteFriend.useMutation();
+  const handleInviteFriend = async () => {
+    try {
+      await inviteMutation.mutateAsync({ sessionId });
+      toast.success("友達に招待通知を送りました");
+    } catch (e: any) {
+      toast.error(e.message || "招待の送信に失敗しました");
+    }
+  };
+
+  // Feature 3: Turn feedback
+  const rateTurnMutation = trpc.matching.rateTurn.useMutation();
+  const { data: feedbackData, refetch: refetchFeedback } = trpc.matching.getFeedback.useQuery(
+    { sessionId },
+    { enabled: sessionId > 0 }
+  );
+  const feedbackMap = new Map<number, string>();
+  if (feedbackData) {
+    for (const fb of feedbackData) {
+      feedbackMap.set(fb.turnNumber, fb.rating);
+    }
+  }
+  const handleRateTurn = async (turnNumber: number, rating: "up" | "down") => {
+    try {
+      await rateTurnMutation.mutateAsync({ sessionId, turnNumber, rating });
+      refetchFeedback();
+    } catch (e: any) {
+      toast.error(e.message || "評価の送信に失敗しました");
+    }
+  };
 
   const [searchQuery, setSearchQuery] = useState("");
   const webSearchMutation = trpc.matching.webSearch.useMutation();
@@ -295,6 +336,12 @@ export default function MatchingSession() {
                   <LinkIcon className="h-4 w-4 mr-2" />
                   リンクをコピー
                 </DropdownMenuItem>
+                {data?.session?.settings?.friendId && (
+                  <DropdownMenuItem onClick={handleInviteFriend} disabled={inviteMutation.isPending}>
+                    <Users className="h-4 w-4 mr-2" />
+                    友達を招待（リアルタイム観戦）
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
 
@@ -328,6 +375,11 @@ export default function MatchingSession() {
               <Download className="h-4 w-4 mr-2" />
               レポート
             </Button>
+            {session.status === "completed" && (
+              <Link href={`/matching/replay/${sessionId}`}>
+                <Button variant="outline" size="sm"><Play className="h-4 w-4 mr-2" />リプレイ</Button>
+              </Link>
+            )}
           </div>
         </div>
 
@@ -516,9 +568,26 @@ export default function MatchingSession() {
                                     isTwin1 ? "bg-muted" : "bg-accent/10"
                                   }`}
                                 >
-                                  <Streamdown>{dialogue.content}</Streamdown>
+                                  {(() => {
+                                    const multilingual = parseDialogueContent(dialogue.content);
+                                    if (multilingual) {
+                                      return (
+                                        <div className="space-y-2">
+                                          <div>
+                                            <span className="text-xs font-medium text-muted-foreground">{multilingual.language || "原文"}</span>
+                                            <Streamdown>{multilingual.original}</Streamdown>
+                                          </div>
+                                          <div className="border-t pt-2">
+                                            <span className="text-xs font-medium text-primary/70 flex items-center gap-1"><Globe className="h-3 w-3" />翻訳</span>
+                                            <Streamdown>{multilingual.translated}</Streamdown>
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+                                    return <Streamdown>{dialogue.content}</Streamdown>;
+                                  })()}
                                 </div>
-                                {/* Like button + comment trigger */}
+                                {/* Like button + feedback + comment trigger */}
                                 <div className={`flex items-center gap-2 mt-1 ${isTwin1 ? "" : "justify-end"}`}>
                                   <button
                                     onClick={() => handleLike(turnNum)}
@@ -533,6 +602,35 @@ export default function MatchingSession() {
                                     <ThumbsUp className="h-3 w-3" aria-hidden="true" />
                                     {turnReaction?.count ? turnReaction.count : ""}
                                   </button>
+                                  {/* Feedback buttons (shown after session completes) */}
+                                  {(session.status === "completed" || phase === "complete") && (
+                                    <>
+                                      <button
+                                        onClick={() => handleRateTurn(turnNum, "up")}
+                                        disabled={rateTurnMutation.isPending}
+                                        className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full transition-colors ${
+                                          feedbackMap.get(turnNum) === "up"
+                                            ? "bg-green-500/20 text-green-600"
+                                            : "text-muted-foreground hover:bg-green-500/10 hover:text-green-600 opacity-0 group-hover/turn:opacity-100 focus-visible:opacity-100"
+                                        }`}
+                                        aria-label="良い発言"
+                                      >
+                                        <ThumbsUp className="h-3 w-3" aria-hidden="true" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleRateTurn(turnNum, "down")}
+                                        disabled={rateTurnMutation.isPending}
+                                        className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full transition-colors ${
+                                          feedbackMap.get(turnNum) === "down"
+                                            ? "bg-red-500/20 text-red-600"
+                                            : "text-muted-foreground hover:bg-red-500/10 hover:text-red-600 opacity-0 group-hover/turn:opacity-100 focus-visible:opacity-100"
+                                        }`}
+                                        aria-label="改善必要な発言"
+                                      >
+                                        <ThumbsDown className="h-3 w-3" aria-hidden="true" />
+                                      </button>
+                                    </>
+                                  )}
                                   <button
                                     onClick={() => setCommentTurn(commentTurn === turnNum ? null : turnNum)}
                                     className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full text-muted-foreground hover:bg-muted opacity-0 group-hover/turn:opacity-100 focus-visible:opacity-100 transition-colors"

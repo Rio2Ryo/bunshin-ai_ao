@@ -672,4 +672,134 @@ ${isLastQuestion ? `
       const user = await ctx.env.DB.prepare(`SELECT * FROM users WHERE id=?`).bind(row.userId).first<any>();
       return { twin: normalizeTwin(row), user };
     }),
+
+  // ============ Voice Input Twin Personality Capture ============
+
+  captureVoicePersonality: protectedProcedure
+    .input(z.object({ transcription: z.string().min(10).max(10000) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIを作成してください" });
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "analysis", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "LLM APIキーが必要です" });
+
+      const result = await invokeLLM(llmConfig, [
+        {
+          role: "system",
+          content: `Analyze this voice transcription to extract personality traits, communication style, expertise, and values. Update the twin's personality and description based on the analysis.
+Return JSON only: {"personality":"personality description string","description":"professional description string","traits":["trait1","trait2","trait3"]}
+The personality field should describe communication style, tone, and character.
+The description field should summarize professional expertise and background.
+The traits array should contain 3-8 key personality/professional traits.
+All output should be in Japanese.`,
+        },
+        { role: "user", content: input.transcription },
+      ], { maxTokens: 1024, temperature: 0.4 });
+
+      let personality = twin.personality || "";
+      let description = twin.description || "";
+      let traits: string[] = [];
+
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          personality = parsed.personality || personality;
+          description = parsed.description || description;
+          traits = Array.isArray(parsed.traits) ? parsed.traits : [];
+        }
+      } catch {
+        // If parsing fails, use the raw content as personality
+        personality = result.content || personality;
+      }
+
+      await ctx.env.DB.prepare(
+        `UPDATE digital_twins SET personality=?, description=?, updatedAt=datetime('now') WHERE id=?`
+      ).bind(personality, description, twin.id).run();
+
+      return { personality, description, traits };
+    }),
+
+  generateAvatar: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIを作成してください" });
+
+    // Get user profile for context
+    const profile = await ctx.env.DB.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+    
+    // Build avatar description using LLM
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "analysis", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "LLM APIキーが必要です" });
+
+    const promptContext = [
+      twin.personality ? `性格: ${twin.personality}` : "",
+      twin.description ? `説明: ${twin.description}` : "",
+      twin.tags?.length ? `専門分野: ${twin.tags.join(", ")}` : "",
+      profile?.industry ? `業界: ${profile.industry}` : "",
+      profile?.position ? `役職: ${profile.position}` : "",
+    ].filter(Boolean).join("\n");
+
+    // Use LLM to generate a concise visual description for avatar
+    const descResult = await invokeLLM(llmConfig, [
+      { role: "system", content: "Generate a concise, professional avatar description for an AI digital twin. Output a single sentence in English describing the visual appearance of a professional avatar. Focus on style, colors, mood that match the personality. Do NOT include any text or names in the image. Format: 'A professional digital avatar of [description], [style], [colors]'" },
+      { role: "user", content: `This AI twin has the following characteristics:\n${promptContext}\n\nGenerate ONE sentence avatar description in English.` },
+    ], { maxTokens: 150, temperature: 0.7 });
+
+    const avatarDescription = descResult.content.trim();
+
+    // Try to generate image via OpenAI DALL-E API
+    // Get user's OpenAI API key
+    const apiKeyRow = await ctx.env.DB.prepare(
+      `SELECT apiKey FROM ai_api_configs WHERE userId=? AND provider='openai' AND isActive=1`
+    ).bind(ctx.userId).first<any>();
+    
+    let avatarUrl: string;
+    
+    if (apiKeyRow?.apiKey) {
+      try {
+        const dalleRes = await fetch("https://api.openai.com/v1/images/generations", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKeyRow.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: "dall-e-3",
+            prompt: `${avatarDescription}. Clean minimalist style, suitable as a profile avatar. No text, no letters, no words.`,
+            n: 1,
+            size: "1024x1024",
+            quality: "standard",
+          }),
+        });
+        
+        if (!dalleRes.ok) {
+          const err = await dalleRes.text();
+          throw new Error(`DALL-E API error: ${err}`);
+        }
+        
+        const dalleData = await dalleRes.json() as any;
+        avatarUrl = dalleData.data?.[0]?.url;
+        
+        if (!avatarUrl) throw new Error("No image URL returned");
+      } catch (e: any) {
+        // Fallback: generate a DiceBear avatar with personality-based seed
+        const seed = encodeURIComponent(`${twin.name}-${twin.id}`);
+        avatarUrl = `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${seed}`;
+      }
+    } else {
+      // No OpenAI key: use DiceBear as fallback
+      const seed = encodeURIComponent(`${twin.name}-${twin.id}`);
+      avatarUrl = `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${seed}`;
+    }
+
+    // Store avatar URL on twin
+    await ctx.env.DB.prepare(
+      `UPDATE digital_twins SET avatarUrl=?, updatedAt=datetime('now') WHERE id=?`
+    ).bind(avatarUrl, twin.id).run();
+
+    return { avatarUrl, description: avatarDescription };
+  }),
 });

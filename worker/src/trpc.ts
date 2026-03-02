@@ -10,6 +10,7 @@ export type Env = {
   ASSETS?: R2Bucket;
   CHAT_ROOMS: DurableObjectNamespace;
   MATCHING_ROOMS: DurableObjectNamespace;
+  WORKSPACE_ROOMS: DurableObjectNamespace;
   JWT_SECRET?: string;
   AZURE_FOUNDRY_API_KEY?: string;
   AZURE_FOUNDRY_RESOURCE?: string;
@@ -26,6 +27,8 @@ export type Env = {
   RESEND_API_KEY?: string;
   RESEND_FROM_EMAIL?: string;
   FRONTEND_URL?: string;
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
 };
 
 export type Context = {

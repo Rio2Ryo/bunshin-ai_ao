@@ -57,6 +57,14 @@ const ComponentShowcase = lazy(() => import("./pages/ComponentShowcase"));
 const Presentation = lazy(() => import("./pages/Presentation"));
 const NanoBananaSlides = lazy(() => import("./pages/NanoBananaSlides"));
 const PersonalityProfiler = lazy(() => import("./pages/PersonalityProfiler"));
+const MatchingAnalytics = lazy(() => import("./pages/MatchingAnalytics"));
+const GroupMatchingSession = lazy(() => import("./pages/GroupMatchingSession"));
+const Scheduler = lazy(() => import("./pages/Scheduler"));
+const MatchingReplay = lazy(() => import("./pages/MatchingReplay"));
+const Mentor = lazy(() => import("./pages/Mentor"));
+const Workspaces = lazy(() => import("./pages/Workspaces"));
+const WorkspaceDetail = lazy(() => import("./pages/WorkspaceDetail"));
+const ABTest = lazy(() => import("./pages/ABTest"));
 
 function PageLoader() {
   return (
@@ -85,6 +93,9 @@ function Router() {
         <Route path="/chat" component={Chat} />
         <Route path="/chat/:sessionId" component={Chat} />
         <Route path="/matching" component={Matching} />
+        <Route path="/matching/analytics" component={MatchingAnalytics} />
+        <Route path="/matching/group/:id" component={GroupMatchingSession} />
+        <Route path="/matching/replay/:id" component={MatchingReplay} />
         <Route path="/matching/:id" component={MatchingSession} />
         <Route path="/ai-config" component={AIConfig} />
         <Route path="/orchestration" component={Orchestration} />
@@ -117,6 +128,11 @@ function Router() {
         <Route path="/personality" component={PersonalityProfiler} />
         <Route path="/dev/showcase" component={ComponentShowcase} />
 
+        <Route path="/scheduler" component={Scheduler} />
+        <Route path="/mentor" component={Mentor} />
+        <Route path="/workspaces" component={Workspaces} />
+        <Route path="/workspaces/:id" component={WorkspaceDetail} />
+        <Route path="/ab-test" component={ABTest} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

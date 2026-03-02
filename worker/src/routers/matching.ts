@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { router, publicProcedure, protectedProcedure, type Env, type Context } from "../trpc";
 import { ensureSchema, parseJson, toJson, now, getMyTwin, normalizeTwin, addTrustAction } from "../db-helpers";
 import { invokeLLM, getUserLLMConfig } from "../llm";
-import { createNotification, notifyMatchingComplete } from "../notifications";
+import { createNotification, notifyMatchingComplete, notifyMatchingInvite, sendMatchingReportEmail } from "../notifications";
 
 // ============ Web Search (Tavily) ============
 
@@ -108,21 +108,26 @@ export const matchingRouter = router({
       WHERE ms.initiatorUserId = ?
       ORDER BY ms.createdAt DESC`
     ).bind(ctx.userId).all<any>();
-    return (rows.results ?? []).map((r: any) => ({
-      id: r.id,
-      initiatorUserId: r.initiatorUserId,
-      twin1Id: r.twin1Id,
-      twin2Id: r.twin2Id,
-      theme: r.theme,
-      status: r.status,
-      createdAt: r.createdAt,
-      completedAt: r.completedAt,
-      twin1: r.t1Id ? { id: r.t1Id, name: r.t1Name, userId: r.t1UserId } : { id: r.twin1Id, name: `Twin #${r.twin1Id}` },
-      twin2: r.t2Id ? { id: r.t2Id, name: r.t2Name, userId: r.t2UserId } : { id: r.twin2Id, name: `Twin #${r.twin2Id}` },
-      isNpcSession: r.u1IsNpc === 1 || r.u2IsNpc === 1,
-      compatibilityScore: r.compatibilityScore ?? null,
-      resultSummary: r.resultSummary ?? null,
-    }));
+    return (rows.results ?? []).map((r: any) => {
+      const settings = parseJson<any>(r.settings) || {};
+      return {
+        id: r.id,
+        initiatorUserId: r.initiatorUserId,
+        twin1Id: r.twin1Id,
+        twin2Id: r.twin2Id,
+        theme: r.theme,
+        status: r.status,
+        createdAt: r.createdAt,
+        completedAt: r.completedAt,
+        twin1: r.t1Id ? { id: r.t1Id, name: r.t1Name, userId: r.t1UserId } : { id: r.twin1Id, name: `Twin #${r.twin1Id}` },
+        twin2: r.t2Id ? { id: r.t2Id, name: r.t2Name, userId: r.t2UserId } : { id: r.twin2Id, name: `Twin #${r.twin2Id}` },
+        isNpcSession: r.u1IsNpc === 1 || r.u2IsNpc === 1,
+        isGroup: settings.type === "group",
+        participantCount: settings.participantCount ?? 2,
+        compatibilityScore: r.compatibilityScore ?? null,
+        resultSummary: r.resultSummary ?? null,
+      };
+    });
   }),
   getSession: protectedProcedure
     .input(z.object({ id: z.number() }))
@@ -315,6 +320,15 @@ export const matchingRouter = router({
       const myProfile = await ctx.env.DB.prepare(`SELECT company, industry, position, skills, expertise, bio FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
       const friendProfile = await ctx.env.DB.prepare(`SELECT company, industry, position, skills, expertise, bio FROM user_profiles WHERE userId=?`).bind(input.friendId).first<any>();
 
+      // Fetch personality profiles for both users (for personality compatibility dimension)
+      const myPersonality = await ctx.env.DB.prepare(
+        `SELECT bigFive, mbti, mbtiScores, valueProfile FROM personality_profiles WHERE userId=? AND status='completed'`
+      ).bind(ctx.userId).first<any>();
+      const friendPersonality = await ctx.env.DB.prepare(
+        `SELECT bigFive, mbti, mbtiScores, valueProfile FROM personality_profiles WHERE userId=? AND status='completed'`
+      ).bind(input.friendId).first<any>();
+      const hasPersonalityData = !!(myPersonality && friendPersonality);
+
       // Fetch knowledge base for both twins (top 5 entries each for matching context)
       const myKnowledge = (await ctx.env.DB.prepare(
         `SELECT title, summary, content FROM knowledge_base WHERE twinId=? ORDER BY createdAt DESC LIMIT 5`
@@ -467,18 +481,35 @@ export const matchingRouter = router({
           ? `\n\n【Web検索で得られた市場情報】\n${webSearchResults.map(r => r.answer ? `• ${r.query}: ${r.answer}` : "").filter(Boolean).join("\n")}`
           : "";
 
+        // Build personality context if both users have completed profiles
+        let personalityContext = "";
+        if (hasPersonalityData) {
+          const myBF = parseJson<any>(myPersonality.bigFive) || {};
+          const friendBF = parseJson<any>(friendPersonality.bigFive) || {};
+          const formatBF = (bf: any) => `開放性:${bf.openness ?? "?"},誠実性:${bf.conscientiousness ?? "?"},外向性:${bf.extraversion ?? "?"},協調性:${bf.agreeableness ?? "?"},情緒安定性:${100 - (bf.neuroticism ?? 50)}`;
+          personalityContext = `\n\n【人格プロファイル情報】
+- ${twins[0].name}: Big Five (${formatBF(myBF)}), MBTI: ${myPersonality.mbti || "未判定"}
+- ${twins[1].name}: Big Five (${formatBF(friendBF)}), MBTI: ${friendPersonality.mbti || "未判定"}
+※ 上記の人格プロファイルデータも考慮して、personalityCompatibility次元のスコアと理由を算出してください。`;
+        }
+
+        const personalityDimension = hasPersonalityData
+          ? `\n    "personalityCompatibility": {"score": (0-20), "reason": "人格特性の互換性に基づく理由"}`
+          : "";
+        const totalNote = hasPersonalityData ? "6次元合計を100点満点に換算" : "5次元合計";
+
         const analysisPrompt = `以下は「${twins[0].name}」と「${twins[1].name}」のビジネスマッチング対話です。テーマ: ${input.theme}
 
 参加者情報:
 - ${profileSummaries[0]}
 - ${profileSummaries[1]}
-${webSearchSummary}
+${webSearchSummary}${personalityContext}
 
 ${dialogueHistory.map(d => `${d.speaker}: ${d.content}`).join("\n\n")}
 
 以下のJSON形式で分析結果を返してください（日本語で）:
 {
-  "compatibilityScore": (0-100の数値),
+  "compatibilityScore": (0-100の数値, ${totalNote}),
   "summary": "(総合評価の要約)",
   "collaborationPotential": "(協業可能性の詳細な説明)",
   "strengths": ["強み1", "強み2", "強み3"],
@@ -489,7 +520,7 @@ ${dialogueHistory.map(d => `${d.speaker}: ${d.content}`).join("\n\n")}
     "valueAlignment": {"score": (0-20), "reason": "理由"},
     "communicationStyle": {"score": (0-20), "reason": "理由"},
     "businessGoalFit": {"score": (0-20), "reason": "理由"},
-    "complementaryStrengths": {"score": (0-20), "reason": "理由"}
+    "complementaryStrengths": {"score": (0-20), "reason": "理由"}${personalityDimension}
   },
   "detailedAnalysis": "(詳細分析のマークダウン)",
   "roleDistribution": "(役割分担の提案マークダウン)",
@@ -514,9 +545,10 @@ JSONのみ出力し、他の説明は不要です。`;
         } catch { analysis = null; }
 
         if (analysis) {
-          // Validate and fix score consistency: 5 sub-scores (0-20 each) must sum to compatibilityScore
+          // Validate and fix score consistency: sub-scores (0-20 each) must sum to compatibilityScore
           if (analysis.scoreBreakdown) {
-            const dims = ["skillMatch", "valueAlignment", "communicationStyle", "businessGoalFit", "complementaryStrengths"];
+            const baseDims = ["skillMatch", "valueAlignment", "communicationStyle", "businessGoalFit", "complementaryStrengths"];
+            const dims = hasPersonalityData ? [...baseDims, "personalityCompatibility"] : baseDims;
             let computedTotal = 0;
             for (const dim of dims) {
               const sub = analysis.scoreBreakdown[dim];
@@ -525,9 +557,11 @@ JSONのみ出力し、他の説明は不要です。`;
                 computedTotal += sub.score;
               }
             }
-            // Use computed sum (more reliable than LLM self-reported total)
+            // Use computed sum — normalize 6-dim total (max 120) to 0-100 scale
             if (computedTotal > 0) {
-              analysis.compatibilityScore = computedTotal;
+              analysis.compatibilityScore = hasPersonalityData
+                ? Math.round(computedTotal * 100 / 120)
+                : computedTotal;
             }
           }
 
@@ -551,14 +585,25 @@ JSONのみ出力し、他の説明は不要です。`;
           ).run();
         } else {
           // LLM returned non-parseable analysis — insert scripted default
+          const defaultBreakdown: Record<string, { score: number; reason: string }> = {
+            skillMatch: { score: isNpcMatch ? 16 : 13, reason: "関連するスキルセットを持っている" },
+            valueAlignment: { score: isNpcMatch ? 15 : 13, reason: "基本的な価値観が一致している" },
+            communicationStyle: { score: isNpcMatch ? 15 : 13, reason: "建設的な対話ができている" },
+            businessGoalFit: { score: isNpcMatch ? 14 : 13, reason: "ビジネス目標に一定の親和性がある" },
+            complementaryStrengths: { score: isNpcMatch ? 15 : 13, reason: "相互補完的な強みがある" },
+          };
+          if (hasPersonalityData) {
+            defaultBreakdown.personalityCompatibility = { score: isNpcMatch ? 14 : 12, reason: "人格プロファイルに基づく互換性がある" };
+          }
+          const rawTotal = Object.values(defaultBreakdown).reduce((s, d) => s + d.score, 0);
           const defaultAnalysis = {
-            compatibilityScore: isNpcMatch ? 75 : 65,
+            compatibilityScore: hasPersonalityData ? Math.round(rawTotal * 100 / 120) : rawTotal,
             summary: "対話を通じて、双方に協業の可能性が見つかりました。共通の関心分野があり、互いの強みを活かせる領域が確認できました。",
             collaborationPotential: "お互いのスキルセットが補完的であり、段階的な協業から始めることで大きな成果が期待できます。",
             strengths: ["共通の関心テーマがある", "コミュニケーションスタイルが建設的", "互いの専門分野が補完的"],
             challenges: ["具体的な協業プランの策定が必要", "リソース配分の合意形成"],
             recommendations: ["月次の定期ミーティングを設定する", "小規模なPoCプロジェクトから開始する", "成果指標を明確にして進捗を共有する"],
-            scoreBreakdown: { skillMatch: { score: isNpcMatch ? 16 : 13, reason: "関連するスキルセットを持っている" }, valueAlignment: { score: isNpcMatch ? 15 : 13, reason: "基本的な価値観が一致している" }, communicationStyle: { score: isNpcMatch ? 15 : 13, reason: "建設的な対話ができている" }, businessGoalFit: { score: isNpcMatch ? 14 : 13, reason: "ビジネス目標に一定の親和性がある" }, complementaryStrengths: { score: isNpcMatch ? 15 : 13, reason: "相互補完的な強みがある" } },
+            scoreBreakdown: defaultBreakdown,
           };
           await ctx.env.DB.prepare(
             `INSERT INTO matching_results (sessionId, compatibilityScore, scoreBreakdown, collaborationPotential, strengths, challenges, recommendations, summary) VALUES (?,?,?,?,?,?,?,?)`
@@ -578,11 +623,26 @@ JSONのみ出力し、他の説明は不要です。`;
       // Award trust points for matching completion
       await addTrustAction(ctx.env.DB, ctx.userId, "matching_complete", 5, `マッチング完了: ${input.theme}`);
 
-      // Send matching completion notification
+      // Send matching completion notification + report email
       try {
         const result = await ctx.env.DB.prepare(`SELECT compatibilityScore FROM matching_results WHERE sessionId=?`).bind(sessionId).first<any>();
         const score = result?.compatibilityScore ? parseFloat(result.compatibilityScore) : 0;
         await notifyMatchingComplete(ctx.env.DB, ctx.userId, input.theme, score, ctx.env);
+        // Send HTML report email to both participants
+        if (ctx.env.RESEND_API_KEY) {
+          try {
+            // Reuse the exportReport logic inline to generate HTML
+            const twin1Row = await ctx.env.DB.prepare(`SELECT name FROM digital_twins WHERE id=?`).bind(myTwin.id).first<any>();
+            const twin2Row = await ctx.env.DB.prepare(`SELECT name FROM digital_twins WHERE id=?`).bind(friendTwin.id).first<any>();
+            const t1Name = twin1Row?.name || "Twin 1";
+            const t2Name = twin2Row?.name || "Twin 2";
+            const date = new Date().toISOString().slice(0, 10);
+            const dialogueHtml = dialogueHistory.map((d, i) => `<div style="margin:8px 0;padding:12px;background:${i % 2 === 0 ? '#f0f4ff' : '#f0fff4'};border-radius:8px"><strong>${d.speaker}</strong><p style="margin:4px 0 0">${d.content}</p></div>`).join("");
+            const reportHtml = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>マッチングレポート</title></head><body style="font-family:-apple-system,sans-serif;max-width:800px;margin:0 auto;padding:24px"><h1 style="color:#6366f1">マッチングレポート</h1><p>テーマ: <strong>${input.theme}</strong><br>${t1Name} × ${t2Name}<br>日付: ${date}</p><h2>相性スコア: <span style="color:#6366f1">${score}%</span></h2><h2>対話</h2>${dialogueHtml}</body></html>`;
+            await sendMatchingReportEmail(ctx.env.DB, ctx.userId, input.theme, score, reportHtml, ctx.env);
+            await sendMatchingReportEmail(ctx.env.DB, input.friendId, input.theme, score, reportHtml, ctx.env);
+          } catch { /* email failure is non-critical */ }
+        }
       } catch { /* notification failure is non-critical */ }
 
       return { id: sessionId, dialogues: dialogueHistory };
@@ -705,7 +765,22 @@ JSONのみ出力し、他の説明は不要です。`;
       const transcript = dialogues.results.map((d: any) => `Turn ${d.turnNumber} (Twin ${d.speakerTwinId}): ${d.content}`).join("\n");
 
       const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
-      const analysisPrompt = `以下のビジネスマッチング対話を分析してください。\nテーマ: ${session.theme}\n参加者: ${twin1Name} vs ${twin2Name}\n\n対話:\n${transcript}\n\n以下のJSON形式で出力してください:\n{"compatibilityScore":0-100,"summary":"","strengths":[""],"challenges":[""],"recommendations":[""],"scoreBreakdown":{"skillMatch":{"score":0,"reason":""},"valueAlignment":{"score":0,"reason":""},"communicationStyle":{"score":0,"reason":""},"businessGoalFit":{"score":0,"reason":""},"complementaryStrengths":{"score":0,"reason":""}}}`;
+
+      // Check personality profiles for both participants
+      const initiatorUserId = session.initiatorUserId;
+      const friendTwinUserId = twin2?.userId;
+      let analyzeHasPersonality = false;
+      let analyzePersonalityDim = "";
+      if (initiatorUserId && friendTwinUserId) {
+        const p1 = await ctx.env.DB.prepare(`SELECT bigFive, mbti FROM personality_profiles WHERE userId=? AND status='completed'`).bind(initiatorUserId).first<any>();
+        const p2 = await ctx.env.DB.prepare(`SELECT bigFive, mbti FROM personality_profiles WHERE userId=? AND status='completed'`).bind(friendTwinUserId).first<any>();
+        if (p1 && p2) {
+          analyzeHasPersonality = true;
+          analyzePersonalityDim = `,"personalityCompatibility":{"score":0,"reason":""}`;
+        }
+      }
+
+      const analysisPrompt = `以下のビジネスマッチング対話を分析してください。\nテーマ: ${session.theme}\n参加者: ${twin1Name} vs ${twin2Name}\n\n対話:\n${transcript}\n\n以下のJSON形式で出力してください:\n{"compatibilityScore":0-100,"summary":"","strengths":[""],"challenges":[""],"recommendations":[""],"scoreBreakdown":{"skillMatch":{"score":0,"reason":""},"valueAlignment":{"score":0,"reason":""},"communicationStyle":{"score":0,"reason":""},"businessGoalFit":{"score":0,"reason":""},"complementaryStrengths":{"score":0,"reason":""}${analyzePersonalityDim}}}`;
       let analysis: any = { compatibilityScore: 65, summary: "対話分析の結果、一定の協業可能性があります。", strengths: ["共通の関心分野がある"], challenges: ["具体的な連携方法の検討が必要"], recommendations: ["定期的な情報交換の場を設ける"] };
 
       try {
@@ -758,13 +833,18 @@ JSONのみ出力し、他の説明は不要です。`;
 
       const escHtml = (s: string | null | undefined) => (s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
-      const breakdownRows = [
+      const breakdownDims: { label: string; key: string }[] = [
         { label: "スキルマッチ度", key: "skillMatch" },
         { label: "価値観の一致度", key: "valueAlignment" },
         { label: "コミュニケーション", key: "communicationStyle" },
         { label: "ビジネス目標適合度", key: "businessGoalFit" },
         { label: "相互補完性", key: "complementaryStrengths" },
-      ].map(({ label, key }) => {
+      ];
+      // Include personality compatibility row if it exists in the stored breakdown
+      if (sb.personalityCompatibility) {
+        breakdownDims.push({ label: "人格互換性", key: "personalityCompatibility" });
+      }
+      const breakdownRows = breakdownDims.map(({ label, key }) => {
         const d = sb[key] || {};
         return `<tr><td>${label}</td><td style="text-align:center;font-weight:bold">${d.score || 0}/20</td><td>${escHtml(d.reason)}</td></tr>`;
       }).join("");
@@ -1300,6 +1380,490 @@ JSON形式で回答: {"summary": "傾向の要約(50文字)", "topPattern": "最
     };
   }),
 
+  // ============ Feature 1: Friend Invite ============
+  inviteFriend: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+      if (session.initiatorUserId !== ctx.userId) throw new TRPCError({ code: "FORBIDDEN", message: "招待はセッション作成者のみ可能です" });
+      const settings = parseJson<any>(session.settings) || {};
+      const friendId = settings.friendId;
+      if (!friendId) throw new TRPCError({ code: "BAD_REQUEST", message: "友達IDが設定されていません" });
+      const initiator = await ctx.env.DB.prepare(`SELECT name FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      await notifyMatchingInvite(ctx.env.DB, friendId, initiator?.name || "ユーザー", session.theme, input.sessionId, ctx.env);
+      return { sent: true, friendId };
+    }),
+
+  // ============ Feature 2: Matching Analytics Dashboard ============
+  getScoreHistory: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT ms.id as sessionId, ms.theme, ms.createdAt, mr.compatibilityScore
+       FROM matching_sessions ms
+       JOIN matching_results mr ON mr.sessionId = ms.id
+       WHERE ms.initiatorUserId = ? AND ms.status = 'completed'
+       ORDER BY ms.createdAt ASC`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({
+      sessionId: r.sessionId,
+      theme: r.theme,
+      score: r.compatibilityScore ? parseFloat(r.compatibilityScore) : 0,
+      date: r.createdAt?.slice(0, 10) || "",
+    }));
+  }),
+
+  getPersonalityHeatmap: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    // Get latest scoreBreakdown per friend
+    const rows = await ctx.env.DB.prepare(
+      `SELECT ms.id, ms.twin2Id, mr.scoreBreakdown, mr.compatibilityScore,
+        dt.name as friendTwinName, dt.userId as friendUserId, u.name as friendName
+       FROM matching_sessions ms
+       JOIN matching_results mr ON mr.sessionId = ms.id
+       LEFT JOIN digital_twins dt ON dt.id = ms.twin2Id
+       LEFT JOIN users u ON u.id = dt.userId
+       WHERE ms.initiatorUserId = ? AND ms.status = 'completed'
+       ORDER BY ms.createdAt DESC`
+    ).bind(ctx.userId).all<any>();
+
+    // Deduplicate: keep latest per friend
+    const seen = new Set<number>();
+    const heatmapData: any[] = [];
+    for (const r of rows.results ?? []) {
+      const fId = r.friendUserId;
+      if (!fId || seen.has(fId)) continue;
+      seen.add(fId);
+      const breakdown = parseJson<any>(r.scoreBreakdown) || {};
+      heatmapData.push({
+        friendId: fId,
+        friendName: r.friendName || r.friendTwinName || `User #${fId}`,
+        dimensions: {
+          skillMatch: breakdown.skillMatch?.score ?? 0,
+          valueAlignment: breakdown.valueAlignment?.score ?? 0,
+          communicationStyle: breakdown.communicationStyle?.score ?? 0,
+          businessGoalFit: breakdown.businessGoalFit?.score ?? 0,
+          complementaryStrengths: breakdown.complementaryStrengths?.score ?? 0,
+          personalityCompatibility: breakdown.personalityCompatibility?.score ?? 0,
+        },
+        totalScore: r.compatibilityScore ? parseFloat(r.compatibilityScore) : 0,
+      });
+    }
+    return heatmapData;
+  }),
+
+  getFriendCompatibilitySummary: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT dt.userId as friendUserId, u.name as friendName,
+        up.avatarUrl,
+        COUNT(ms.id) as matchCount,
+        AVG(mr.compatibilityScore) as avgScore,
+        MAX(mr.compatibilityScore) as maxScore,
+        ms.theme as latestTheme
+       FROM matching_sessions ms
+       JOIN matching_results mr ON mr.sessionId = ms.id
+       LEFT JOIN digital_twins dt ON dt.id = ms.twin2Id
+       LEFT JOIN users u ON u.id = dt.userId
+       LEFT JOIN user_profiles up ON up.userId = dt.userId
+       WHERE ms.initiatorUserId = ? AND ms.status = 'completed'
+       GROUP BY dt.userId
+       ORDER BY avgScore DESC`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({
+      friendId: r.friendUserId,
+      friendName: r.friendName || `User #${r.friendUserId}`,
+      avatarUrl: r.avatarUrl || null,
+      avgScore: r.avgScore ? Math.round(parseFloat(r.avgScore)) : 0,
+      maxScore: r.maxScore ? Math.round(parseFloat(r.maxScore)) : 0,
+      matchCount: r.matchCount ?? 0,
+      latestTheme: r.latestTheme || "",
+    }));
+  }),
+
+  // ============ Feature 3: Twin Learning Feedback ============
+  rateTurn: protectedProcedure
+    .input(z.object({
+      sessionId: z.number(),
+      turnNumber: z.number(),
+      rating: z.enum(["up", "down"]),
+      comment: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      // Verify session exists
+      const session = await ctx.env.DB.prepare(`SELECT id FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO dialogue_feedback (sessionId, turnNumber, userId, rating, comment, createdAt)
+         VALUES (?,?,?,?,?,datetime('now'))`
+      ).bind(input.sessionId, input.turnNumber, ctx.userId, input.rating, input.comment || null).run();
+
+      return { success: true };
+    }),
+
+  getFeedback: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT * FROM dialogue_feedback WHERE sessionId=? AND userId=? ORDER BY turnNumber`
+      ).bind(input.sessionId, ctx.userId).all<any>();
+      return rows.results ?? [];
+    }),
+
+  applyFeedback: protectedProcedure
+    .input(z.object({ twinId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      // Verify twin ownership
+      const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=? AND userId=?`).bind(input.twinId, ctx.userId).first<any>();
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      // Collect all feedback for sessions involving this twin
+      const feedbackRows = await ctx.env.DB.prepare(
+        `SELECT df.*, md.content as dialogueContent, md.speakerTwinId,
+          ms.theme
+         FROM dialogue_feedback df
+         JOIN matching_dialogues md ON md.sessionId = df.sessionId AND md.turnNumber = df.turnNumber
+         JOIN matching_sessions ms ON ms.id = df.sessionId
+         WHERE df.userId = ? AND (ms.twin1Id = ? OR ms.twin2Id = ?)
+         ORDER BY df.createdAt DESC
+         LIMIT 50`
+      ).bind(ctx.userId, input.twinId, input.twinId).all<any>();
+
+      const feedback = feedbackRows.results ?? [];
+      if (feedback.length === 0) {
+        return { adjusted: false, message: "フィードバックデータがありません" };
+      }
+
+      // Format feedback for LLM analysis
+      const upTurns = feedback.filter((f: any) => f.rating === "up");
+      const downTurns = feedback.filter((f: any) => f.rating === "down");
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "analysis", ctx.env);
+      if (!llmConfig) {
+        return { adjusted: false, message: "LLM APIキーが未設定です" };
+      }
+
+      const feedbackSummary = `## フィードバック分析
+### 高評価 (${upTurns.length}件):
+${upTurns.slice(0, 10).map((f: any) => `- [${f.theme}] "${(f.dialogueContent || "").slice(0, 100)}"${f.comment ? ` (コメント: ${f.comment})` : ""}`).join("\n")}
+
+### 低評価 (${downTurns.length}件):
+${downTurns.slice(0, 10).map((f: any) => `- [${f.theme}] "${(f.dialogueContent || "").slice(0, 100)}"${f.comment ? ` (コメント: ${f.comment})` : ""}`).join("\n")}
+
+### 現在のツイン設定:
+- 名前: ${twin.name}
+- 性格: ${twin.personality || "未設定"}
+- 説明: ${twin.description || "未設定"}`;
+
+      const result = await invokeLLM(llmConfig, [
+        {
+          role: "system",
+          content: `あなたはデジタルツインの人格パラメータを最適化する専門家です。
+ユーザーのフィードバック（高評価/低評価）パターンを分析し、ツインの性格設定の調整を提案してください。
+JSON形式で出力: {"personalityUpdate": "新しい性格設定テキスト", "descriptionUpdate": "新しい説明テキスト(変更不要ならnull)", "reasoning": "調整理由の説明"}`,
+        },
+        { role: "user", content: feedbackSummary },
+      ], { maxTokens: 1024, temperature: 0.4 });
+
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const adjustments = JSON.parse(jsonMatch[0]);
+          const updates: string[] = [];
+          const params: any[] = [];
+
+          if (adjustments.personalityUpdate) {
+            updates.push("personality=?");
+            params.push(adjustments.personalityUpdate);
+          }
+          if (adjustments.descriptionUpdate) {
+            updates.push("description=?");
+            params.push(adjustments.descriptionUpdate);
+          }
+          if (updates.length > 0) {
+            updates.push("updatedAt=datetime('now')");
+            params.push(input.twinId);
+            await ctx.env.DB.prepare(
+              `UPDATE digital_twins SET ${updates.join(",")} WHERE id=?`
+            ).bind(...params).run();
+          }
+
+          return {
+            adjusted: true,
+            reasoning: adjustments.reasoning || "フィードバックに基づいてパラメータを調整しました",
+            feedbackCount: { up: upTurns.length, down: downTurns.length },
+          };
+        }
+      } catch { /* parse error */ }
+
+      return { adjusted: false, message: "LLM分析の結果を解析できませんでした" };
+    }),
+
+  // ============ Group Matching (3-5 participants) ============
+  createGroup: protectedProcedure
+    .input(z.object({
+      friendIds: z.array(z.number()).min(2).max(4),
+      theme: z.string().min(1).max(500),
+      turns: z.number().min(1).max(20).default(5),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      // Plan limits
+      const userRow = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      const userPlan = userRow?.plan || "free";
+      const monthlyLimits: Record<string, number> = { free: 3, premium: 30, enterprise: -1 };
+      const maxMatchings = monthlyLimits[userPlan] ?? 3;
+      if (maxMatchings !== -1) {
+        const usageRow = await ctx.env.DB.prepare(`SELECT matchingsThisMonth FROM usage_tracking WHERE userId=?`).bind(ctx.userId).first<any>();
+        if ((usageRow?.matchingsThisMonth ?? 0) >= maxMatchings) {
+          throw new TRPCError({ code: "FORBIDDEN", message: `月間マッチング上限（${maxMatchings}回）に達しました。` });
+        }
+      }
+
+      const myTwin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!myTwin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIを作成してください" });
+
+      // Gather all participant twins
+      const participants: { userId: number; twinId: number; twinName: string; twinDesc: string; twinPersonality: string; profile: any }[] = [
+        { userId: ctx.userId, twinId: myTwin.id, twinName: myTwin.name, twinDesc: myTwin.description || "", twinPersonality: myTwin.personality || "", profile: null },
+      ];
+
+      const myProfile = await ctx.env.DB.prepare(`SELECT company, industry, position, skills, expertise FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+      participants[0].profile = myProfile;
+
+      for (const friendId of input.friendIds) {
+        const friendTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(friendId).first<any>();
+        if (!friendTwin) throw new TRPCError({ code: "NOT_FOUND", message: `友達 #${friendId} の分身AIがありません` });
+        const friendProfile = await ctx.env.DB.prepare(`SELECT company, industry, position, skills, expertise FROM user_profiles WHERE userId=?`).bind(friendId).first<any>();
+        const nt = normalizeTwin(friendTwin);
+        participants.push({
+          userId: friendId,
+          twinId: friendTwin.id,
+          twinName: nt?.name || friendTwin.name,
+          twinDesc: friendTwin.description || "",
+          twinPersonality: friendTwin.personality || "",
+          profile: friendProfile,
+        });
+      }
+
+      // Create session — twin1Id/twin2Id = first two, rest in participants table
+      const sessionRes = await ctx.env.DB.prepare(
+        `INSERT INTO matching_sessions (initiatorUserId, twin1Id, twin2Id, theme, status, settings) VALUES (?,?,?,?,'running',?)`
+      ).bind(ctx.userId, participants[0].twinId, participants[1].twinId, input.theme,
+        toJson({ type: "group", turns: input.turns, friendIds: input.friendIds, participantCount: participants.length })).run();
+      const sessionId = Number(sessionRes.meta.last_row_id);
+
+      // Insert all participants
+      for (let i = 0; i < participants.length; i++) {
+        await ctx.env.DB.prepare(
+          `INSERT INTO matching_session_participants (sessionId, userId, twinId, position) VALUES (?,?,?,?)`
+        ).bind(sessionId, participants[i].userId, participants[i].twinId, i).run();
+      }
+
+      // Generate round-robin dialogue
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      const dialogueHistory: { speaker: string; content: string }[] = [];
+      const turnsToRun = Math.min(input.turns * participants.length, 30); // total turn count
+
+      for (let turn = 0; turn < turnsToRun; turn++) {
+        const speakerIdx = turn % participants.length;
+        const speaker = participants[speakerIdx];
+
+        let profileCtx = "";
+        if (speaker.profile) {
+          const p = speaker.profile;
+          if (p.company) profileCtx += `所属: ${p.company}。`;
+          if (p.industry) profileCtx += `業界: ${p.industry}。`;
+          if (p.position) profileCtx += `役職: ${p.position}。`;
+          if (p.skills || p.expertise) profileCtx += `得意分野: ${p.skills || p.expertise}。`;
+        }
+
+        const otherNames = participants.filter((_, i) => i !== speakerIdx).map(p => p.twinName).join("、");
+        const systemPrompt = `あなたは「${speaker.twinName}」というデジタル分身AIです。${speaker.twinDesc ? `説明: ${speaker.twinDesc}。` : ""}${speaker.twinPersonality ? `性格: ${speaker.twinPersonality}。` : ""}${profileCtx}
+テーマ「${input.theme}」について${otherNames}とグループディスカッションをしています。
+他の参加者の発言を踏まえ、建設的な意見を述べてください。簡潔に（100〜250文字程度）。`;
+
+        const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
+          { role: "system", content: systemPrompt },
+        ];
+        for (const d of dialogueHistory.slice(-10)) {
+          messages.push({
+            role: d.speaker === speaker.twinName ? "assistant" : "user",
+            content: `${d.speaker}: ${d.content}`,
+          });
+        }
+        if (turn === 0) {
+          messages.push({ role: "user", content: `テーマ「${input.theme}」についてグループディスカッションを始めてください。` });
+        }
+
+        let content = `${speaker.twinName}として、「${input.theme}」についてコメントします。`;
+        let provider = "scripted-fallback";
+        let model = "group-dialogue-v1";
+
+        try {
+          if (llmConfig) {
+            const result = await invokeLLM(llmConfig, messages, { maxTokens: 400, temperature: 0.8 });
+            if (result.content && result.content.length >= 10) {
+              content = result.content.replace(new RegExp(`^${speaker.twinName}:\\s*`, "i"), "").trim();
+              provider = result.provider;
+              model = result.model;
+            }
+          }
+        } catch { /* use fallback */ }
+
+        dialogueHistory.push({ speaker: speaker.twinName, content });
+        await ctx.env.DB.prepare(
+          `INSERT INTO matching_dialogues (sessionId, speakerTwinId, content, turnNumber, aiProvider, aiModel) VALUES (?,?,?,?,?,?)`
+        ).bind(sessionId, speaker.twinId, content, turn, provider, model).run();
+      }
+
+      // Group analysis — pairwise compatibility + overall
+      try {
+        if (llmConfig) {
+          const participantSummaries = participants.map(p => {
+            const parts = [p.twinName];
+            if (p.profile?.company) parts.push(`所属: ${p.profile.company}`);
+            if (p.profile?.industry) parts.push(`業界: ${p.profile.industry}`);
+            if (p.twinDesc) parts.push(`説明: ${p.twinDesc}`);
+            return parts.join("、");
+          });
+
+          const dialogueText = dialogueHistory.map(d => `${d.speaker}: ${d.content}`).join("\n\n");
+
+          const pairNames: string[] = [];
+          for (let i = 0; i < participants.length; i++) {
+            for (let j = i + 1; j < participants.length; j++) {
+              pairNames.push(`"${participants[i].twinName} × ${participants[j].twinName}": {"score": (0-100), "summary": "一言評価"}`);
+            }
+          }
+
+          const analysisPrompt = `以下は${participants.length}人によるグループマッチング対話です。テーマ: ${input.theme}
+
+参加者:
+${participantSummaries.map((s, i) => `${i + 1}. ${s}`).join("\n")}
+
+対話内容:
+${dialogueText}
+
+以下のJSON形式で分析結果を返してください（日本語で）:
+{
+  "overallScore": (0-100),
+  "summary": "グループ全体の相性評価",
+  "pairwise": {
+    ${pairNames.join(",\n    ")}
+  },
+  "strengths": ["強み1", "強み2", "強み3"],
+  "challenges": ["課題1", "課題2"],
+  "recommendations": ["提案1", "提案2", "提案3"],
+  "groupDynamics": "グループダイナミクスの分析マークダウン"
+}
+
+JSONのみ出力してください。`;
+
+          const analysisResult = await invokeLLM(llmConfig, [
+            { role: "system", content: "あなたはグループビジネスマッチングの専門アナリストです。" },
+            { role: "user", content: analysisPrompt },
+          ], { maxTokens: 4096, temperature: 0.5 });
+
+          let analysis: any;
+          try {
+            const jsonMatch = analysisResult.content.match(/\{[\s\S]*\}/);
+            analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+          } catch { analysis = null; }
+
+          if (analysis) {
+            await ctx.env.DB.prepare(
+              `INSERT INTO matching_results (sessionId, compatibilityScore, summary, strengths, challenges, recommendations, detailedAnalysis, scoreBreakdown) VALUES (?,?,?,?,?,?,?,?)`
+            ).bind(
+              sessionId,
+              analysis.overallScore ?? 60,
+              analysis.summary ?? "",
+              toJson(analysis.strengths),
+              toJson(analysis.challenges),
+              toJson(analysis.recommendations),
+              analysis.groupDynamics ?? "",
+              toJson(analysis.pairwise || {}),
+            ).run();
+          } else {
+            await ctx.env.DB.prepare(
+              `INSERT INTO matching_results (sessionId, compatibilityScore, summary, strengths, challenges, recommendations) VALUES (?,?,?,?,?,?)`
+            ).bind(sessionId, 65, "グループ対話の結果、複数の協業可能性が見つかりました。", toJson(["多様な視点がある"]), toJson(["合意形成に時間が必要"]), toJson(["定期的なグループミーティングを設定する"])).run();
+          }
+        } else {
+          await ctx.env.DB.prepare(
+            `INSERT INTO matching_results (sessionId, compatibilityScore, summary, strengths, challenges, recommendations) VALUES (?,?,?,?,?,?)`
+          ).bind(sessionId, 65, "グループ対話の結果、協業の可能性があります。", toJson(["共通の関心分野"]), toJson(["役割分担の検討が必要"]), toJson(["まずは小規模プロジェクトから"])).run();
+        }
+      } catch {
+        try {
+          await ctx.env.DB.prepare(
+            `INSERT INTO matching_results (sessionId, compatibilityScore, summary) VALUES (?,?,?)`
+          ).bind(sessionId, 60, "グループ分析が完了しました。").run();
+        } catch { /* ignore duplicate */ }
+      }
+
+      await ctx.env.DB.prepare(`UPDATE matching_sessions SET status='completed', completedAt=datetime('now') WHERE id=?`).bind(sessionId).run();
+      await addTrustAction(ctx.env.DB, ctx.userId, "group_matching_complete", 8, `グループマッチング完了: ${input.theme}`);
+
+      return { sessionId, participantCount: participants.length };
+    }),
+
+  getGroupSession: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.id).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const settings = parseJson<any>(session.settings) || {};
+      if (settings.type !== "group") throw new TRPCError({ code: "BAD_REQUEST", message: "グループセッションではありません" });
+
+      const participantRows = await ctx.env.DB.prepare(
+        `SELECT msp.*, u.name as userName, dt.name as twinName, dt.description as twinDesc, up.avatarUrl
+         FROM matching_session_participants msp
+         JOIN users u ON u.id = msp.userId
+         JOIN digital_twins dt ON dt.id = msp.twinId
+         LEFT JOIN user_profiles up ON up.userId = msp.userId
+         WHERE msp.sessionId = ?
+         ORDER BY msp.position`
+      ).bind(input.id).all<any>();
+
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT md.*, dt.name as speakerName FROM matching_dialogues md
+         LEFT JOIN digital_twins dt ON dt.id = md.speakerTwinId
+         WHERE md.sessionId = ? ORDER BY md.turnNumber`
+      ).bind(input.id).all<any>();
+
+      const result = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(input.id).first<any>();
+
+      return {
+        session: { ...session, settings },
+        participants: (participantRows.results ?? []).map((p: any) => ({
+          userId: p.userId,
+          twinId: p.twinId,
+          position: p.position,
+          userName: p.userName,
+          twinName: p.twinName,
+          twinDesc: p.twinDesc,
+          avatarUrl: p.avatarUrl || null,
+        })),
+        dialogues: dialogues.results ?? [],
+        result: result ? {
+          ...result,
+          scoreBreakdown: parseJson<any>(result.scoreBreakdown),
+          strengths: parseJson<string[]>(result.strengths),
+          challenges: parseJson<string[]>(result.challenges),
+          recommendations: parseJson<string[]>(result.recommendations),
+        } : null,
+      };
+    }),
+
   getComments: protectedProcedure
     .input(z.object({ sessionId: z.number() }))
     .query(async ({ ctx, input }) => {
@@ -1319,4 +1883,405 @@ JSON形式で回答: {"summary": "傾向の要約(50文字)", "topPattern": "最
       ).bind(input.sessionId).all<any>();
       return rows.results ?? [];
     }),
+
+  // ============ AI Auto-Scheduler v2 ============
+
+  getSchedulerPreferences: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const prefs = await ctx.env.DB.prepare(`SELECT * FROM scheduler_preferences WHERE userId=?`).bind(ctx.userId).first<any>();
+    if (!prefs) return null;
+    return {
+      ...prefs,
+      availableSlots: parseJson<string[]>(prefs.availableSlots) || [],
+      preferredThemes: parseJson<string[]>(prefs.preferredThemes) || [],
+    };
+  }),
+
+  updateSchedulerPreferences: protectedProcedure
+    .input(z.object({
+      availableSlots: z.array(z.string()).optional(),
+      preferredThemes: z.array(z.string()).optional(),
+      autoExecute: z.boolean().optional(),
+      frequency: z.enum(["daily", "weekly", "biweekly", "monthly"]).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const existing = await ctx.env.DB.prepare(`SELECT id FROM scheduler_preferences WHERE userId=?`).bind(ctx.userId).first<any>();
+      if (existing) {
+        const updates: string[] = [];
+        const params: any[] = [];
+        if (input.availableSlots !== undefined) { updates.push("availableSlots=?"); params.push(toJson(input.availableSlots)); }
+        if (input.preferredThemes !== undefined) { updates.push("preferredThemes=?"); params.push(toJson(input.preferredThemes)); }
+        if (input.autoExecute !== undefined) { updates.push("autoExecute=?"); params.push(input.autoExecute ? 1 : 0); }
+        if (input.frequency !== undefined) { updates.push("frequency=?"); params.push(input.frequency); }
+        updates.push("updatedAt=datetime('now')");
+        params.push(ctx.userId);
+        await ctx.env.DB.prepare(`UPDATE scheduler_preferences SET ${updates.join(",")} WHERE userId=?`).bind(...params).run();
+      } else {
+        await ctx.env.DB.prepare(
+          `INSERT INTO scheduler_preferences (userId, availableSlots, preferredThemes, autoExecute, frequency) VALUES (?,?,?,?,?)`
+        ).bind(ctx.userId, toJson(input.availableSlots || []), toJson(input.preferredThemes || []), input.autoExecute ? 1 : 0, input.frequency || "weekly").run();
+      }
+      return { success: true };
+    }),
+
+  getSchedulerSuggestions: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const myTwin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!myTwin) return [];
+
+    const prefs = await ctx.env.DB.prepare(`SELECT * FROM scheduler_preferences WHERE userId=?`).bind(ctx.userId).first<any>();
+    const preferredThemes = parseJson<string[]>(prefs?.preferredThemes) || [];
+
+    // Get friends with twins
+    const friendRows = await ctx.env.DB.prepare(
+      `SELECT u.id as fId, u.name as fName, dt.name as twinName, dt.description as twinDesc, dt.tags as twinTags, up.industry
+       FROM friendships f
+       JOIN users u ON u.id = CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END
+       LEFT JOIN digital_twins dt ON dt.userId = u.id
+       LEFT JOIN user_profiles up ON up.userId = u.id
+       WHERE (f.userId=? OR f.friendId=?) AND f.status='accepted' AND dt.id IS NOT NULL`
+    ).bind(ctx.userId, ctx.userId, ctx.userId).all<any>();
+
+    // Get recent matching history
+    const recentMatches = await ctx.env.DB.prepare(
+      `SELECT ms.theme, ms.twin2Id, mr.compatibilityScore, dt.userId as friendUserId, u.name as friendName
+       FROM matching_sessions ms
+       JOIN matching_results mr ON mr.sessionId = ms.id
+       LEFT JOIN digital_twins dt ON dt.id = ms.twin2Id
+       LEFT JOIN users u ON u.id = dt.userId
+       WHERE ms.initiatorUserId = ? AND ms.status = 'completed'
+       ORDER BY ms.createdAt DESC LIMIT 10`
+    ).bind(ctx.userId).all<any>();
+
+    const friends = friendRows.results ?? [];
+    const history = recentMatches.results ?? [];
+    if (friends.length === 0) return [];
+
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "analysis", ctx.env);
+    if (!llmConfig) {
+      // Fallback: return top 3 friends with generic themes
+      return friends.slice(0, 3).map((f: any) => ({
+        friendId: f.fId,
+        friendName: f.fName,
+        suggestedTheme: preferredThemes[0] || "ビジネス協業の可能性",
+        reason: "プロフィール情報に基づく推薦",
+        estimatedScore: 65,
+      }));
+    }
+
+    const friendSummaries = friends.map((f: any) => `${f.fName}: ${f.twinDesc || ""}${f.industry ? ` (${f.industry})` : ""}`).join("\n");
+    const historyText = history.map((h: any) => `${h.friendName}: テーマ「${h.theme}」→ ${h.compatibilityScore}%`).join("\n");
+
+    const result = await invokeLLM(llmConfig, [
+      { role: "system", content: `あなたはビジネスマッチングスケジューラーです。ユーザーの過去のマッチング結果と友達リストから、次に最適なマッチング相手とテーマを3件提案してください。
+JSON配列で出力: [{"friendName":"名前","suggestedTheme":"テーマ","reason":"理由","estimatedScore":70}]` },
+      { role: "user", content: `私のツイン: ${myTwin.name} - ${myTwin.description || ""}
+好みのテーマ: ${preferredThemes.join(", ") || "なし"}
+
+友達リスト:
+${friendSummaries}
+
+過去のマッチング:
+${historyText || "なし"}
+
+3件の提案をJSONで出力してください。` },
+    ], { maxTokens: 1024, temperature: 0.5 });
+
+    try {
+      const jsonMatch = result.content.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        const suggestions = JSON.parse(jsonMatch[0]);
+        return suggestions.map((s: any) => {
+          const friend = friends.find((f: any) => f.fName === s.friendName);
+          return {
+            friendId: friend?.fId || 0,
+            friendName: s.friendName,
+            suggestedTheme: s.suggestedTheme,
+            reason: s.reason,
+            estimatedScore: s.estimatedScore || 65,
+          };
+        }).filter((s: any) => s.friendId > 0);
+      }
+    } catch {}
+    return [];
+  }),
+
+  executeScheduledMatching: protectedProcedure
+    .input(z.object({ friendId: z.number(), theme: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      // This is basically a wrapper around startStreaming with the suggested params
+      await ensureSchema(ctx.env.DB);
+      // Update lastSuggestionAt
+      await ctx.env.DB.prepare(`UPDATE scheduler_preferences SET lastSuggestionAt=datetime('now') WHERE userId=?`).bind(ctx.userId).run();
+      // Return the friendId and theme so the frontend can call startStreaming
+      return { friendId: input.friendId, theme: input.theme, execute: true };
+    }),
+
+  // ============ Multilingual Twin Dialogue ============
+
+  translateDialogue: protectedProcedure
+    .input(z.object({
+      sessionId: z.number(),
+      targetLanguage: z.string().min(1).max(20),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(input.sessionId).all<any>();
+
+      if (!dialogues.results?.length) return { translations: [] };
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "translation", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "翻訳にはLLM APIキーが必要です" });
+
+      const textsToTranslate = (dialogues.results ?? []).map((d: any) => ({ turnNumber: d.turnNumber, content: d.content }));
+      const batchSize = 5;
+      const translations: { turnNumber: number; original: string; translated: string }[] = [];
+
+      for (let i = 0; i < textsToTranslate.length; i += batchSize) {
+        const batch = textsToTranslate.slice(i, i + batchSize);
+        const prompt = batch.map((t: any) => `[Turn ${t.turnNumber}]: ${t.content}`).join("\n\n");
+
+        const result = await invokeLLM(llmConfig, [
+          { role: "system", content: `You are a professional translator. Translate the following dialogue turns to ${input.targetLanguage}. Keep the [Turn X] prefix. Translate naturally, preserving business context and nuance. Output ONLY the translations, one per line with the same [Turn X] prefix.` },
+          { role: "user", content: prompt },
+        ], { maxTokens: 4096, temperature: 0.2 });
+
+        for (const item of batch) {
+          const regex = new RegExp(`\\[Turn ${item.turnNumber}\\]:\\s*(.+?)(?=\\[Turn |$)`, 's');
+          const match = result.content.match(regex);
+          translations.push({
+            turnNumber: item.turnNumber,
+            original: item.content,
+            translated: match ? match[1].trim() : item.content,
+          });
+        }
+      }
+
+      return { translations, targetLanguage: input.targetLanguage };
+    }),
+
+  createMultilingual: protectedProcedure
+    .input(z.object({
+      friendId: z.number(),
+      theme: z.string().min(1).max(500),
+      turns: z.number().min(1).max(20).default(5),
+      language1: z.string().default("日本語"),
+      language2: z.string().default("English"),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      const myTwin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!myTwin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIを作成してください" });
+
+      const friendTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.friendId).first<any>();
+      if (!friendTwin) throw new TRPCError({ code: "NOT_FOUND", message: "友達の分身AIが見つかりません" });
+
+      const sessionRes = await ctx.env.DB.prepare(
+        `INSERT INTO matching_sessions (initiatorUserId, twin1Id, twin2Id, theme, status, settings) VALUES (?,?,?,?,'running',?)`
+      ).bind(ctx.userId, myTwin.id, friendTwin.id, input.theme,
+        toJson({ friendId: input.friendId, multilingual: true, language1: input.language1, language2: input.language2 })
+      ).run();
+      const sessionId = Number(sessionRes.meta.last_row_id);
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      const dialogueHistory: { speaker: string; content: string; translated: string }[] = [];
+
+      for (let turn = 0; turn < input.turns; turn++) {
+        const isTwin1 = turn % 2 === 0;
+        const speaker = isTwin1 ? myTwin : friendTwin;
+        const speakerLang = isTwin1 ? input.language1 : input.language2;
+        const otherLang = isTwin1 ? input.language2 : input.language1;
+        const speakerName = speaker.name || `Twin #${speaker.id}`;
+
+        const context = dialogueHistory.map(d => `${d.speaker} (${d.content})`).join("\n");
+
+        let content = `${speakerName}として${speakerLang}で発言します。`;
+        let translated = content;
+
+        try {
+          if (llmConfig) {
+            const translatedContext = dialogueHistory.map(d => `${d.speaker}: ${d.translated}`).join("\n");
+
+            const msgs: { role: "system" | "user"; content: string }[] = [
+              { role: "system", content: `あなたは「${speakerName}」です。性格: ${speaker.personality || "プロフェッショナル"}。
+テーマ「${input.theme}」について${speakerLang}で発言してください。
+必ず${speakerLang}で書いてください。他の参加者は${otherLang}で話します。
+発言は100〜250文字程度で簡潔に。` },
+              ...(context ? [{ role: "user" as const, content: `これまでの対話:\n${translatedContext}\n\n${speakerName}として${speakerLang}で次の発言をしてください。` }] : [{ role: "user" as const, content: `テーマ「${input.theme}」について${speakerLang}で最初の発言をしてください。` }]),
+            ];
+            const result = await invokeLLM(llmConfig, msgs, { maxTokens: 512, temperature: 0.8 });
+            if (result.content) content = result.content;
+
+            // Translate to the other language
+            const transResult = await invokeLLM(llmConfig, [
+              { role: "system", content: `Translate the following text to ${otherLang}. Output ONLY the translation, nothing else.` },
+              { role: "user", content },
+            ], { maxTokens: 512, temperature: 0.2 });
+            translated = transResult.content || content;
+          }
+        } catch { translated = content; }
+
+        await ctx.env.DB.prepare(
+          `INSERT INTO matching_dialogues (sessionId, turnNumber, speakerTwinId, content, aiProvider, aiModel, createdAt) VALUES (?,?,?,?,?,?,datetime('now'))`
+        ).bind(sessionId, turn, speaker.id, JSON.stringify({ original: content, translated, language: speakerLang }), "multilingual", "v1").run();
+
+        dialogueHistory.push({ speaker: speakerName, content, translated });
+      }
+
+      // Run standard analysis
+      const dialogueText = dialogueHistory.map(d => `${d.speaker}: ${d.content} [翻訳: ${d.translated}]`).join("\n");
+
+      try {
+        if (llmConfig) {
+          const analysisResult = await invokeLLM(llmConfig, [
+            { role: "system", content: "ビジネスマッチング分析の専門家です。多言語対話を分析してください。JSON形式で回答。" },
+            { role: "user", content: `テーマ: ${input.theme}\n${myTwin.name}(${input.language1}) vs ${friendTwin.name}(${input.language2})\n\n${dialogueText}\n\nJSON: {"compatibilityScore":0-100,"summary":"","strengths":[""],"challenges":[""],"recommendations":[""],"scoreBreakdown":{"skillMatch":{"score":0,"reason":""},"valueAlignment":{"score":0,"reason":""},"communicationStyle":{"score":0,"reason":""},"businessGoalFit":{"score":0,"reason":""},"complementaryStrengths":{"score":0,"reason":""}}}` },
+          ], { maxTokens: 2048 });
+
+          const jsonMatch = analysisResult.content.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const analysis = JSON.parse(jsonMatch[0]);
+            await ctx.env.DB.prepare(
+              `INSERT INTO matching_results (sessionId, compatibilityScore, summary, scoreBreakdown, strengths, challenges, recommendations) VALUES (?,?,?,?,?,?,?)`
+            ).bind(sessionId, analysis.compatibilityScore ?? 65, analysis.summary || "", toJson(analysis.scoreBreakdown || {}), toJson(analysis.strengths || []), toJson(analysis.challenges || []), toJson(analysis.recommendations || [])).run();
+          }
+        }
+      } catch {
+        await ctx.env.DB.prepare(
+          `INSERT INTO matching_results (sessionId, compatibilityScore, summary) VALUES (?,?,?)`
+        ).bind(sessionId, 65, "多言語対話が完了しました。").run();
+      }
+
+      await ctx.env.DB.prepare(`UPDATE matching_sessions SET status='completed', completedAt=datetime('now') WHERE id=?`).bind(sessionId).run();
+
+      return { sessionId };
+    }),
+
+  // ============ Dialogue Replay Mode ============
+
+  getReplayData: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+      
+      const twin1 = await ctx.env.DB.prepare(`SELECT id, name, personality, avatarUrl FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+      const twin2 = await ctx.env.DB.prepare(`SELECT id, name, personality, avatarUrl FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+      
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(input.sessionId).all<any>();
+      
+      const notes = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_notes WHERE sessionId=? AND userId=? ORDER BY turnNumber`
+      ).bind(input.sessionId, ctx.userId).all<any>();
+      
+      const result = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(input.sessionId).first<any>();
+      
+      return {
+        session: { ...session, settings: parseJson<any>(session.settings) },
+        twin1: twin1 ? { id: twin1.id, name: twin1.name, personality: twin1.personality, avatarUrl: twin1.avatarUrl } : null,
+        twin2: twin2 ? { id: twin2.id, name: twin2.name, personality: twin2.personality, avatarUrl: twin2.avatarUrl } : null,
+        dialogues: dialogues.results ?? [],
+        notes: (notes.results ?? []).map((n: any) => ({
+          turnNumber: n.turnNumber,
+          content: n.content,
+          updatedAt: n.updatedAt,
+        })),
+        result: result ? {
+          compatibilityScore: result.compatibilityScore,
+          summary: result.summary,
+        } : null,
+      };
+    }),
+
+  saveNote: protectedProcedure
+    .input(z.object({
+      sessionId: z.number(),
+      turnNumber: z.number(),
+      content: z.string().max(1000),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      if (!input.content.trim()) {
+        // Delete note if empty
+        await ctx.env.DB.prepare(
+          `DELETE FROM matching_notes WHERE sessionId=? AND turnNumber=? AND userId=?`
+        ).bind(input.sessionId, input.turnNumber, ctx.userId).run();
+        return { deleted: true };
+      }
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO matching_notes (sessionId, turnNumber, userId, content, updatedAt) VALUES (?,?,?,?,datetime('now'))`
+      ).bind(input.sessionId, input.turnNumber, ctx.userId, input.content.trim()).run();
+      return { saved: true };
+    }),
+
+  // ============ A/B Test Matching ============
+
+  abTestCreate: protectedProcedure.input(z.object({
+    theme: z.string().min(1),
+    friendId: z.number(),
+    personalityA: z.string(),
+    personalityB: z.string(),
+    turns: z.number().min(1).max(10).optional(),
+  })).mutation(async ({ ctx, input }) => {
+    await ensureSchema(ctx.env.DB);
+    const myTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=?`).bind(ctx.userId).first<any>();
+    const friendTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=?`).bind(input.friendId).first<any>();
+    if (!myTwin || !friendTwin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+    // Create two sessions: A and B with different personality settings
+    const settingsA = toJson({ abTest: true, variant: "A", personality: input.personalityA, friendId: input.friendId, turns: input.turns ?? 5 });
+    const settingsB = toJson({ abTest: true, variant: "B", personality: input.personalityB, friendId: input.friendId, turns: input.turns ?? 5 });
+
+    const resA = await ctx.env.DB.prepare(
+      `INSERT INTO matching_sessions (initiatorUserId, twin1Id, twin2Id, theme, status, settings) VALUES (?,?,?,?,'pending',?)`
+    ).bind(ctx.userId, myTwin.id, friendTwin.id, input.theme, settingsA).run();
+
+    const resB = await ctx.env.DB.prepare(
+      `INSERT INTO matching_sessions (initiatorUserId, twin1Id, twin2Id, theme, status, settings) VALUES (?,?,?,?,'pending',?)`
+    ).bind(ctx.userId, myTwin.id, friendTwin.id, input.theme, settingsB).run();
+
+    return { sessionIdA: Number(resA.meta.last_row_id), sessionIdB: Number(resB.meta.last_row_id) };
+  }),
+
+  abTestResults: protectedProcedure.input(z.object({
+    sessionIdA: z.number(), sessionIdB: z.number(),
+  })).query(async ({ ctx, input }) => {
+    await ensureSchema(ctx.env.DB);
+    const getSessionData = async (sid: number) => {
+      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=? AND initiatorUserId=?`).bind(sid, ctx.userId).first<any>();
+      if (!session) return null;
+      const result = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(sid).first<any>();
+      const dialogues = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(sid).all<any>();
+      return {
+        session: { ...session, settings: parseJson<any>(session.settings) },
+        result: result ? { ...result, scoreBreakdown: parseJson<any>(result.scoreBreakdown), strengths: parseJson<string[]>(result.strengths), challenges: parseJson<string[]>(result.challenges), recommendations: parseJson<string[]>(result.recommendations) } : null,
+        dialogues: dialogues.results ?? [],
+      };
+    };
+    const a = await getSessionData(input.sessionIdA);
+    const b = await getSessionData(input.sessionIdB);
+    if (!a || !b) throw new TRPCError({ code: "NOT_FOUND" });
+
+    const scoreA = a.result?.compatibilityScore ?? 0;
+    const scoreB = b.result?.compatibilityScore ?? 0;
+    const winner = scoreA > scoreB ? "A" : scoreB > scoreA ? "B" : "tie";
+    const diff = Math.abs(scoreA - scoreB);
+
+    return { a, b, comparison: { winner, scoreDiff: diff, scoreA, scoreB } };
+  }),
+
+  abTestList: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT ms.id, ms.theme, ms.status, ms.settings, ms.createdAt, mr.compatibilityScore FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id WHERE ms.initiatorUserId=? AND json_extract(ms.settings, '$.abTest')=1 ORDER BY ms.createdAt DESC LIMIT 50`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, settings: parseJson<any>(r.settings) }));
+  }),
 });

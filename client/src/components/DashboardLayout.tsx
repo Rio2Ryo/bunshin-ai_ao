@@ -21,8 +21,9 @@ import {
 } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
 import { useRealtimeNotifications } from "@/hooks/useRealtimeNotifications";
+import { useWebPush } from "@/hooks/useWebPush";
 import { toast } from "sonner";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, Activity, X } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, Activity, X, CalendarClock, LayoutGrid, FlaskConical } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -169,6 +170,8 @@ function DashboardLayoutContent({
   const unreadCount = notifData?.unreadCount ?? 0;
 
   // Real-time notifications via SSE
+  const webPush = useWebPush();
+
   useRealtimeNotifications({
     enabled: !!user,
     onNotification: (notif) => {
@@ -207,6 +210,8 @@ function DashboardLayoutContent({
         { icon: Globe, label: t("nav.discover"), path: "/discover" },
         { icon: UserPlus, label: t("nav.friends"), path: "/friends" },
         { icon: Users, label: t("nav.matching"), path: "/matching" },
+        { icon: CalendarClock, label: language === "en" ? "Scheduler" : "スケジューラー", path: "/scheduler" },
+        { icon: LayoutGrid, label: language === "en" ? "Workspace" : "ワークスペース", path: "/workspaces" },
         { icon: Lightbulb, label: t("nav.recommendations"), path: "/recommendations" },
         { icon: Heart, label: t("nav.intimacy"), path: "/intimacy" },
       ],
@@ -220,6 +225,8 @@ function DashboardLayoutContent({
         { icon: CreditCard, label: t("nav.cards"), path: "/cards" },
         { icon: Crown, label: t("nav.plan"), path: "/plan" },
         { icon: Brain, label: language === "en" ? "Personality" : "人格診断", path: "/personality" },
+        { icon: Brain, label: language === "en" ? "AI Mentor" : "AIメンター", path: "/mentor" },
+        { icon: FlaskConical, label: language === "en" ? "A/B Test" : "A/Bテスト", path: "/ab-test" },
       ],
     },
   ], [t, language]);
@@ -453,6 +460,20 @@ function DashboardLayoutContent({
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
+            {/* Push notification toggle */}
+            {webPush.isSupported && (
+              <div className="px-1 mb-2">
+                <button
+                  onClick={() => webPush.isSubscribed ? webPush.unsubscribe() : webPush.subscribe()}
+                  disabled={webPush.isLoading}
+                  className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent transition-colors w-full group-data-[collapsible=icon]:justify-center"
+                  aria-label={webPush.isSubscribed ? "プッシュ通知をオフ" : "プッシュ通知をオン"}
+                >
+                  <Bell className={`h-4 w-4 shrink-0 ${webPush.isSubscribed ? "text-primary" : ""}`} aria-hidden="true" />
+                  {!isCollapsed && <span>{webPush.isSubscribed ? "Push ON" : "Push OFF"}</span>}
+                </button>
+              </div>
+            )}
             {/* Language toggle */}
             <div className="px-1 mb-2">
               <button

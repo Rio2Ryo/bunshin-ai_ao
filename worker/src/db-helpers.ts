@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS digital_twins (
   personalitySimilarity REAL,
   accuracyScore REAL,
   trainingIterations INTEGER NOT NULL DEFAULT 0,
+  avatarUrl TEXT,
   createdAt TEXT NOT NULL DEFAULT (datetime('now')),
   updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -713,6 +714,134 @@ CREATE TABLE IF NOT EXISTS personality_profiles (
   updatedAt TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_personality_profiles_userId ON personality_profiles(userId);
+
+CREATE TABLE IF NOT EXISTS dialogue_feedback (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  turnNumber INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  rating TEXT NOT NULL CHECK(rating IN ('up', 'down')),
+  comment TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, turnNumber, userId)
+);
+CREATE INDEX IF NOT EXISTS idx_dialogue_feedback_session ON dialogue_feedback(sessionId);
+CREATE INDEX IF NOT EXISTS idx_dialogue_feedback_user ON dialogue_feedback(userId);
+
+CREATE TABLE IF NOT EXISTS matching_session_participants (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_msp_sessionId ON matching_session_participants(sessionId);
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_push_subs_userId ON push_subscriptions(userId);
+
+CREATE TABLE IF NOT EXISTS matching_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  turnNumber INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, turnNumber, userId)
+);
+CREATE INDEX IF NOT EXISTS idx_matching_notes_session ON matching_notes(sessionId);
+CREATE TABLE IF NOT EXISTS workspaces (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  description TEXT,
+  ownerId INTEGER NOT NULL,
+  settings TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_workspaces_ownerId ON workspaces(ownerId);
+
+CREATE TABLE IF NOT EXISTS workspace_members (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspaceId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member',
+  joinedAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(workspaceId, userId)
+);
+CREATE INDEX IF NOT EXISTS idx_ws_members_ws ON workspace_members(workspaceId);
+CREATE INDEX IF NOT EXISTS idx_ws_members_user ON workspace_members(userId);
+
+CREATE TABLE IF NOT EXISTS workspace_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspaceId INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT,
+  metadata TEXT,
+  createdBy INTEGER NOT NULL,
+  lastEditedBy INTEGER,
+  positionX REAL DEFAULT 0,
+  positionY REAL DEFAULT 0,
+  width REAL DEFAULT 300,
+  height REAL DEFAULT 200,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ws_items_ws ON workspace_items(workspaceId);
+
+CREATE TABLE IF NOT EXISTS workspace_goals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspaceId INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  targetScore INTEGER,
+  currentScore INTEGER DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',
+  dueDate TEXT,
+  createdBy INTEGER NOT NULL,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ws_goals_ws ON workspace_goals(workspaceId);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  keyHash TEXT NOT NULL UNIQUE,
+  keyPrefix TEXT NOT NULL,
+  permissions TEXT,
+  lastUsedAt TEXT,
+  revokedAt TEXT,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_userId ON api_keys(userId);
+CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(keyHash);
+CREATE TABLE IF NOT EXISTS webhooks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  url TEXT NOT NULL,
+  events TEXT NOT NULL,
+  secret TEXT NOT NULL,
+  isActive INTEGER NOT NULL DEFAULT 1,
+  lastTriggeredAt TEXT,
+  failCount INTEGER NOT NULL DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_webhooks_userId ON webhooks(userId);
+
 `;
 
 // Migrations to run after schema creation (ALTER TABLE etc.)
@@ -744,6 +873,19 @@ ALTER TABLE user_profiles ADD COLUMN avatarUrl TEXT;
 ALTER TABLE users ADD COLUMN emailVerified INTEGER;
 ALTER TABLE twin_milestones ADD COLUMN name TEXT NOT NULL DEFAULT '';
 ALTER TABLE twin_milestones ADD COLUMN description TEXT NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS scheduler_preferences (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL UNIQUE,
+  availableSlots TEXT,
+  preferredThemes TEXT,
+  autoExecute INTEGER NOT NULL DEFAULT 0,
+  frequency TEXT NOT NULL DEFAULT 'weekly',
+  lastSuggestionAt TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_scheduler_pref_userId ON scheduler_preferences(userId);
+ALTER TABLE digital_twins ADD COLUMN avatarUrl TEXT;
 `;
 
 let schemaReady = false;
