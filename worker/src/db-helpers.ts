@@ -1064,6 +1064,50 @@ CREATE TABLE IF NOT EXISTS workspace_board_items (
   createdAt TEXT DEFAULT (datetime('now')),
   updatedAt TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS negotiation_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  theme TEXT NOT NULL,
+  difficulty TEXT NOT NULL DEFAULT 'beginner',
+  opponentRole TEXT,
+  score INTEGER,
+  feedback TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  personaId INTEGER,
+  createdAt TEXT DEFAULT (datetime('now')),
+  completedAt TEXT
+);
+
+CREATE TABLE IF NOT EXISTS negotiation_turns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  negotiationId INTEGER NOT NULL,
+  turnNumber INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS matching_emotion_analysis (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  turnNumber INTEGER NOT NULL,
+  speaker TEXT,
+  sentiment TEXT,
+  emotion TEXT,
+  confidence INTEGER DEFAULT 50,
+  intensity INTEGER DEFAULT 50,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, turnNumber)
+);
+
+CREATE TABLE IF NOT EXISTS smart_matching_recommendations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  recommendations TEXT,
+  generatedAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(userId)
+);
 `;
 
 let schemaReady = false;

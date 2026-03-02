@@ -72,6 +72,8 @@ const Feed = lazy(() => import("./pages/Feed"));
 const SkillTree = lazy(() => import("./pages/SkillTree"));
 const NotificationDashboard = lazy(() => import("./pages/NotificationDashboard"));
 const MatchingInsights = lazy(() => import("./pages/MatchingInsights"));
+const NegotiationSimulator = lazy(() => import("./pages/NegotiationSimulator"));
+const EmotionDashboard = lazy(() => import("./pages/EmotionDashboard"));
 
 function PageLoader() {
   return (
@@ -148,6 +150,8 @@ function Router() {
         <Route path="/feed" component={Feed} />
         <Route path="/skill-tree" component={SkillTree} />
         <Route path="/notifications" component={NotificationDashboard} />
+        <Route path="/negotiation" component={NegotiationSimulator} />
+        <Route path="/emotions" component={EmotionDashboard} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

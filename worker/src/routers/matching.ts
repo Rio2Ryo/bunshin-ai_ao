@@ -2918,4 +2918,492 @@ JSONのみ出力してください。`;
         };
       });
     }),
+
+  // ============ Phase 17: AIネゴシエーション・シミュレーター ============
+
+  startNegotiation: protectedProcedure
+    .input(z.object({
+      theme: z.string(),
+      difficulty: z.enum(["beginner", "intermediate", "advanced"]),
+      personaId: z.number().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      const difficultyProfiles: Record<string, { role: string; style: string }> = {
+        beginner: { role: "協力的なビジネスパートナー", style: "穏やかで協力的。相手の提案を受け入れやすく、Win-Winを目指す。" },
+        intermediate: { role: "経験豊富な交渉担当者", style: "論理的で冷静。自社の利益を守りつつ、合理的な妥協点を探る。時折プレッシャーをかける。" },
+        advanced: { role: "厳しい交渉のプロフェッショナル", style: "非常にタフ。高圧的な戦術、沈黙、最後通牒を使う。簡単には譲歩しない。相手の弱点を突く。" },
+      };
+
+      const profile = difficultyProfiles[input.difficulty];
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO negotiation_sessions (userId, theme, difficulty, opponentRole, personaId, status) VALUES (?,?,?,?,?,?)`
+      ).bind(ctx.userId, input.theme, input.difficulty, profile.role, input.personaId ?? null, "active").run();
+      const sessionId = res.meta?.last_row_id as number;
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      let opponentMessage = `こんにちは。「${input.theme}」についてお話しましょう。私は${profile.role}です。まず、貴社のご要望をお聞かせください。`;
+
+      if (llmConfig) {
+        try {
+          const result = await invokeLLM(llmConfig, [
+            { role: "system", content: `あなたはビジネス交渉のロールプレイ相手です。\n役割: ${profile.role}\n交渉スタイル: ${profile.style}\n交渉テーマ: ${input.theme}\n\nあなたは交渉の相手方として振る舞います。最初の発言として、自己紹介と自社の立場を述べ、交渉を開始してください。日本語で簡潔に（200文字以内で）応答してください。` },
+            { role: "user", content: `交渉テーマ「${input.theme}」について、最初の発言をしてください。` },
+          ], { maxTokens: 512, temperature: 0.8 });
+          opponentMessage = result.content;
+        } catch { /* use fallback */ }
+      }
+
+      await ctx.env.DB.prepare(
+        `INSERT INTO negotiation_turns (negotiationId, turnNumber, role, content) VALUES (?,?,?,?)`
+      ).bind(sessionId, 1, "opponent", opponentMessage).run();
+
+      return { sessionId, opponentMessage, opponentRole: profile.role };
+    }),
+
+  sendNegotiationMessage: protectedProcedure
+    .input(z.object({
+      negotiationId: z.number(),
+      message: z.string(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      const session = await ctx.env.DB.prepare(
+        `SELECT * FROM negotiation_sessions WHERE id=? AND userId=? AND status='active'`
+      ).bind(input.negotiationId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "交渉セッションが見つかりません" });
+
+      const turns = await ctx.env.DB.prepare(
+        `SELECT role, content FROM negotiation_turns WHERE negotiationId=? ORDER BY turnNumber ASC`
+      ).bind(input.negotiationId).all<any>();
+      const history = (turns.results ?? []).map((t: any) => `${t.role === "user" ? "あなた" : "相手"}: ${t.content}`).join("\n");
+
+      const nextTurn = (turns.results?.length ?? 0) + 1;
+
+      await ctx.env.DB.prepare(
+        `INSERT INTO negotiation_turns (negotiationId, turnNumber, role, content) VALUES (?,?,?,?)`
+      ).bind(input.negotiationId, nextTurn, "user", input.message).run();
+
+      const difficultyStyles: Record<string, string> = {
+        beginner: "穏やかで協力的。相手の提案を受け入れやすく、Win-Winを目指す。",
+        intermediate: "論理的で冷静。自社の利益を守りつつ、合理的な妥協点を探る。時折プレッシャーをかける。",
+        advanced: "非常にタフ。高圧的な戦術、沈黙、最後通牒を使う。簡単には譲歩しない。相手の弱点を突く。",
+      };
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      let opponentResponse = "承知しました。その点についてもう少し具体的にお聞かせいただけますか？";
+
+      if (llmConfig) {
+        try {
+          const result = await invokeLLM(llmConfig, [
+            { role: "system", content: `あなたはビジネス交渉のロールプレイ相手です。\n役割: ${session.opponentRole}\n交渉スタイル: ${difficultyStyles[session.difficulty as string] || difficultyStyles.beginner}\n交渉テーマ: ${session.theme}\n\nこれまでの会話:\n${history}\n\n相手の最新発言に対して、あなたの役割に忠実に応答してください。日本語で簡潔に（200文字以内で）応答してください。` },
+            { role: "user", content: input.message },
+          ], { maxTokens: 512, temperature: 0.8 });
+          opponentResponse = result.content;
+        } catch { /* use fallback */ }
+      }
+
+      await ctx.env.DB.prepare(
+        `INSERT INTO negotiation_turns (negotiationId, turnNumber, role, content) VALUES (?,?,?,?)`
+      ).bind(input.negotiationId, nextTurn + 1, "opponent", opponentResponse).run();
+
+      return { opponentResponse, turnNumber: nextTurn + 1 };
+    }),
+
+  endNegotiation: protectedProcedure
+    .input(z.object({ negotiationId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      const session = await ctx.env.DB.prepare(
+        `SELECT * FROM negotiation_sessions WHERE id=? AND userId=?`
+      ).bind(input.negotiationId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "交渉セッションが見つかりません" });
+
+      const turns = await ctx.env.DB.prepare(
+        `SELECT role, content, turnNumber FROM negotiation_turns WHERE negotiationId=? ORDER BY turnNumber ASC`
+      ).bind(input.negotiationId).all<any>();
+      const dialogue = (turns.results ?? []).map((t: any) => `ターン${t.turnNumber} [${t.role === "user" ? "ユーザー" : "相手"}]: ${t.content}`).join("\n");
+
+      let analysis: any = { overallScore: 50, techniques: [], strengths: [], improvements: [], detailedFeedback: "分析を完了できませんでした" };
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (llmConfig) {
+        try {
+          const result = await invokeLLM(llmConfig, [
+            { role: "system", content: `あなたはビジネス交渉スキルの評価エキスパートです。以下の交渉ロールプレイを分析し、ユーザーの交渉スキルを評価してください。\n\n交渉テーマ: ${session.theme}\n難易度: ${session.difficulty}\n相手の役割: ${session.opponentRole}\n\n以下のJSON形式で回答してください（JSONのみ、他のテキストは不要）:\n{\n  "overallScore": <0-100の総合スコア>,\n  "techniques": [\n    { "name": "<技法名>", "score": <0-100>, "feedback": "<具体的フィードバック>" }\n  ],\n  "strengths": ["<強み1>", "<強み2>"],\n  "improvements": ["<改善点1>", "<改善点2>"],\n  "detailedFeedback": "<詳細な総合フィードバック>"\n}\n\ntechniques には最低5つの評価軸を含めてください:\n- 論理的説得力\n- 感情コントロール\n- 創造的解決策\n- 情報収集力\n- 譲歩戦略` },
+            { role: "user", content: `以下の交渉を評価してください:\n\n${dialogue}` },
+          ], { maxTokens: 2048 });
+          const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+          if (jsonMatch) analysis = JSON.parse(jsonMatch[0]);
+        } catch { /* use default */ }
+      }
+
+      await ctx.env.DB.prepare(
+        `UPDATE negotiation_sessions SET status='completed', score=?, feedback=?, completedAt=datetime('now') WHERE id=?`
+      ).bind(analysis.overallScore, toJson(analysis), input.negotiationId).run();
+
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (twin) {
+        const existing = await ctx.env.DB.prepare(
+          `SELECT id, level FROM twin_skill_levels WHERE twinId=? AND skillType='negotiation'`
+        ).bind(twin.id).first<any>();
+        if (existing) {
+          const newLevel = Math.min(5, (existing.level as number) + 1);
+          await ctx.env.DB.prepare(
+            `UPDATE twin_skill_levels SET level=?, updatedAt=datetime('now') WHERE id=?`
+          ).bind(newLevel, existing.id).run();
+        } else {
+          await ctx.env.DB.prepare(
+            `INSERT INTO twin_skill_levels (twinId, userId, skillType, level) VALUES (?,?,?,?)`
+          ).bind(twin.id, ctx.userId, "negotiation", 1).run();
+        }
+      }
+
+      return analysis;
+    }),
+
+  getNegotiationHistory: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+
+    const rows = await ctx.env.DB.prepare(
+      `SELECT ns.id, ns.theme, ns.difficulty, ns.score, ns.opponentRole, ns.status, ns.createdAt,
+              (SELECT COUNT(*) FROM negotiation_turns WHERE negotiationId=ns.id) as turnCount
+       FROM negotiation_sessions ns
+       WHERE ns.userId=?
+       ORDER BY ns.createdAt DESC
+       LIMIT 50`
+    ).bind(ctx.userId).all<any>();
+
+    return (rows.results ?? []).map((r: any) => ({
+      id: r.id,
+      theme: r.theme,
+      difficulty: r.difficulty,
+      score: r.score,
+      opponentRole: r.opponentRole,
+      status: r.status,
+      turnCount: r.turnCount,
+      createdAt: r.createdAt,
+    }));
+  }),
+
+  // ============ Phase 17: ツイン感情ダッシュボード ============
+
+  analyzeEmotions: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      const session = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_sessions WHERE id=? AND initiatorUserId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "マッチングセッションが見つかりません" });
+
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT md.turnNumber, md.content, md.speakerTwinId, dt.name as speakerName
+         FROM matching_dialogues md
+         LEFT JOIN digital_twins dt ON dt.id = md.speakerTwinId
+         WHERE md.sessionId=?
+         ORDER BY md.turnNumber ASC`
+      ).bind(input.sessionId).all<any>();
+
+      if (!dialogues.results?.length) throw new TRPCError({ code: "NOT_FOUND", message: "対話データがありません" });
+
+      const allTurns = (dialogues.results ?? []).map((d: any) => `ターン${d.turnNumber} [${d.speakerName || "Twin"}]: ${d.content}`).join("\n");
+
+      let analyses: any[] = [];
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "analysis", ctx.env);
+      if (llmConfig) {
+        try {
+          const result = await invokeLLM(llmConfig, [
+            { role: "system", content: `あなたは感情分析の専門家です。以下のビジネス対話の各ターンの感情を分析してください。\n\n各ターンについて以下のJSON配列で回答してください（JSONのみ）:\n[\n  {\n    "turnNumber": <ターン番号>,\n    "speaker": "<発言者名>",\n    "sentiment": "positive" | "neutral" | "negative",\n    "emotion": "<具体的感情: confident, anxious, enthusiastic, cautious, frustrated, hopeful, assertive, defensive 等>",\n    "confidence": <0-100: 分析の確信度>,\n    "intensity": <0-100: 感情の強さ>\n  }\n]` },
+            { role: "user", content: `以下の対話を分析してください:\n\n${allTurns}` },
+          ], { maxTokens: 2048 });
+          const jsonMatch = result.content.match(/\[[\s\S]*\]/);
+          if (jsonMatch) analyses = JSON.parse(jsonMatch[0]);
+        } catch { /* empty */ }
+      }
+
+      if (!analyses.length) {
+        analyses = (dialogues.results ?? []).map((d: any) => ({
+          turnNumber: d.turnNumber,
+          speaker: d.speakerName || "Twin",
+          sentiment: "neutral" as const,
+          emotion: "neutral",
+          confidence: 50,
+          intensity: 50,
+        }));
+      }
+
+      for (const a of analyses) {
+        await ctx.env.DB.prepare(
+          `INSERT OR REPLACE INTO matching_emotion_analysis (sessionId, turnNumber, speaker, sentiment, emotion, confidence, intensity)
+           VALUES (?,?,?,?,?,?,?)`
+        ).bind(input.sessionId, a.turnNumber, a.speaker ?? null, a.sentiment ?? "neutral", a.emotion ?? "neutral", a.confidence ?? 50, a.intensity ?? 50).run();
+      }
+
+      return analyses;
+    }),
+
+  getEmotionAnalysis: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      const rows = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_emotion_analysis WHERE sessionId=? ORDER BY turnNumber ASC`
+      ).bind(input.sessionId).all<any>();
+
+      const results = rows.results ?? [];
+      const total = results.length || 1;
+      const posCount = results.filter((r: any) => r.sentiment === "positive").length;
+      const negCount = results.filter((r: any) => r.sentiment === "negative").length;
+      const avgConfidence = Math.round(results.reduce((s: number, r: any) => s + (r.confidence || 0), 0) / total);
+      const avgIntensity = Math.round(results.reduce((s: number, r: any) => s + (r.intensity || 0), 0) / total);
+
+      return {
+        turns: results.map((r: any) => ({
+          turnNumber: r.turnNumber,
+          speaker: r.speaker,
+          sentiment: r.sentiment,
+          emotion: r.emotion,
+          confidence: r.confidence,
+          intensity: r.intensity,
+        })),
+        summary: {
+          totalTurns: results.length,
+          positiveRatio: Math.round((posCount / total) * 100),
+          negativeRatio: Math.round((negCount / total) * 100),
+          neutralRatio: Math.round(((total - posCount - negCount) / total) * 100),
+          avgConfidence,
+          avgIntensity,
+        },
+      };
+    }),
+
+  getEmotionComparison: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      const session = await ctx.env.DB.prepare(
+        `SELECT ms.*, dt1.name as twin1Name, dt1.userId as twin1UserId, dt2.name as twin2Name, dt2.userId as twin2UserId
+         FROM matching_sessions ms
+         LEFT JOIN digital_twins dt1 ON dt1.id = ms.twin1Id
+         LEFT JOIN digital_twins dt2 ON dt2.id = ms.twin2Id
+         WHERE ms.id=?`
+      ).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
+
+      const emotions = await ctx.env.DB.prepare(
+        `SELECT ea.*, md.speakerTwinId
+         FROM matching_emotion_analysis ea
+         LEFT JOIN matching_dialogues md ON md.sessionId = ea.sessionId AND md.turnNumber = ea.turnNumber
+         WHERE ea.sessionId=?
+         ORDER BY ea.turnNumber ASC`
+      ).bind(input.sessionId).all<any>();
+
+      const allRows = emotions.results ?? [];
+      const myTwinId = session.twin1UserId === ctx.userId ? session.twin1Id : session.twin2Id;
+
+      const myTwinRows = allRows.filter((r: any) => r.speakerTwinId === myTwinId);
+      const opponentRows = allRows.filter((r: any) => r.speakerTwinId !== myTwinId);
+
+      const calcStats = (rows: any[]) => {
+        const total = rows.length || 1;
+        const avgConf = Math.round(rows.reduce((s: number, r: any) => s + (r.confidence || 0), 0) / total);
+        const avgInt = Math.round(rows.reduce((s: number, r: any) => s + (r.intensity || 0), 0) / total);
+        const emotionList = rows.map((r: any) => r.emotion as string).filter(Boolean);
+        const emotionCounts: Record<string, number> = {};
+        emotionList.forEach((e) => { emotionCounts[e] = (emotionCounts[e] || 0) + 1; });
+        const dominant = Object.entries(emotionCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "neutral";
+        const sentiments = rows.map((r: any) => r.sentiment as string);
+        const trend = sentiments.length > 1
+          ? (sentiments[sentiments.length - 1] === "positive" ? "improving" : sentiments[sentiments.length - 1] === "negative" ? "declining" : "stable")
+          : "stable";
+        return { avgConfidence: avgConf, avgIntensity: avgInt, dominantEmotion: dominant, sentimentTrend: trend };
+      };
+
+      const myStats = calcStats(myTwinRows);
+      const opponentStats = calcStats(opponentRows);
+
+      const comparison = myStats.avgConfidence > opponentStats.avgConfidence
+        ? "あなたのツインはより自信を持って交渉に臨んでいました。"
+        : myStats.avgConfidence < opponentStats.avgConfidence
+        ? "相手のツインの方がより自信のある態度でした。"
+        : "両ツインは同程度の自信を持って交渉していました。";
+
+      return {
+        myTwin: { name: session.twin1UserId === ctx.userId ? session.twin1Name : session.twin2Name, ...myStats },
+        opponent: { name: session.twin1UserId === ctx.userId ? session.twin2Name : session.twin1Name, ...opponentStats },
+        comparison,
+      };
+    }),
+
+  // ============ Phase 17: スマートマッチングレコメンド ============
+
+  getSmartRecommendations: protectedProcedure
+    .input(z.object({ limit: z.number().default(5) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      const matchHistory = await ctx.env.DB.prepare(
+        `SELECT ms.id, ms.theme, ms.twin2Id, mr.overallScore, mr.scoreBreakdown, dt.name as opponentName, dt.userId as opponentUserId
+         FROM matching_sessions ms
+         LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+         LEFT JOIN digital_twins dt ON dt.id = ms.twin2Id
+         WHERE ms.initiatorUserId=? AND ms.status='completed'
+         ORDER BY ms.createdAt DESC LIMIT 20`
+      ).bind(ctx.userId).all<any>();
+
+      const profile = await ctx.env.DB.prepare(
+        `SELECT * FROM user_profiles WHERE userId=?`
+      ).bind(ctx.userId).first<any>();
+
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+
+      const skills = twin ? await ctx.env.DB.prepare(
+        `SELECT * FROM twin_skill_levels WHERE twinId=?`
+      ).bind(twin.id).all<any>() : { results: [] };
+
+      const friends = await ctx.env.DB.prepare(
+        `SELECT f.friendId, u.name as friendName, up.industry, up.expertise, up.position, up.skills
+         FROM friendships f
+         LEFT JOIN users u ON u.id = f.friendId
+         LEFT JOIN user_profiles up ON up.userId = f.friendId
+         WHERE f.userId=? AND f.status='accepted'`
+      ).bind(ctx.userId).all<any>();
+
+      const personas = await ctx.env.DB.prepare(
+        `SELECT id, roleName, description FROM orchestration_roles WHERE userId=?`
+      ).bind(ctx.userId).all<any>();
+
+      const historyStr = (matchHistory.results ?? []).map((m: any) =>
+        `相手: ${m.opponentName}, テーマ: ${m.theme}, スコア: ${m.overallScore ?? "N/A"}`
+      ).join("\n");
+
+      const friendsStr = (friends.results ?? []).map((f: any) =>
+        `ID:${f.friendId} 名前:${f.friendName} 業界:${f.industry || "不明"} 専門:${f.expertise || "不明"} スキル:${f.skills || "不明"}`
+      ).join("\n");
+
+      const personaStr = (personas.results ?? []).map((p: any) =>
+        `ID:${p.id} 名前:${p.roleName} 説明:${p.description || ""}`
+      ).join("\n");
+
+      const skillsStr = (skills.results ?? []).map((s: any) => `${s.skillType}: Lv${s.level}`).join(", ");
+
+      let recommendations: any[] = [];
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (llmConfig) {
+        try {
+          const result = await invokeLLM(llmConfig, [
+            { role: "system", content: `あなたはAIマッチングアドバイザーです。ユーザーの過去のマッチング履歴、プロフィール、スキル、友達リストを分析し、最適なマッチング相手を推薦してください。\n\n以下のJSON形式で回答してください（JSONのみ）:\n{\n  "recommendations": [\n    {\n      "friendId": <友達のID>,\n      "friendName": "<友達の名前>",\n      "reason": "<推薦理由>",\n      "suggestedTheme": "<おすすめの交渉/マッチングテーマ>",\n      "suggestedPersonaId": <ペルソナID or null>,\n      "suggestedPersonaName": "<ペルソナ名 or null>",\n      "predictedScore": <予測スコア 0-100>,\n      "confidence": <推薦の確信度 0-100>\n    }\n  ]\n}\n\n最大${input.limit}件の推薦を返してください。友達リストにいるユーザーのみ推薦できます。` },
+            { role: "user", content: `## ユーザープロフィール\n名前: ${profile?.displayName || "不明"}\n業界: ${profile?.industry || "不明"}\nスキル: ${skillsStr || "なし"}\n\n## 過去のマッチング履歴\n${historyStr || "なし"}\n\n## 友達リスト\n${friendsStr || "なし"}\n\n## 利用可能なペルソナ\n${personaStr || "なし"}\n\n最適なマッチング相手を推薦してください。` },
+          ], { maxTokens: 2048 });
+          const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            recommendations = parsed.recommendations || [];
+          }
+        } catch { /* empty */ }
+      }
+
+      recommendations = recommendations.slice(0, input.limit);
+
+      const existing = await ctx.env.DB.prepare(
+        `SELECT id FROM smart_matching_recommendations WHERE userId=?`
+      ).bind(ctx.userId).first<any>();
+
+      if (existing) {
+        await ctx.env.DB.prepare(
+          `UPDATE smart_matching_recommendations SET recommendations=?, generatedAt=datetime('now') WHERE userId=?`
+        ).bind(toJson(recommendations), ctx.userId).run();
+      } else {
+        await ctx.env.DB.prepare(
+          `INSERT INTO smart_matching_recommendations (userId, recommendations) VALUES (?,?)`
+        ).bind(ctx.userId, toJson(recommendations)).run();
+      }
+
+      return { recommendations };
+    }),
+
+  getRecommendations: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+
+    const row = await ctx.env.DB.prepare(
+      `SELECT * FROM smart_matching_recommendations WHERE userId=?`
+    ).bind(ctx.userId).first<any>();
+
+    if (!row) return { recommendations: [], generatedAt: null };
+
+    return {
+      recommendations: parseJson<any[]>(row.recommendations) || [],
+      generatedAt: row.generatedAt,
+    };
+  }),
+
+  sendWeeklyRecommendations: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+
+    if (!ctx.env.RESEND_API_KEY) return { sent: false, reason: "メール送信未設定" };
+
+    const user = await ctx.env.DB.prepare(`SELECT email, name FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+    if (!user?.email) return { sent: false, reason: "メールアドレス未設定" };
+
+    const row = await ctx.env.DB.prepare(
+      `SELECT * FROM smart_matching_recommendations WHERE userId=?`
+    ).bind(ctx.userId).first<any>();
+    if (!row) return { sent: false, reason: "レコメンドデータがありません" };
+
+    const recommendations = parseJson<any[]>(row.recommendations) || [];
+    if (!recommendations.length) return { sent: false, reason: "推薦がありません" };
+
+    const fromEmail = ctx.env.RESEND_FROM_EMAIL || "noreply@bunshin-ai.pages.dev";
+    const frontendUrl = ctx.env.FRONTEND_URL || "https://bunshin-ai.pages.dev";
+
+    const recCards = recommendations.map((r: any) => `
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin:8px 0">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <strong style="color:#374151;font-size:16px">${r.friendName || "ユーザー"}</strong>
+          <span style="background:#eff6ff;color:#6366f1;padding:4px 8px;border-radius:12px;font-size:12px">予測スコア: ${r.predictedScore ?? "N/A"}</span>
+        </div>
+        <p style="color:#6b7280;margin:8px 0 4px;font-size:14px">${r.reason || ""}</p>
+        <p style="color:#9ca3af;margin:0;font-size:12px">おすすめテーマ: ${r.suggestedTheme || "自由テーマ"}</p>
+      </div>
+    `).join("");
+
+    const emailHtml = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"></head><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+<div style="background:linear-gradient(135deg,#6366f1,#818cf8);padding:24px;border-radius:12px 12px 0 0;color:#fff;text-align:center">
+  <h1 style="margin:0;font-size:24px">週間マッチングレコメンド</h1>
+  <p style="margin:8px 0 0;opacity:0.9">${user.name || "ユーザー"}さんへのおすすめ</p>
+</div>
+<div style="background:#f8fafc;padding:24px;border:1px solid #e5e7eb;border-top:0">
+  <p style="color:#374151;margin-bottom:16px">AIがあなたに最適なマッチング相手を選びました：</p>
+  ${recCards}
+  <div style="text-align:center;margin:24px 0">
+    <a href="${frontendUrl}/matching" style="background:#6366f1;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">マッチングを始める</a>
+  </div>
+</div>
+<div style="padding:16px;text-align:center;color:#9ca3af;font-size:12px">分身AI 週間レコメンド | <a href="${frontendUrl}" style="color:#6366f1">bunshin-ai.pages.dev</a></div>
+</body></html>`;
+
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${ctx.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `分身AI <${fromEmail}>`,
+          to: [user.email],
+          subject: `【分身AI】今週のマッチングレコメンド`,
+          html: emailHtml,
+        }),
+      });
+      return { sent: res.ok };
+    } catch { return { sent: false, reason: "メール送信に失敗しました" }; }
+  }),
 });

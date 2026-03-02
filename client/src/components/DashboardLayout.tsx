@@ -217,6 +217,8 @@ function DashboardLayoutContent({
         { icon: Lightbulb, label: t("nav.recommendations"), path: "/recommendations" },
         { icon: Heart, label: t("nav.intimacy"), path: "/intimacy" },
         { icon: Lightbulb, label: "インサイト", path: "/matching/insights" },
+        { icon: Swords, label: language === "en" ? "Negotiation" : "ネゴ練習", path: "/negotiation" },
+        { icon: Heart, label: language === "en" ? "Emotions" : "感情分析", path: "/emotions" },
       ],
     },
     {

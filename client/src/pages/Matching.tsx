@@ -20,7 +20,7 @@ import {
   UserPlus, Bot, MessageSquare, Shield, Star, TrendingUp,
   ArrowRight, Sparkles, Search, Send, Inbox, History,
   ArrowUpRight, ArrowDownRight, Minus, Check, X,
-  CalendarClock, Trash2, Bell, BarChart3, Globe, Target,
+  CalendarClock, Trash2, Bell, BarChart3, Globe, Target, Mail,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -765,6 +765,9 @@ export default function Matching() {
             <SchedulerTab />
           </TabsContent>
         </Tabs>
+
+        {/* ===== Smart Recommendations Section ===== */}
+        <SmartRecommendationsSection />
       </div>
     </DashboardLayout>
   );
@@ -943,5 +946,120 @@ function SchedulerTab() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Smart Recommendations Section
+// ---------------------------------------------------------------------------
+
+function SmartRecommendationsSection() {
+  const { data: recommendations, isLoading: recsLoading } = trpc.matching.getRecommendations.useQuery();
+  const generateMut = trpc.matching.getSmartRecommendations.useMutation({
+    onSuccess: () => toast.success("新しいおすすめが生成されました"),
+    onError: (err) => toast.error(err.message),
+  });
+  const sendEmailMut = trpc.matching.sendWeeklyRecommendations.useMutation({
+    onSuccess: () => toast.success("レポートをメールで送信しました"),
+    onError: (err) => toast.error(err.message),
+  });
+  const [, navigate] = useLocation();
+
+  return (
+    <Card className="mt-6">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-primary" />
+            <CardTitle>AIスマートおすすめ</CardTitle>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => sendEmailMut.mutate()}
+              disabled={sendEmailMut.isPending}
+            >
+              {sendEmailMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Mail className="h-4 w-4 mr-1" />}
+              レポート送信
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => generateMut.mutate({ limit: 5 })}
+              disabled={generateMut.isPending}
+            >
+              {generateMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Sparkles className="h-4 w-4 mr-1" />}
+              おすすめ生成
+            </Button>
+          </div>
+        </div>
+        <CardDescription>AIがあなたのプロフィールと履歴を分析し、最適なマッチング相手を推薦します</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {generateMut.isPending && (
+          <div className="flex justify-center py-8">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        )}
+        {recsLoading ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : recommendations && recommendations.recommendations && recommendations.recommendations.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {(recommendations.recommendations as any[]).map((rec: any, i: number) => (
+              <Card key={rec.id ?? i} className="border-primary/20">
+                <CardContent className="p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <AvatarCircle name={rec.friendName ?? "?"} size="sm" />
+                      <div>
+                        <p className="font-medium text-sm">{rec.friendName ?? "おすすめユーザー"}</p>
+                        {rec.suggestedTheme && (
+                          <p className="text-xs text-muted-foreground truncate max-w-[180px]">{rec.suggestedTheme}</p>
+                        )}
+                      </div>
+                    </div>
+                    {rec.predictedScore != null && (
+                      <div className={`w-10 h-10 rounded-full border-2 flex items-center justify-center text-xs font-bold ${
+                        rec.predictedScore >= 80 ? "text-green-500 border-green-500/40" :
+                        rec.predictedScore >= 60 ? "text-blue-500 border-blue-500/40" :
+                        "text-yellow-500 border-yellow-500/40"
+                      }`}>
+                        {rec.predictedScore}
+                      </div>
+                    )}
+                  </div>
+                  {rec.reason && (
+                    <p className="text-xs text-muted-foreground">{rec.reason}</p>
+                  )}
+                  <div className="flex items-center justify-between">
+                    {rec.confidence != null && (
+                      <Badge variant="outline" className="text-xs">
+                        信頼度 {rec.confidence}%
+                      </Badge>
+                    )}
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() => navigate("/matching")}
+                    >
+                      <Users className="h-3 w-3 mr-1" />
+                      マッチング開始
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center py-8">
+            <Sparkles className="h-8 w-8 text-muted-foreground mb-2" />
+            <p className="text-sm text-muted-foreground">おすすめがまだありません</p>
+            <p className="text-xs text-muted-foreground mt-1">「おすすめ生成」ボタンを押してAIに分析してもらいましょう</p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
