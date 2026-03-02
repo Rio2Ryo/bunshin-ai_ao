@@ -886,6 +886,87 @@ CREATE TABLE IF NOT EXISTS scheduler_preferences (
 );
 CREATE INDEX IF NOT EXISTS idx_scheduler_pref_userId ON scheduler_preferences(userId);
 ALTER TABLE digital_twins ADD COLUMN avatarUrl TEXT;
+CREATE TABLE IF NOT EXISTS matching_predictions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  friendId INTEGER NOT NULL,
+  theme TEXT NOT NULL,
+  predictedScore INTEGER NOT NULL,
+  predictedBreakdown TEXT,
+  reasoning TEXT,
+  actualScore INTEGER,
+  actualSessionId INTEGER,
+  accuracy REAL,
+  createdAt TEXT DEFAULT (datetime('now')),
+  resolvedAt TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_matching_predictions_userId ON matching_predictions(userId);
+CREATE INDEX IF NOT EXISTS idx_matching_predictions_resolved ON matching_predictions(userId, resolvedAt);
+CREATE TABLE IF NOT EXISTS matching_scenarios (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  creatorUserId INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  category TEXT NOT NULL DEFAULT 'general',
+  systemPromptTemplate TEXT NOT NULL,
+  turnCount INTEGER NOT NULL DEFAULT 5,
+  analysisPromptTemplate TEXT,
+  tags TEXT,
+  price INTEGER NOT NULL DEFAULT 0,
+  isPublished INTEGER NOT NULL DEFAULT 0,
+  isApproved INTEGER NOT NULL DEFAULT 0,
+  usageCount INTEGER NOT NULL DEFAULT 0,
+  rating REAL DEFAULT 0,
+  ratingCount INTEGER NOT NULL DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_matching_scenarios_creator ON matching_scenarios(creatorUserId);
+CREATE INDEX IF NOT EXISTS idx_matching_scenarios_published ON matching_scenarios(isPublished, isApproved);
+CREATE TABLE IF NOT EXISTS scenario_purchases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  scenarioId INTEGER NOT NULL,
+  pointsSpent INTEGER NOT NULL DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(userId, scenarioId)
+);
+CREATE INDEX IF NOT EXISTS idx_scenario_purchases_userId ON scenario_purchases(userId);
+CREATE TABLE IF NOT EXISTS scenario_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scenarioId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  rating INTEGER NOT NULL,
+  comment TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(scenarioId, userId)
+);
+CREATE TABLE IF NOT EXISTS tournaments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspaceId INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  theme TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  settings TEXT,
+  results TEXT,
+  createdBy INTEGER NOT NULL,
+  createdAt TEXT DEFAULT (datetime('now')),
+  completedAt TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tournaments_workspace ON tournaments(workspaceId);
+CREATE TABLE IF NOT EXISTS tournament_matches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tournamentId INTEGER NOT NULL,
+  player1UserId INTEGER NOT NULL,
+  player2UserId INTEGER NOT NULL,
+  sessionId INTEGER,
+  player1Score INTEGER,
+  player2Score INTEGER,
+  winnerId INTEGER,
+  status TEXT NOT NULL DEFAULT 'pending',
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_tournament_matches_tournament ON tournament_matches(tournamentId);
 `;
 
 let schemaReady = false;

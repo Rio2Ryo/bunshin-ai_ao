@@ -20,7 +20,7 @@ import {
   UserPlus, Bot, MessageSquare, Shield, Star, TrendingUp,
   ArrowRight, Sparkles, Search, Send, Inbox, History,
   ArrowUpRight, ArrowDownRight, Minus, Check, X,
-  CalendarClock, Trash2, Bell, BarChart3, Globe,
+  CalendarClock, Trash2, Bell, BarChart3, Globe, Target,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -106,6 +106,8 @@ export default function Matching() {
   const [multiTheme, setMultiTheme] = useState("");
   const [multiSelectedFriend, setMultiSelectedFriend] = useState("");
   const createMultilingualMut = trpc.matching.createMultilingual.useMutation();
+  const predictMut = trpc.matching.predictScore.useMutation();
+  const [prediction, setPrediction] = useState<any>(null);
 
   const handleCreate = async () => {
     if (!selectedFriendId || !theme.trim()) { toast.error("友達とテーマを選択してください"); return; }
@@ -115,9 +117,17 @@ export default function Matching() {
     try {
       // Use streaming mode — creates session, then navigates to session page where SSE streaming begins
       const result = await startStreaming.mutateAsync({ friendId: friend.friend.id, theme, turns });
-      setIsCreateOpen(false); setSelectedFriendId(""); setTheme(""); setTurns(5);
+      setIsCreateOpen(false); setSelectedFriendId(""); setTheme(""); setTurns(5); setPrediction(null);
       navigate(`/matching/${result.sessionId}`);
     } catch (error: any) { toast.error(error?.message || "作成に失敗しました"); }
+  };
+
+  const handlePredict = async () => {
+    if (!selectedFriendId || !theme.trim()) { toast.error("友達とテーマを選択してください"); return; }
+    try {
+      const result = await predictMut.mutateAsync({ friendId: parseInt(selectedFriendId), theme });
+      setPrediction(result);
+    } catch (e: any) { toast.error(e.message || "予測に失敗しました"); }
   };
 
   const handleCreateGroup = async () => {
@@ -224,6 +234,9 @@ export default function Matching() {
           <div className="flex items-center gap-2">
           <Link href="/matching/analytics">
             <Button variant="outline" size="sm"><BarChart3 className="h-4 w-4 mr-2" />分析</Button>
+          </Link>
+          <Link href="/predictions">
+            <Button variant="outline" size="sm"><Target className="h-4 w-4 mr-2" />AI予測</Button>
           </Link>
           <Dialog open={isGroupOpen} onOpenChange={setIsGroupOpen}>
             <DialogTrigger asChild>
@@ -334,7 +347,7 @@ export default function Matching() {
               </div>
             </DialogContent>
           </Dialog>
-          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+          <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) setPrediction(null); }}>
             <DialogTrigger asChild>
               <Button size="sm" disabled={!myTwin}><Plus className="h-4 w-4 mr-2" />新規マッチング</Button>
             </DialogTrigger>
@@ -372,6 +385,36 @@ export default function Matching() {
                   </div>
                   <Slider value={[turns]} onValueChange={(v) => setTurns(v[0])} min={3} max={30} step={1} className="w-full" />
                   <div className="flex justify-between text-xs text-muted-foreground"><span>3（簡潔）</span><span>15（標準）</span><span>30（徹底議論）</span></div>
+                </div>
+                {/* AI Prediction */}
+                <div className="border rounded-lg p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium flex items-center gap-1"><Target className="h-4 w-4" />AI予測</span>
+                    <Button variant="outline" size="sm" onClick={handlePredict} disabled={!selectedFriendId || !theme.trim() || predictMut.isPending}>
+                      {predictMut.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Sparkles className="h-3 w-3 mr-1" />}
+                      予測する
+                    </Button>
+                  </div>
+                  {prediction && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-3">
+                        <div className={`text-2xl font-bold ${prediction.predictedScore >= 70 ? "text-green-500" : prediction.predictedScore >= 50 ? "text-blue-500" : "text-yellow-500"}`}>
+                          {prediction.predictedScore}%
+                        </div>
+                        <div className="text-xs text-muted-foreground flex-1">
+                          <p>{prediction.reasoning}</p>
+                          <p className="mt-1">確信度: {prediction.confidence}% | 過去{prediction.pastMatchCount}回のデータ使用</p>
+                        </div>
+                      </div>
+                      {prediction.tips?.length > 0 && (
+                        <div className="text-xs space-y-1">
+                          {prediction.tips.map((tip: string, i: number) => (
+                            <p key={i} className="text-muted-foreground">💡 {tip}</p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="flex justify-end gap-2">
                   <Button variant="outline" onClick={() => setIsCreateOpen(false)}>キャンセル</Button>

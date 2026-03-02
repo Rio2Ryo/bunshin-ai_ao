@@ -23,7 +23,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useRealtimeNotifications } from "@/hooks/useRealtimeNotifications";
 import { useWebPush } from "@/hooks/useWebPush";
 import { toast } from "sonner";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, Activity, X, CalendarClock, LayoutGrid, FlaskConical } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -227,6 +227,9 @@ function DashboardLayoutContent({
         { icon: Brain, label: language === "en" ? "Personality" : "人格診断", path: "/personality" },
         { icon: Brain, label: language === "en" ? "AI Mentor" : "AIメンター", path: "/mentor" },
         { icon: FlaskConical, label: language === "en" ? "A/B Test" : "A/Bテスト", path: "/ab-test" },
+        { icon: Target, label: language === "en" ? "Predictions" : "AI予測", path: "/predictions" },
+        { icon: BookOpen, label: language === "en" ? "Scenarios" : "シナリオ", path: "/scenarios" },
+        { icon: Swords, label: language === "en" ? "Tournament" : "トーナメント", path: "/tournament" },
       ],
     },
   ], [t, language]);

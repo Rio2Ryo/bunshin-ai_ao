@@ -65,6 +65,9 @@ const Mentor = lazy(() => import("./pages/Mentor"));
 const Workspaces = lazy(() => import("./pages/Workspaces"));
 const WorkspaceDetail = lazy(() => import("./pages/WorkspaceDetail"));
 const ABTest = lazy(() => import("./pages/ABTest"));
+const PredictionDashboard = lazy(() => import("./pages/PredictionDashboard"));
+const ScenarioBuilder = lazy(() => import("./pages/ScenarioBuilder"));
+const Tournament = lazy(() => import("./pages/Tournament"));
 
 function PageLoader() {
   return (
@@ -133,6 +136,10 @@ function Router() {
         <Route path="/workspaces" component={Workspaces} />
         <Route path="/workspaces/:id" component={WorkspaceDetail} />
         <Route path="/ab-test" component={ABTest} />
+        <Route path="/predictions" component={PredictionDashboard} />
+        <Route path="/scenarios" component={ScenarioBuilder} />
+        <Route path="/tournament" component={Tournament} />
+        <Route path="/tournament/:id" component={Tournament} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

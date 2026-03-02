@@ -2284,4 +2284,229 @@ ${historyText || "なし"}
     ).bind(ctx.userId).all<any>();
     return (rows.results ?? []).map((r: any) => ({ ...r, settings: parseJson<any>(r.settings) }));
   }),
+
+  // ============ AI Matching Prediction Engine ============
+
+  predictScore: protectedProcedure.input(z.object({
+    friendId: z.number(),
+    theme: z.string().min(1),
+  })).mutation(async ({ ctx, input }) => {
+    await ensureSchema(ctx.env.DB);
+    const db = ctx.env.DB;
+
+    // Get both twins
+    const myTwin = await db.prepare(`SELECT * FROM digital_twins WHERE userId=?`).bind(ctx.userId).first<any>();
+    const friendTwin = await db.prepare(`SELECT * FROM digital_twins WHERE userId=?`).bind(input.friendId).first<any>();
+    if (!myTwin || !friendTwin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+    // Gather historical matching data between these two users
+    const pastMatchings = await db.prepare(
+      `SELECT ms.theme, mr.compatibilityScore, mr.scoreBreakdown, mr.summary
+       FROM matching_sessions ms
+       JOIN matching_results mr ON mr.sessionId = ms.id
+       WHERE ms.initiatorUserId = ? AND ms.twin2Id = ? AND ms.status = 'completed'
+       ORDER BY ms.createdAt DESC LIMIT 10`
+    ).bind(ctx.userId, friendTwin.id).all<any>();
+
+    // Also get matches where friend was initiator
+    const pastMatchings2 = await db.prepare(
+      `SELECT ms.theme, mr.compatibilityScore, mr.scoreBreakdown, mr.summary
+       FROM matching_sessions ms
+       JOIN matching_results mr ON mr.sessionId = ms.id
+       WHERE ms.initiatorUserId = ? AND ms.twin2Id = ? AND ms.status = 'completed'
+       ORDER BY ms.createdAt DESC LIMIT 10`
+    ).bind(input.friendId, myTwin.id).all<any>();
+
+    const allPast = [...(pastMatchings.results ?? []), ...(pastMatchings2.results ?? [])];
+
+    // Get profiles
+    const myProfile = await db.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+    const friendProfile = await db.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(input.friendId).first<any>();
+
+    // Get personality profiles
+    const myPersonality = await db.prepare(`SELECT * FROM personality_profiles WHERE userId=? AND status='completed'`).bind(ctx.userId).first<any>();
+    const friendPersonality = await db.prepare(`SELECT * FROM personality_profiles WHERE userId=? AND status='completed'`).bind(input.friendId).first<any>();
+
+    // Get waveform data
+    const myWaveform = await db.prepare(`SELECT * FROM cumulative_waveforms WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+    const friendWaveform = await db.prepare(`SELECT * FROM cumulative_waveforms WHERE userId=? LIMIT 1`).bind(input.friendId).first<any>();
+
+    // Get intimacy score
+    const intimacy = await db.prepare(`SELECT * FROM intimacy_scores WHERE userId=? AND friendId=?`).bind(ctx.userId, input.friendId).first<any>();
+
+    // Build prediction context
+    const pastScores = allPast.map((p: any) => `テーマ「${p.theme}」: ${p.compatibilityScore}点`).join(", ");
+    const avgPastScore = allPast.length > 0 ? Math.round(allPast.reduce((sum: number, p: any) => sum + (p.compatibilityScore || 0), 0) / allPast.length) : null;
+
+    // Get user's overall average score
+    const overallAvg = await db.prepare(
+      `SELECT AVG(mr.compatibilityScore) as avg FROM matching_sessions ms JOIN matching_results mr ON mr.sessionId=ms.id WHERE ms.initiatorUserId=? AND ms.status='completed'`
+    ).bind(ctx.userId).first<any>();
+
+    const llmConfig = await getUserLLMConfig(db, ctx.userId, "matching", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "LLM APIキーが未設定です" });
+
+    const prompt = `あなたはビジネスマッチングの予測AIです。以下のデータに基づいて、マッチング実行前にスコアを予測してください。
+
+## ユーザー1（自分）
+- 名前: ${myTwin.name || "ユーザー1"}
+- 人格: ${myTwin.personality || "未設定"}
+- 説明: ${myTwin.description || "未設定"}
+${myProfile ? `- 会社: ${myProfile.company || "?"}, 業界: ${myProfile.industry || "?"}, 役職: ${myProfile.position || "?"}` : ""}
+${myProfile?.skills ? `- スキル: ${myProfile.skills}` : ""}
+${myPersonality?.bigFive ? `- Big Five: ${myPersonality.bigFive}` : ""}
+${myPersonality?.mbti ? `- MBTI: ${myPersonality.mbti}` : ""}
+${myWaveform ? `- 波形データ: 美徳${myWaveform.totalVirtueCount} / 利己${myWaveform.totalMineCount} / 中立${myWaveform.totalNeutralCount}` : ""}
+
+## ユーザー2（相手）
+- 名前: ${friendTwin.name || "ユーザー2"}
+- 人格: ${friendTwin.personality || "未設定"}
+- 説明: ${friendTwin.description || "未設定"}
+${friendProfile ? `- 会社: ${friendProfile.company || "?"}, 業界: ${friendProfile.industry || "?"}, 役職: ${friendProfile.position || "?"}` : ""}
+${friendProfile?.skills ? `- スキル: ${friendProfile.skills}` : ""}
+${friendPersonality?.bigFive ? `- Big Five: ${friendPersonality.bigFive}` : ""}
+${friendPersonality?.mbti ? `- MBTI: ${friendPersonality.mbti}` : ""}
+${friendWaveform ? `- 波形データ: 美徳${friendWaveform.totalVirtueCount} / 利己${friendWaveform.totalMineCount} / 中立${friendWaveform.totalNeutralCount}` : ""}
+
+## 過去のマッチング履歴
+${allPast.length > 0 ? `- 過去${allPast.length}回のマッチング: ${pastScores}` : "- 過去のマッチング履歴なし"}
+${avgPastScore !== null ? `- 平均スコア: ${avgPastScore}点` : ""}
+${overallAvg?.avg ? `- ユーザー1の全体平均: ${Math.round(overallAvg.avg)}点` : ""}
+${intimacy ? `- 親密度スコア: ${intimacy.intimacyScore} (${intimacy.intimacyLevel})` : ""}
+
+## 新しいマッチングのテーマ
+「${input.theme}」
+
+以下のJSON形式で予測結果を返してください:
+{
+  "predictedScore": (0-100の整数),
+  "confidence": (0-100の整数、予測の確信度),
+  "reasoning": "予測の根拠（200文字以内）",
+  "breakdown": {
+    "skillMatch": (0-20),
+    "valueAlignment": (0-20),
+    "communicationStyle": (0-20),
+    "businessGoalFit": (0-20),
+    "complementaryStrengths": (0-20)
+  },
+  "tips": ["スコアを上げるためのヒント1", "ヒント2"]
+}
+JSONのみ出力してください。`;
+
+    let prediction: any = null;
+    try {
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "あなたはビジネスマッチングの予測AI専門家です。過去のデータと人格プロファイルに基づいて正確な予測を行います。" },
+        { role: "user", content: prompt },
+      ], { maxTokens: 1024, temperature: 0.4 });
+
+      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) prediction = JSON.parse(jsonMatch[0]);
+    } catch { /* LLM failed */ }
+
+    if (!prediction || typeof prediction.predictedScore !== "number") {
+      // Fallback: statistical prediction
+      const baseScore = avgPastScore ?? (overallAvg?.avg ? Math.round(overallAvg.avg) : 65);
+      prediction = {
+        predictedScore: baseScore,
+        confidence: allPast.length >= 3 ? 70 : 40,
+        reasoning: allPast.length > 0
+          ? `過去${allPast.length}回のマッチング平均(${avgPastScore}点)に基づく統計的予測です。`
+          : "過去のマッチングデータが少ないため、統計的な推定値です。",
+        breakdown: { skillMatch: Math.round(baseScore / 5), valueAlignment: Math.round(baseScore / 5), communicationStyle: Math.round(baseScore / 5), businessGoalFit: Math.round(baseScore / 5), complementaryStrengths: Math.round(baseScore / 5) },
+        tips: ["プロフィールを充実させるとより正確な予測が可能になります", "過去のマッチングデータが増えると予測精度が向上します"],
+      };
+    }
+
+    // Clamp score
+    prediction.predictedScore = Math.max(0, Math.min(100, Math.round(prediction.predictedScore)));
+
+    // Save prediction to DB
+    const res = await db.prepare(
+      `INSERT INTO matching_predictions (userId, friendId, theme, predictedScore, predictedBreakdown, reasoning) VALUES (?,?,?,?,?,?)`
+    ).bind(ctx.userId, input.friendId, input.theme, prediction.predictedScore, toJson(prediction.breakdown), prediction.reasoning || "").run();
+
+    return {
+      id: Number(res.meta.last_row_id),
+      predictedScore: prediction.predictedScore,
+      confidence: prediction.confidence ?? 50,
+      reasoning: prediction.reasoning || "",
+      breakdown: prediction.breakdown || null,
+      tips: prediction.tips || [],
+      pastMatchCount: allPast.length,
+      avgPastScore,
+    };
+  }),
+
+  resolvePrediction: protectedProcedure.input(z.object({
+    predictionId: z.number(),
+    sessionId: z.number(),
+  })).mutation(async ({ ctx, input }) => {
+    await ensureSchema(ctx.env.DB);
+    const db = ctx.env.DB;
+
+    const pred = await db.prepare(`SELECT * FROM matching_predictions WHERE id=? AND userId=?`).bind(input.predictionId, ctx.userId).first<any>();
+    if (!pred) throw new TRPCError({ code: "NOT_FOUND" });
+    if (pred.resolvedAt) return { alreadyResolved: true, accuracy: pred.accuracy };
+
+    const result = await db.prepare(`SELECT compatibilityScore FROM matching_results WHERE sessionId=?`).bind(input.sessionId).first<any>();
+    if (!result) throw new TRPCError({ code: "NOT_FOUND", message: "マッチング結果がまだありません" });
+
+    const actualScore = result.compatibilityScore ?? 0;
+    const diff = Math.abs(pred.predictedScore - actualScore);
+    const accuracy = Math.max(0, 100 - diff);
+
+    await db.prepare(
+      `UPDATE matching_predictions SET actualScore=?, actualSessionId=?, accuracy=?, resolvedAt=datetime('now') WHERE id=?`
+    ).bind(actualScore, input.sessionId, accuracy, input.predictionId).run();
+
+    return { predictedScore: pred.predictedScore, actualScore, accuracy, diff };
+  }),
+
+  getPredictions: protectedProcedure.input(z.object({
+    friendId: z.number().optional(),
+    limit: z.number().optional(),
+  })).query(async ({ ctx, input }) => {
+    await ensureSchema(ctx.env.DB);
+    let sql = `SELECT mp.*, u.name as friendName FROM matching_predictions mp LEFT JOIN users u ON u.id=mp.friendId WHERE mp.userId=?`;
+    const params: any[] = [ctx.userId];
+    if (input.friendId) { sql += ` AND mp.friendId=?`; params.push(input.friendId); }
+    sql += ` ORDER BY mp.createdAt DESC LIMIT ?`;
+    params.push(input.limit ?? 20);
+    const rows = await ctx.env.DB.prepare(sql).bind(...params).all<any>();
+    return (rows.results ?? []).map((r: any) => ({
+      ...r,
+      predictedBreakdown: parseJson<any>(r.predictedBreakdown),
+    }));
+  }),
+
+  getPredictionAccuracy: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const db = ctx.env.DB;
+
+    // Overall accuracy stats
+    const stats = await db.prepare(
+      `SELECT COUNT(*) as total, COUNT(resolvedAt) as resolved, AVG(CASE WHEN resolvedAt IS NOT NULL THEN accuracy END) as avgAccuracy, MIN(CASE WHEN resolvedAt IS NOT NULL THEN accuracy END) as minAccuracy, MAX(CASE WHEN resolvedAt IS NOT NULL THEN accuracy END) as maxAccuracy FROM matching_predictions WHERE userId=?`
+    ).bind(ctx.userId).first<any>();
+
+    // Recent predictions with accuracy
+    const recent = await db.prepare(
+      `SELECT mp.id, mp.friendId, mp.theme, mp.predictedScore, mp.actualScore, mp.accuracy, mp.createdAt, mp.resolvedAt, u.name as friendName FROM matching_predictions mp LEFT JOIN users u ON u.id=mp.friendId WHERE mp.userId=? AND mp.resolvedAt IS NOT NULL ORDER BY mp.resolvedAt DESC LIMIT 10`
+    ).bind(ctx.userId).all<any>();
+
+    // Accuracy trend (last 20 resolved predictions)
+    const trend = await db.prepare(
+      `SELECT accuracy, resolvedAt FROM matching_predictions WHERE userId=? AND resolvedAt IS NOT NULL ORDER BY resolvedAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+
+    return {
+      totalPredictions: stats?.total ?? 0,
+      resolvedPredictions: stats?.resolved ?? 0,
+      avgAccuracy: stats?.avgAccuracy ? Math.round(stats.avgAccuracy) : null,
+      minAccuracy: stats?.minAccuracy ? Math.round(stats.minAccuracy) : null,
+      maxAccuracy: stats?.maxAccuracy ? Math.round(stats.maxAccuracy) : null,
+      recentResolved: recent.results ?? [],
+      accuracyTrend: (trend.results ?? []).reverse(),
+    };
+  }),
 });

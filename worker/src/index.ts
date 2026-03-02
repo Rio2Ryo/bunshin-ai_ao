@@ -48,6 +48,8 @@ import { personalityProfilerRouter } from "./routers/personality-profiler";
 import { mentorRouter } from "./routers/mentor";
 import { workspaceRouter } from "./routers/workspace";
 import { apiPublicRouter } from "./routers/api-public";
+import { scenarioRouter } from "./routers/scenarios";
+import { tournamentRouter } from "./routers/tournament";
 
 // ============ Composed tRPC Router ============
 
@@ -90,6 +92,8 @@ const appRouter = router({
   mentor: mentorRouter,
   workspace: workspaceRouter,
   apiPublic: apiPublicRouter,
+  scenario: scenarioRouter,
+  tournament: tournamentRouter,
 });
 
 export type AppRouter = typeof appRouter;
