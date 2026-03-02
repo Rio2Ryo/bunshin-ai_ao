@@ -76,6 +76,9 @@ const NegotiationSimulator = lazy(() => import("./pages/NegotiationSimulator"));
 const EmotionDashboard = lazy(() => import("./pages/EmotionDashboard"));
 const TwinEvolution = lazy(() => import("./pages/TwinEvolution"));
 const Challenges = lazy(() => import("./pages/Challenges"));
+const StrategyPlanner = lazy(() => import("./pages/StrategyPlanner"));
+const TwinCollaboration = lazy(() => import("./pages/TwinCollaboration"));
+const OutcomeTracker = lazy(() => import("./pages/OutcomeTracker"));
 
 function PageLoader() {
   return (
@@ -156,6 +159,9 @@ function Router() {
         <Route path="/emotions" component={EmotionDashboard} />
         <Route path="/evolution" component={TwinEvolution} />
         <Route path="/challenges" component={Challenges} />
+        <Route path="/strategy" component={StrategyPlanner} />
+        <Route path="/collaboration" component={TwinCollaboration} />
+        <Route path="/outcomes" component={OutcomeTracker} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

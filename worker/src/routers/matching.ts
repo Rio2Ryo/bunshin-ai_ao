@@ -3747,5 +3747,359 @@ JSONのみ出力してください。`;
       }
 
       return result;
+
     }),
+  // ============ AIマッチング戦略プランナー ============
+
+  generateStrategy: protectedProcedure
+    .input(z.object({ friendId: z.number(), theme: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const db = ctx.env.DB;
+
+      // Load user's twin + profile
+      const myTwin = await getMyTwin(db, ctx.userId);
+      if (!myTwin) throw new TRPCError({ code: "NOT_FOUND", message: "あなたのツインが見つかりません" });
+      const myProfile = await db.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+
+      // Load friend's twin + profile
+      const friendTwin = await getMyTwin(db, input.friendId);
+      if (!friendTwin) throw new TRPCError({ code: "NOT_FOUND", message: "相手のツインが見つかりません" });
+      const friendProfile = await db.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(input.friendId).first<any>();
+      const friendUser = await db.prepare(`SELECT name FROM users WHERE id=?`).bind(input.friendId).first<any>();
+
+      // Load past matching history between them
+      const pastMatchings = await db.prepare(
+        `SELECT ms.theme, ms.createdAt, mr.compatibilityScore, mr.summary
+         FROM matching_sessions ms
+         LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+         WHERE ms.initiatorUserId = ? AND (ms.twin1Id = ? OR ms.twin2Id = ?)
+         ORDER BY ms.createdAt DESC LIMIT 5`
+      ).bind(ctx.userId, friendTwin.id, friendTwin.id).all<any>();
+
+      // Load personality profiles
+      const myBigFive = myTwin.bigFiveTraits ? JSON.stringify(myTwin.bigFiveTraits) : "未診断";
+      const friendBigFive = friendTwin.bigFiveTraits ? JSON.stringify(friendTwin.bigFiveTraits) : "未診断";
+
+      const historyText = (pastMatchings.results ?? []).map((m: any) =>
+        `テーマ: ${m.theme || "なし"}, スコア: ${m.compatibilityScore || "N/A"}, 要約: ${m.summary || "N/A"}`
+      ).join("\n") || "過去のマッチング履歴なし";
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      const systemPrompt = `あなたはビジネスマッチングの戦略アドバイザーです。2人のプロフィールと過去の履歴を分析し、最適なマッチング戦略を立案してください。必ず以下のJSON形式で返してください:
+{"emphasize":["強調すべきポイント"],"avoid":["避けるべきこと"],"approach":"アプローチ方法","openingStrategy":"オープニング戦略","keyPoints":["キーポイント"],"predictedChallenges":["予測される課題"],"confidenceLevel":0.8}`;
+
+      const userPrompt = `【あなた側】
+名前: ${myTwin.name}
+性格: ${myTwin.personality || "未設定"}
+説明: ${myTwin.description || "未設定"}
+業界: ${myProfile?.industry || "未設定"}
+スキル: ${myProfile?.skills || "未設定"}
+Big Five: ${myBigFive}
+MBTI: ${myTwin.mbtiType || "未診断"}
+
+【相手側】
+名前: ${friendTwin.name} (${friendUser?.name || "不明"})
+性格: ${friendTwin.personality || "未設定"}
+説明: ${friendTwin.description || "未設定"}
+業界: ${friendProfile?.industry || "未設定"}
+スキル: ${friendProfile?.skills || "未設定"}
+Big Five: ${friendBigFive}
+MBTI: ${friendTwin.mbtiType || "未診断"}
+
+【過去のマッチング履歴】
+${historyText}
+
+${input.theme ? `【テーマ】${input.theme}` : ""}
+
+上記を分析し、マッチング戦略をJSON形式で返してください。`;
+
+      const rawResult = await invokeLLM(llmConfig!, [{role: "system", content: systemPrompt}, {role: "user", content: userPrompt}]);
+      const raw = rawResult.content;
+      let strategy: any;
+      try {
+        const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+        strategy = JSON.parse(cleaned);
+      } catch {
+        strategy = {
+          emphasize: ["共通の業界知識を活用"],
+          avoid: ["一方的な話題にならないよう注意"],
+          approach: "相互理解を深める対話型アプローチ",
+          openingStrategy: "共通の関心事から話を始める",
+          keyPoints: ["相手の専門性を尊重する", "具体的な協業案を提示する"],
+          predictedChallenges: ["業界の違いによる認識のズレ"],
+          confidenceLevel: 0.6,
+        };
+      }
+
+      const result = await db.prepare(
+        `INSERT INTO matching_strategies (userId, friendId, theme, strategy, createdAt, updatedAt) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))`
+      ).bind(ctx.userId, input.friendId, input.theme || null, toJson(strategy)).run();
+
+      const strategyId = result.meta?.last_row_id;
+
+      return { id: strategyId, strategy, friendName: friendUser?.name || friendTwin.name, theme: input.theme || null };
+    }),
+
+  getStrategy: protectedProcedure
+    .input(z.object({ friendId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_strategies WHERE userId=? AND friendId=? ORDER BY createdAt DESC LIMIT 1`
+      ).bind(ctx.userId, input.friendId).first<any>();
+      if (!row) return null;
+      return {
+        id: row.id,
+        friendId: row.friendId,
+        theme: row.theme,
+        strategy: parseJson<any>(row.strategy),
+        notes: row.notes,
+        review: parseJson<any>(row.review),
+        effectiveness: row.effectiveness,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      };
+    }),
+
+  saveStrategyNote: protectedProcedure
+    .input(z.object({ strategyId: z.number(), note: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const existing = await ctx.env.DB.prepare(
+        `SELECT id FROM matching_strategies WHERE id=? AND userId=?`
+      ).bind(input.strategyId, ctx.userId).first<any>();
+      if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "戦略が見つかりません" });
+
+      await ctx.env.DB.prepare(
+        `UPDATE matching_strategies SET notes=?, updatedAt=datetime('now') WHERE id=?`
+      ).bind(input.note, input.strategyId).run();
+
+      return { success: true };
+    }),
+
+  reviewStrategy: protectedProcedure
+    .input(z.object({
+      strategyId: z.number(),
+      sessionId: z.number(),
+      effectiveness: z.enum(["excellent", "good", "neutral", "poor"]),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const db = ctx.env.DB;
+
+      const strategyRow = await db.prepare(
+        `SELECT * FROM matching_strategies WHERE id=? AND userId=?`
+      ).bind(input.strategyId, ctx.userId).first<any>();
+      if (!strategyRow) throw new TRPCError({ code: "NOT_FOUND", message: "戦略が見つかりません" });
+
+      const matchResult = await db.prepare(
+        `SELECT mr.*, ms.theme FROM matching_results mr JOIN matching_sessions ms ON ms.id = mr.sessionId WHERE mr.sessionId=?`
+      ).bind(input.sessionId).first<any>();
+      if (!matchResult) throw new TRPCError({ code: "NOT_FOUND", message: "マッチング結果が見つかりません" });
+
+      const strategy = parseJson<any>(strategyRow.strategy) || {};
+      const llmConfig = await getUserLLMConfig(db, ctx.userId, "matching", ctx.env);
+
+      const systemPrompt = `あなたはマッチング戦略の評価アドバイザーです。事前に立てた戦略と実際のマッチング結果を比較し、振り返りを生成してください。必ず以下のJSON形式で返してください:
+{"lessonsLearned":["学んだこと"],"effectivenessScore":0.8,"whatWorked":["うまくいったこと"],"whatDidnt":["うまくいかなかったこと"],"nextTimeAdvice":"次回へのアドバイス"}`;
+
+      const userPrompt = `【事前戦略】
+${JSON.stringify(strategy, null, 2)}
+
+【ユーザーの効果評価】${input.effectiveness}
+
+【マッチング結果】
+テーマ: ${matchResult.theme || "なし"}
+スコア: ${matchResult.compatibilityScore || "N/A"}
+要約: ${matchResult.summary || "N/A"}
+強み: ${matchResult.strengths || "N/A"}
+課題: ${matchResult.challenges || "N/A"}
+
+上記を分析し、戦略の振り返りをJSON形式で返してください。`;
+
+      const rawResult = await invokeLLM(llmConfig!, [{role: "system", content: systemPrompt}, {role: "user", content: userPrompt}]);
+      const raw = rawResult.content;
+      let review: any;
+      try {
+        const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+        review = JSON.parse(cleaned);
+      } catch {
+        review = {
+          lessonsLearned: ["データを基にした分析が必要です"],
+          effectivenessScore: 0.5,
+          whatWorked: ["戦略的アプローチの試み"],
+          whatDidnt: ["詳細な分析が不足"],
+          nextTimeAdvice: "より具体的なゴール設定を行い、相手のニーズを事前にリサーチしましょう",
+        };
+      }
+
+      await db.prepare(
+        `UPDATE matching_strategies SET review=?, effectiveness=?, updatedAt=datetime('now') WHERE id=?`
+      ).bind(toJson(review), input.effectiveness, input.strategyId).run();
+
+      return review;
+    }),
+
+  // ============ マッチング成果トラッカー ============
+
+  createActionItem: protectedProcedure
+    .input(z.object({
+      sessionId: z.number(),
+      title: z.string(),
+      description: z.string().optional(),
+      dueDate: z.string().optional(),
+      priority: z.enum(["high", "medium", "low"]).default("medium"),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      // Verify user owns this session
+      const session = await ctx.env.DB.prepare(
+        `SELECT id FROM matching_sessions WHERE id=? AND initiatorUserId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "マッチングセッションが見つかりません" });
+
+      const result = await ctx.env.DB.prepare(
+        `INSERT INTO matching_action_items (sessionId, userId, title, description, priority, dueDate, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+      ).bind(input.sessionId, ctx.userId, input.title, input.description || null, input.priority, input.dueDate || null).run();
+
+      return { id: result.meta?.last_row_id };
+    }),
+
+  updateActionItem: protectedProcedure
+    .input(z.object({
+      itemId: z.number(),
+      title: z.string().optional(),
+      description: z.string().optional(),
+      status: z.enum(["pending", "in_progress", "done", "cancelled"]).optional(),
+      dueDate: z.string().optional(),
+      priority: z.enum(["high", "medium", "low"]).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const existing = await ctx.env.DB.prepare(
+        `SELECT id FROM matching_action_items WHERE id=? AND userId=?`
+      ).bind(input.itemId, ctx.userId).first<any>();
+      if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "アクションアイテムが見つかりません" });
+
+      const updates: string[] = [];
+      const values: any[] = [];
+      if (input.title !== undefined) { updates.push("title=?"); values.push(input.title); }
+      if (input.description !== undefined) { updates.push("description=?"); values.push(input.description); }
+      if (input.status !== undefined) { updates.push("status=?"); values.push(input.status); }
+      if (input.dueDate !== undefined) { updates.push("dueDate=?"); values.push(input.dueDate); }
+      if (input.priority !== undefined) { updates.push("priority=?"); values.push(input.priority); }
+
+      if (updates.length === 0) return { success: true };
+      updates.push("updatedAt=datetime('now')");
+      values.push(input.itemId);
+
+      await ctx.env.DB.prepare(
+        `UPDATE matching_action_items SET ${updates.join(", ")} WHERE id=?`
+      ).bind(...values).run();
+
+      return { success: true };
+    }),
+
+  listActionItems: protectedProcedure
+    .input(z.object({
+      sessionId: z.number().optional(),
+      status: z.enum(["pending", "in_progress", "done", "cancelled"]).optional(),
+    }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      let sql = `SELECT mai.*, ms.theme as sessionTheme FROM matching_action_items mai
+                 LEFT JOIN matching_sessions ms ON ms.id = mai.sessionId
+                 WHERE mai.userId=?`;
+      const binds: any[] = [ctx.userId];
+
+      if (input.sessionId !== undefined) {
+        sql += " AND mai.sessionId=?";
+        binds.push(input.sessionId);
+      }
+      if (input.status !== undefined) {
+        sql += " AND mai.status=?";
+        binds.push(input.status);
+      }
+      sql += " ORDER BY mai.createdAt DESC";
+
+      const rows = await ctx.env.DB.prepare(sql).bind(...binds).all<any>();
+      return (rows.results ?? []).map((r: any) => ({
+        id: r.id,
+        sessionId: r.sessionId,
+        title: r.title,
+        description: r.description,
+        status: r.status,
+        priority: r.priority,
+        dueDate: r.dueDate,
+        sessionTheme: r.sessionTheme,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      }));
+    }),
+
+  recordOutcome: protectedProcedure
+    .input(z.object({
+      sessionId: z.number(),
+      outcomeType: z.enum(["meeting", "deal", "partnership", "referral", "other"]),
+      description: z.string(),
+      monetaryValue: z.number().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      // Verify user owns this session
+      const session = await ctx.env.DB.prepare(
+        `SELECT id FROM matching_sessions WHERE id=? AND initiatorUserId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "マッチングセッションが見つかりません" });
+
+      const result = await ctx.env.DB.prepare(
+        `INSERT INTO matching_outcomes (sessionId, userId, outcomeType, description, monetaryValue, createdAt)
+         VALUES (?, ?, ?, ?, ?, datetime('now'))`
+      ).bind(input.sessionId, ctx.userId, input.outcomeType, input.description, input.monetaryValue ?? 0).run();
+
+      return { id: result.meta?.last_row_id };
+    }),
+
+  getOutcomeSummary: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const db = ctx.env.DB;
+
+    // Total outcomes and value
+    const totals = await db.prepare(
+      `SELECT COUNT(*) as totalOutcomes, COALESCE(SUM(monetaryValue), 0) as totalValue FROM matching_outcomes WHERE userId=?`
+    ).bind(ctx.userId).first<any>();
+
+    // By type
+    const byTypeRows = await db.prepare(
+      `SELECT outcomeType, COUNT(*) as count, COALESCE(SUM(monetaryValue), 0) as value FROM matching_outcomes WHERE userId=? GROUP BY outcomeType`
+    ).bind(ctx.userId).all<any>();
+
+    const byType: Record<string, { count: number; value: number }> = {};
+    for (const r of (byTypeRows.results ?? [])) {
+      byType[r.outcomeType] = { count: r.count, value: r.value };
+    }
+
+    // Total matchings
+    const totalMatchings = await db.prepare(
+      `SELECT COUNT(*) as cnt FROM matching_sessions WHERE initiatorUserId=?`
+    ).bind(ctx.userId).first<any>();
+
+    // Matchings with outcomes
+    const matchingsWithOutcomes = await db.prepare(
+      `SELECT COUNT(DISTINCT sessionId) as cnt FROM matching_outcomes WHERE userId=?`
+    ).bind(ctx.userId).first<any>();
+
+    const totalM = totalMatchings?.cnt || 0;
+    const withOutcomes = matchingsWithOutcomes?.cnt || 0;
+
+    return {
+      totalOutcomes: totals?.totalOutcomes || 0,
+      totalValue: totals?.totalValue || 0,
+      byType,
+      matchingROI: totalM > 0 ? (totals?.totalValue || 0) / totalM : 0,
+      outcomeRate: totalM > 0 ? withOutcomes / totalM : 0,
+    };
+  }),
 });

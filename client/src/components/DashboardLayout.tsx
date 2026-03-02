@@ -23,7 +23,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useRealtimeNotifications } from "@/hooks/useRealtimeNotifications";
 import { useWebPush } from "@/hooks/useWebPush";
 import { toast } from "sonner";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -219,6 +219,8 @@ function DashboardLayoutContent({
         { icon: Lightbulb, label: "インサイト", path: "/matching/insights" },
         { icon: Swords, label: language === "en" ? "Negotiation" : "ネゴ練習", path: "/negotiation" },
         { icon: Heart, label: language === "en" ? "Emotions" : "感情分析", path: "/emotions" },
+        { icon: Map, label: language === "en" ? "Strategy" : "戦略プランナー", path: "/strategy" },
+        { icon: ClipboardList, label: language === "en" ? "Outcomes" : "成果トラッカー", path: "/outcomes" },
       ],
     },
     {
@@ -238,6 +240,7 @@ function DashboardLayoutContent({
         { icon: TreePine, label: language === "en" ? "Skill Tree" : "スキルツリー", path: "/skill-tree" },
         { icon: GitBranch, label: language === "en" ? "Evolution" : "進化マップ", path: "/evolution" },
         { icon: Trophy, label: language === "en" ? "Challenges" : "チャレンジ", path: "/challenges" },
+        { icon: Users, label: language === "en" ? "Collab" : "ツイン共同", path: "/collaboration" },
       ],
     },
   ], [t, language]);

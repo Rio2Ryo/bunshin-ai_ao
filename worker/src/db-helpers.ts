@@ -1150,6 +1150,63 @@ CREATE TABLE IF NOT EXISTS challenge_participants (
   submittedAt TEXT,
   UNIQUE(challengeId, userId)
 );
+
+CREATE TABLE IF NOT EXISTS matching_strategies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  friendId INTEGER NOT NULL,
+  theme TEXT,
+  strategy TEXT,
+  notes TEXT,
+  review TEXT,
+  effectiveness TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS twin_collaborations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  topic TEXT NOT NULL,
+  twinIds TEXT NOT NULL,
+  twinNames TEXT,
+  analysis TEXT,
+  status TEXT NOT NULL DEFAULT 'completed',
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS twin_collaboration_turns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  collaborationId INTEGER NOT NULL,
+  turnNumber INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  twinName TEXT,
+  content TEXT NOT NULL,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS matching_action_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  priority TEXT NOT NULL DEFAULT 'medium',
+  dueDate TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS matching_outcomes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  outcomeType TEXT NOT NULL,
+  description TEXT,
+  monetaryValue REAL DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
 `;
 
 let schemaReady = false;

@@ -1650,4 +1650,182 @@ ${matchingHistory || "なし"}`;
         suggestedActions: result.suggestedActions || [],
       };
     }),
+
+  // ============ ツイン・コラボレーション・モード ============
+
+  startCollaboration: protectedProcedure
+    .input(z.object({
+      twinIds: z.array(z.number()).min(2).max(4),
+      topic: z.string(),
+      turns: z.number().default(5),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const db = ctx.env.DB;
+
+      // Load and validate all twins
+      const twins: any[] = [];
+      for (const twinId of input.twinIds) {
+        const twin = await db.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(twinId).first<any>();
+        if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: `ツインID ${twinId} が見つかりません` });
+
+        // Check ownership: user's own twin or friend's twin
+        if (twin.userId !== ctx.userId) {
+          const friendship = await db.prepare(
+            `SELECT id FROM friendships WHERE ((userId=? AND friendId=?) OR (userId=? AND friendId=?)) AND status='accepted'`
+          ).bind(ctx.userId, twin.userId, twin.userId, ctx.userId).first<any>();
+          if (!friendship) throw new TRPCError({ code: "FORBIDDEN", message: `ツインID ${twinId} へのアクセス権がありません` });
+        }
+        twins.push(normalizeTwin(twin));
+      }
+
+      const twinNames = twins.map(t => t.name).join(", ");
+
+      // Create collaboration record
+      const collabResult = await db.prepare(
+        `INSERT INTO twin_collaborations (userId, topic, twinIds, twinNames, status, createdAt) VALUES (?, ?, ?, ?, 'completed', datetime('now'))`
+      ).bind(ctx.userId, input.topic, toJson(input.twinIds), twinNames).run();
+      const collaborationId = collabResult.meta?.last_row_id as number;
+
+      // Generate multi-twin dialogue
+      const llmConfig = await getUserLLMConfig(db, ctx.userId, "matching", ctx.env);
+      const allTurns: { turnNumber: number; twinId: number; twinName: string; content: string }[] = [];
+      const conversationHistory: string[] = [];
+
+      for (let turn = 0; turn < input.turns; turn++) {
+        const twinIndex = turn % twins.length;
+        const currentTwin = twins[twinIndex];
+        const otherTwins = twins.filter((_, i) => i !== twinIndex);
+
+        const systemPrompt = `あなたは「${currentTwin.name}」として発言します。
+性格: ${currentTwin.personality || "特に指定なし"}
+説明: ${currentTwin.description || "特に指定なし"}
+MBTI: ${currentTwin.mbtiType || "未診断"}
+
+他の参加者: ${otherTwins.map(t => `${t.name}（${t.personality || "性格未設定"}）`).join("、")}
+
+テーマ「${input.topic}」について、あなたの視点から意見を述べてください。
+${conversationHistory.length > 0 ? "これまでの会話を踏まえて、新しい視点や反論、同意などを自然に表現してください。" : "最初の発言者として、テーマについて議論を始めてください。"}
+発言は1〜3文程度で簡潔にしてください。JSON形式ではなく、自然な発言テキストのみ返してください。`;
+
+        const userPrompt = conversationHistory.length > 0
+          ? `これまでの会話:\n${conversationHistory.join("\n")}\n\n${currentTwin.name}として次の発言をしてください。`
+          : `テーマ「${input.topic}」について、${currentTwin.name}として最初に発言してください。`;
+
+        let content: string;
+        try {
+          const llmRes = await invokeLLM(llmConfig!, [{role: "system", content: systemPrompt}, {role: "user", content: userPrompt}]);
+          content = llmRes.content.replace(/```[a-z]*\n?/g, "").replace(/```\n?/g, "").trim();
+        } catch {
+          content = `${input.topic}について、私の考えを述べさせていただきます。`;
+        }
+
+        conversationHistory.push(`${currentTwin.name}: ${content}`);
+        allTurns.push({ turnNumber: turn + 1, twinId: currentTwin.id, twinName: currentTwin.name, content });
+
+        // Save turn to DB
+        await db.prepare(
+          `INSERT INTO twin_collaboration_turns (collaborationId, turnNumber, twinId, twinName, content, createdAt) VALUES (?, ?, ?, ?, ?, datetime('now'))`
+        ).bind(collaborationId, turn + 1, currentTwin.id, currentTwin.name, content).run();
+      }
+
+      return { collaborationId, turns: allTurns, twinNames: twins.map(t => t.name) };
+    }),
+
+  getCollaboration: protectedProcedure
+    .input(z.object({ collaborationId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const db = ctx.env.DB;
+
+      const collab = await db.prepare(
+        `SELECT * FROM twin_collaborations WHERE id=? AND userId=?`
+      ).bind(input.collaborationId, ctx.userId).first<any>();
+      if (!collab) throw new TRPCError({ code: "NOT_FOUND", message: "コラボレーションが見つかりません" });
+
+      const turns = await db.prepare(
+        `SELECT * FROM twin_collaboration_turns WHERE collaborationId=? ORDER BY turnNumber`
+      ).bind(input.collaborationId).all<any>();
+
+      return {
+        id: collab.id,
+        topic: collab.topic,
+        twinIds: parseJson<number[]>(collab.twinIds) || [],
+        twinNames: collab.twinNames,
+        analysis: parseJson<any>(collab.analysis),
+        status: collab.status,
+        createdAt: collab.createdAt,
+        turns: (turns.results ?? []).map((t: any) => ({
+          turnNumber: t.turnNumber,
+          twinId: t.twinId,
+          twinName: t.twinName,
+          content: t.content,
+        })),
+      };
+    }),
+
+  analyzeCollaboration: protectedProcedure
+    .input(z.object({ collaborationId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const db = ctx.env.DB;
+
+      const collab = await db.prepare(
+        `SELECT * FROM twin_collaborations WHERE id=? AND userId=?`
+      ).bind(input.collaborationId, ctx.userId).first<any>();
+      if (!collab) throw new TRPCError({ code: "NOT_FOUND", message: "コラボレーションが見つかりません" });
+
+      const turns = await db.prepare(
+        `SELECT * FROM twin_collaboration_turns WHERE collaborationId=? ORDER BY turnNumber`
+      ).bind(input.collaborationId).all<any>();
+
+      const dialogue = (turns.results ?? []).map((t: any) => `${t.twinName}: ${t.content}`).join("\n");
+
+      const llmConfig = await getUserLLMConfig(db, ctx.userId, "matching", ctx.env);
+      const systemPrompt = `あなたはマルチパーソナリティ対話の分析者です。以下の複数ツイン間の対話を分析し、必ず以下のJSON形式で返してください:
+{"agreements":["合意点"],"disagreements":[{"topic":"議題","positions":[{"twinName":"ツイン名","position":"立場"}]}],"uniquePerspectives":[{"twinName":"ツイン名","perspective":"独自の視点"}],"consensusAreas":["コンセンサスが形成された領域"],"mediationSuggestion":"調停・統合の提案"}`;
+
+      const userPrompt = `テーマ: ${collab.topic}\n参加ツイン: ${collab.twinNames}\n\n対話内容:\n${dialogue}\n\n上記の対話を分析し、JSON形式で返してください。`;
+
+      const rawResult = await invokeLLM(llmConfig!, [{role: "system", content: systemPrompt}, {role: "user", content: userPrompt}]);
+      const raw = rawResult.content;
+      let analysis: any;
+      try {
+        const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+        analysis = JSON.parse(cleaned);
+      } catch {
+        analysis = {
+          agreements: ["テーマに対する基本的な関心の共有"],
+          disagreements: [],
+          uniquePerspectives: [{ twinName: "全体", perspective: "各ツインが独自の視点を提供" }],
+          consensusAreas: ["テーマの重要性についての共通認識"],
+          mediationSuggestion: "より具体的なサブトピックに分けて議論を深めることをお勧めします",
+        };
+      }
+
+      await db.prepare(
+        `UPDATE twin_collaborations SET analysis=? WHERE id=?`
+      ).bind(toJson(analysis), input.collaborationId).run();
+
+      return analysis;
+    }),
+
+  listCollaborations: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const db = ctx.env.DB;
+
+    const rows = await db.prepare(
+      `SELECT tc.*, (SELECT COUNT(*) FROM twin_collaboration_turns WHERE collaborationId=tc.id) as turnCount
+       FROM twin_collaborations tc WHERE tc.userId=? ORDER BY tc.createdAt DESC`
+    ).bind(ctx.userId).all<any>();
+
+    return (rows.results ?? []).map((r: any) => ({
+      id: r.id,
+      topic: r.topic,
+      twinNames: r.twinNames,
+      turnCount: r.turnCount,
+      hasAnalysis: r.analysis !== null && r.analysis !== undefined,
+      createdAt: r.createdAt,
+    }));
+  }),
 });
