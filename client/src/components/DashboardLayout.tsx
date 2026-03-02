@@ -23,7 +23,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useRealtimeNotifications } from "@/hooks/useRealtimeNotifications";
 import { useWebPush } from "@/hooks/useWebPush";
 import { toast } from "sonner";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -203,6 +203,7 @@ function DashboardLayoutContent({
         { icon: MessageSquare, label: t("nav.chat"), path: "/chat" },
         { icon: BarChart3, label: t("nav.analytics"), path: "/analytics" },
         { icon: Rss, label: language === "en" ? "Feed" : "フィード", path: "/feed" },
+        { icon: BellRing, label: "通知管理", path: "/notifications" },
       ],
     },
     {
@@ -215,6 +216,7 @@ function DashboardLayoutContent({
         { icon: LayoutGrid, label: language === "en" ? "Workspace" : "ワークスペース", path: "/workspaces" },
         { icon: Lightbulb, label: t("nav.recommendations"), path: "/recommendations" },
         { icon: Heart, label: t("nav.intimacy"), path: "/intimacy" },
+        { icon: Lightbulb, label: "インサイト", path: "/matching/insights" },
       ],
     },
     {

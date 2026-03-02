@@ -504,4 +504,50 @@ export const notificationRouter = router({
         ).bind(ctx.userId, input.endpoint).run();
         return { success: true };
       }),
+
+    // Notification history with type filter
+    history: protectedProcedure
+      .input(z.object({
+        type: z.string().optional(),
+        limit: z.number().min(1).max(100).default(50),
+        offset: z.number().default(0),
+      }))
+      .query(async ({ ctx, input }) => {
+        await ensureSchema(ctx.env.DB);
+        let sql = `SELECT * FROM notifications WHERE userId=?`;
+        const params: any[] = [ctx.userId];
+        if (input.type) { sql += ` AND type=?`; params.push(input.type); }
+        sql += ` ORDER BY createdAt DESC LIMIT ? OFFSET ?`;
+        params.push(input.limit, input.offset);
+        const rows = await ctx.env.DB.prepare(sql).bind(...params).all<any>();
+        // Count by type
+        const typeCounts = await ctx.env.DB.prepare(
+          `SELECT type, COUNT(*) as count FROM notifications WHERE userId=? GROUP BY type`
+        ).bind(ctx.userId).all<any>();
+        const unreadCount = await ctx.env.DB.prepare(
+          `SELECT COUNT(*) as c FROM notifications WHERE userId=? AND isRead=0`
+        ).bind(ctx.userId).first<any>();
+        return {
+          items: (rows.results ?? []).map((r: any) => ({ ...r, data: parseJson<any>(r.data) })),
+          typeCounts: typeCounts.results ?? [],
+          unreadCount: unreadCount?.c ?? 0,
+        };
+      }),
+
+    // Get notification channel status summary
+    channelStatus: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const db = ctx.env.DB;
+      const settings = await db.prepare(`SELECT * FROM notification_settings WHERE userId=?`).bind(ctx.userId).first<any>();
+      const pushSub = await db.prepare(`SELECT COUNT(*) as c FROM push_subscriptions WHERE userId=?`).bind(ctx.userId).first<any>();
+      const lineConn = await db.prepare(`SELECT status FROM line_connections WHERE userId=? AND status='active'`).bind(ctx.userId).first<any>();
+      return {
+        inApp: true,
+        slack: !!settings?.slackWebhookUrl,
+        line: !!lineConn,
+        webPush: (pushSub?.c ?? 0) > 0,
+        email: !!(settings?.emailNotify),
+        settings: settings || { slackWebhookUrl: null, lineNotify: 1, emailNotify: 0, matchingComplete: 1, scheduledMatching: 1 },
+      };
+    }),
 });

@@ -2561,4 +2561,225 @@ JSONのみ出力してください。`;
       accuracyTrend: (trend.results ?? []).reverse(),
     };
   }),
+
+  // ============ Dialogue Templates ============
+  createTemplate: protectedProcedure
+    .input(z.object({
+      sessionId: z.number().optional(),
+      name: z.string().min(1).max(200),
+      description: z.string().max(1000).optional(),
+      theme: z.string().min(1).max(500),
+      turns: z.number().min(1).max(20).default(5),
+      systemPrompt: z.string().max(5000).optional(),
+      tags: z.array(z.string()).max(10).optional(),
+      visibility: z.enum(["public", "private"]).default("private"),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      // If from session, extract dialogue pattern
+      let dialoguePattern: string | null = null;
+      if (input.sessionId) {
+        const dialogues = await ctx.env.DB.prepare(
+          `SELECT md.turnNumber, md.content, dt.name as speakerName
+           FROM matching_dialogues md
+           LEFT JOIN digital_twins dt ON dt.id = md.speakerTwinId
+           WHERE md.sessionId=? ORDER BY md.turnNumber`
+        ).bind(input.sessionId).all<any>();
+        if (dialogues.results?.length) {
+          dialoguePattern = JSON.stringify(
+            (dialogues.results ?? []).map((d: any) => ({
+              turn: d.turnNumber,
+              speaker: d.speakerName,
+              contentPreview: (d.content || "").slice(0, 100),
+            }))
+          );
+        }
+      }
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO matching_templates (userId, name, description, theme, turns, systemPrompt, dialoguePattern, tags, visibility)
+         VALUES (?,?,?,?,?,?,?,?,?)`
+      ).bind(
+        ctx.userId, input.name, input.description || null, input.theme,
+        input.turns, input.systemPrompt || null, dialoguePattern,
+        JSON.stringify(input.tags || []), input.visibility
+      ).run();
+      return { id: Number(res.meta.last_row_id) };
+    }),
+
+  listTemplates: protectedProcedure
+    .input(z.object({
+      publicOnly: z.boolean().default(false),
+      limit: z.number().min(1).max(50).default(20),
+    }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      let sql: string;
+      let params: any[];
+      if (input.publicOnly) {
+        sql = `SELECT mt.*, u.name as creatorName, (SELECT COUNT(*) FROM matching_template_uses WHERE templateId=mt.id) as useCount
+               FROM matching_templates mt LEFT JOIN users u ON u.id=mt.userId
+               WHERE mt.visibility='public' ORDER BY useCount DESC LIMIT ?`;
+        params = [input.limit];
+      } else {
+        sql = `SELECT mt.*, u.name as creatorName, (SELECT COUNT(*) FROM matching_template_uses WHERE templateId=mt.id) as useCount
+               FROM matching_templates mt LEFT JOIN users u ON u.id=mt.userId
+               WHERE mt.userId=? OR mt.visibility='public' ORDER BY mt.createdAt DESC LIMIT ?`;
+        params = [ctx.userId, input.limit];
+      }
+      const rows = await ctx.env.DB.prepare(sql).bind(...params).all<any>();
+      return (rows.results ?? []).map((r: any) => ({
+        ...r,
+        tags: parseJson<string[]>(r.tags) ?? [],
+        dialoguePattern: parseJson<any>(r.dialoguePattern),
+      }));
+    }),
+
+  useTemplate: protectedProcedure
+    .input(z.object({ templateId: z.number(), friendId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const tmpl = await ctx.env.DB.prepare(`SELECT * FROM matching_templates WHERE id=?`).bind(input.templateId).first<any>();
+      if (!tmpl) throw new TRPCError({ code: "NOT_FOUND", message: "テンプレートが見つかりません" });
+      // Record use
+      await ctx.env.DB.prepare(
+        `INSERT INTO matching_template_uses (templateId, userId) VALUES (?,?)`
+      ).bind(input.templateId, ctx.userId).run();
+      // Return template data for client to call startStreaming with
+      return {
+        theme: tmpl.theme,
+        turns: tmpl.turns,
+        systemPrompt: tmpl.systemPrompt || null,
+        friendId: input.friendId,
+      };
+    }),
+
+  deleteTemplate: protectedProcedure
+    .input(z.object({ templateId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM matching_templates WHERE id=? AND userId=?`).bind(input.templateId, ctx.userId).run();
+      return { success: true };
+    }),
+
+  // ============ Matching Insights AI ============
+  generateInsights: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const db = ctx.env.DB;
+
+    const llmConfig = await getUserLLMConfig(db, ctx.userId, "analysis", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "LLM APIキーが必要です" });
+
+    // Gather all matching data
+    const matches = await db.prepare(
+      `SELECT ms.id, ms.theme, ms.createdAt, mr.compatibilityScore, mr.summary, mr.scoreBreakdown,
+        dt2.name as partnerTwinName, dt2.userId as partnerUserId, u2.name as partnerName
+       FROM matching_sessions ms
+       JOIN matching_results mr ON mr.sessionId = ms.id
+       LEFT JOIN digital_twins dt2 ON dt2.id = ms.twin2Id
+       LEFT JOIN users u2 ON u2.id = dt2.userId
+       WHERE ms.initiatorUserId=? AND ms.status='completed'
+       ORDER BY ms.createdAt DESC LIMIT 30`
+    ).bind(ctx.userId).all<any>();
+
+    const matchData = matches.results ?? [];
+    if (matchData.length < 2) {
+      return { patterns: [], bestPartner: null, successFactors: [], summary: "インサイト生成には2件以上のマッチング結果が必要です" };
+    }
+
+    // Format for LLM
+    const matchSummary = matchData.map((m: any) => {
+      const bd = parseJson<any>(m.scoreBreakdown) || {};
+      return `[${m.createdAt?.slice(0, 10)}] テーマ「${m.theme}」with ${m.partnerName || "?"}: ${m.compatibilityScore}% — ${Object.entries(bd).map(([k, v]) => `${k}:${(v as any)?.score ?? 0}`).join(", ")}`;
+    }).join("\n");
+
+    const result = await invokeLLM(llmConfig, [
+      {
+        role: "system",
+        content: `あなたはビジネスマッチングの分析エキスパートです。
+ユーザーの全マッチング履歴を横断分析し、以下をJSON形式で出力してください:
+{
+  "patterns": ["パターン1: 説明", "パターン2: 説明", "パターン3: 説明"],
+  "bestPartner": {"name": "最適パートナー名", "reason": "理由"},
+  "successFactors": ["成功要因1", "成功要因2", "成功要因3"],
+  "weakAreas": ["改善領域1", "改善領域2"],
+  "recommendation": "次のマッチングへのアドバイス（2-3文）",
+  "summary": "全体サマリー（2-3文）"
+}`,
+      },
+      { role: "user", content: `マッチング履歴 (${matchData.length}件):\n${matchSummary}` },
+    ], { maxTokens: 1500, temperature: 0.4 });
+
+    try {
+      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const insights = JSON.parse(jsonMatch[0]);
+        // Save to DB
+        await db.prepare(
+          `INSERT OR REPLACE INTO matching_insights (userId, insightsData, generatedAt)
+           VALUES (?,?,datetime('now'))`
+        ).bind(ctx.userId, JSON.stringify(insights)).run();
+        return insights;
+      }
+    } catch { /* parse error */ }
+    return { patterns: [], bestPartner: null, successFactors: [], summary: result.content };
+  }),
+
+  getInsights: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const row = await ctx.env.DB.prepare(
+      `SELECT * FROM matching_insights WHERE userId=? ORDER BY generatedAt DESC LIMIT 1`
+    ).bind(ctx.userId).first<any>();
+    if (!row) return null;
+    return { ...parseJson<any>(row.insightsData), generatedAt: row.generatedAt };
+  }),
+
+  sendInsightsReport: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    if (!ctx.env.RESEND_API_KEY) return { sent: false, reason: "メール送信未設定" };
+
+    const user = await ctx.env.DB.prepare(`SELECT email, name FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+    if (!user?.email) return { sent: false, reason: "メールアドレス未設定" };
+
+    const row = await ctx.env.DB.prepare(
+      `SELECT * FROM matching_insights WHERE userId=? ORDER BY generatedAt DESC LIMIT 1`
+    ).bind(ctx.userId).first<any>();
+    if (!row) return { sent: false, reason: "インサイトデータがありません" };
+
+    const insights = parseJson<any>(row.insightsData) || {};
+    const fromEmail = ctx.env.RESEND_FROM_EMAIL || "noreply@bunshin-ai.pages.dev";
+    const frontendUrl = ctx.env.FRONTEND_URL || "https://bunshin-ai.pages.dev";
+
+    const emailHtml = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"></head><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+<div style="background:linear-gradient(135deg,#6366f1,#818cf8);padding:24px;border-radius:12px 12px 0 0;color:#fff;text-align:center">
+  <h1 style="margin:0;font-size:24px">マッチングインサイトレポート</h1>
+  <p style="margin:8px 0 0;opacity:0.9">${user.name || "ユーザー"}さんの分析結果</p>
+</div>
+<div style="background:#f8fafc;padding:24px;border:1px solid #e5e7eb;border-top:0">
+  ${insights.summary ? `<p style="color:#374151;font-size:16px;margin-bottom:16px">${insights.summary}</p>` : ""}
+  ${insights.patterns?.length ? `<h3 style="color:#6366f1;margin-top:20px">発見パターン</h3><ul>${insights.patterns.map((p: string) => `<li style="color:#4b5563;margin:4px 0">${p}</li>`).join("")}</ul>` : ""}
+  ${insights.bestPartner ? `<h3 style="color:#6366f1;margin-top:20px">最適パートナー</h3><p style="color:#374151"><strong>${insights.bestPartner.name}</strong>: ${insights.bestPartner.reason}</p>` : ""}
+  ${insights.successFactors?.length ? `<h3 style="color:#6366f1;margin-top:20px">成功要因</h3><ul>${insights.successFactors.map((f: string) => `<li style="color:#4b5563;margin:4px 0">${f}</li>`).join("")}</ul>` : ""}
+  ${insights.recommendation ? `<div style="background:#eff6ff;border-left:4px solid #6366f1;padding:12px;margin-top:16px;border-radius:0 8px 8px 0"><p style="color:#374151;margin:0">${insights.recommendation}</p></div>` : ""}
+  <div style="text-align:center;margin:24px 0">
+    <a href="${frontendUrl}/matching" style="background:#6366f1;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">ダッシュボードを見る</a>
+  </div>
+</div>
+<div style="padding:16px;text-align:center;color:#9ca3af;font-size:12px">分身AI マッチングインサイト | <a href="${frontendUrl}" style="color:#6366f1">bunshin-ai.pages.dev</a></div>
+</body></html>`;
+
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${ctx.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `分身AI <${fromEmail}>`,
+          to: [user.email],
+          subject: `【分身AI】マッチングインサイトレポート`,
+          html: emailHtml,
+        }),
+      });
+      return { sent: res.ok };
+    } catch { return { sent: false, reason: "メール送信に失敗しました" }; }
+  }),
+
 });

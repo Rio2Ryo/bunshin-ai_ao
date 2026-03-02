@@ -995,6 +995,36 @@ CREATE TABLE IF NOT EXISTS feed_comments (
   createdAt TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_feed_comments_item ON feed_comments(feedItemId);
+
+CREATE TABLE IF NOT EXISTS matching_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  theme TEXT NOT NULL,
+  turns INTEGER NOT NULL DEFAULT 5,
+  systemPrompt TEXT,
+  dialoguePattern TEXT,
+  tags TEXT DEFAULT '[]',
+  visibility TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('public','private')),
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_matching_templates_user ON matching_templates(userId);
+
+CREATE TABLE IF NOT EXISTS matching_template_uses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  templateId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS matching_insights (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  insightsData TEXT,
+  generatedAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(userId)
+);
 `;
 
 let schemaReady = false;

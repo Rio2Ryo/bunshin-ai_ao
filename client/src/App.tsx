@@ -70,6 +70,8 @@ const ScenarioBuilder = lazy(() => import("./pages/ScenarioBuilder"));
 const Tournament = lazy(() => import("./pages/Tournament"));
 const Feed = lazy(() => import("./pages/Feed"));
 const SkillTree = lazy(() => import("./pages/SkillTree"));
+const NotificationDashboard = lazy(() => import("./pages/NotificationDashboard"));
+const MatchingInsights = lazy(() => import("./pages/MatchingInsights"));
 
 function PageLoader() {
   return (
@@ -101,6 +103,7 @@ function Router() {
         <Route path="/matching/analytics" component={MatchingAnalytics} />
         <Route path="/matching/group/:id" component={GroupMatchingSession} />
         <Route path="/matching/replay/:id" component={MatchingReplay} />
+        <Route path="/matching/insights" component={MatchingInsights} />
         <Route path="/matching/:id" component={MatchingSession} />
         <Route path="/ai-config" component={AIConfig} />
         <Route path="/orchestration" component={Orchestration} />
@@ -144,6 +147,7 @@ function Router() {
         <Route path="/tournament/:id" component={Tournament} />
         <Route path="/feed" component={Feed} />
         <Route path="/skill-tree" component={SkillTree} />
+        <Route path="/notifications" component={NotificationDashboard} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>
