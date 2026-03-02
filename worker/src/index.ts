@@ -50,6 +50,7 @@ import { workspaceRouter } from "./routers/workspace";
 import { apiPublicRouter } from "./routers/api-public";
 import { scenarioRouter } from "./routers/scenarios";
 import { tournamentRouter } from "./routers/tournament";
+import { feedRouter } from "./routers/feed";
 
 // ============ Composed tRPC Router ============
 
@@ -94,6 +95,7 @@ const appRouter = router({
   apiPublic: apiPublicRouter,
   scenario: scenarioRouter,
   tournament: tournamentRouter,
+  feed: feedRouter,
 });
 
 export type AppRouter = typeof appRouter;

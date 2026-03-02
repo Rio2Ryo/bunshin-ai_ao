@@ -803,6 +803,152 @@ All output should be in Japanese.`,
     return { avatarUrl, description: avatarDescription };
   }),
 
+  // ============ Skill Tree Visualization ============
+  getSkillTree: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) return null;
+    const db = ctx.env.DB;
+
+    // 1. Knowledge base entries → skill nodes
+    const kbRows = await db.prepare(
+      `SELECT title, summary, sourceType, createdAt FROM knowledge_base WHERE twinId=? ORDER BY createdAt DESC LIMIT 50`
+    ).bind(twin.id).all<any>();
+
+    // 2. Matching history → competency scores
+    const matchRows = await db.prepare(
+      `SELECT mr.scoreBreakdown, mr.compatibilityScore, ms.theme, ms.createdAt
+       FROM matching_results mr
+       JOIN matching_sessions ms ON ms.id = mr.sessionId
+       WHERE ms.initiatorUserId=? AND ms.status='completed'
+       ORDER BY ms.createdAt DESC LIMIT 30`
+    ).bind(ctx.userId).all<any>();
+
+    // 3. Feedback summary
+    const feedbackRows = await db.prepare(
+      `SELECT df.rating, COUNT(*) as count
+       FROM dialogue_feedback df
+       JOIN matching_sessions ms ON ms.id = df.sessionId
+       WHERE df.userId=? AND (ms.twin1Id=? OR ms.twin2Id=?)
+       GROUP BY df.rating`
+    ).bind(ctx.userId, twin.id, twin.id).all<any>();
+
+    // Build skill dimensions from matching scoreBreakdowns
+    const dimensions: Record<string, { total: number; count: number; trend: number[] }> = {};
+    for (const row of matchRows.results ?? []) {
+      const breakdown = parseJson<any>(row.scoreBreakdown) || {};
+      for (const [key, val] of Object.entries(breakdown)) {
+        if (!dimensions[key]) dimensions[key] = { total: 0, count: 0, trend: [] };
+        const score = (val as any)?.score ?? 0;
+        dimensions[key].total += score;
+        dimensions[key].count += 1;
+        dimensions[key].trend.push(score);
+      }
+    }
+
+    // Build tree structure
+    const skillNodes = Object.entries(dimensions).map(([key, d]) => ({
+      id: key,
+      name: key,
+      avgScore: d.count > 0 ? Math.round(d.total / d.count) : 0,
+      maxScore: 20,
+      matchCount: d.count,
+      trend: d.trend.slice(-10),
+    }));
+
+    const knowledgeNodes = (kbRows.results ?? []).map((kb: any, i: number) => ({
+      id: `kb-${i}`,
+      name: kb.title || `知識 #${i + 1}`,
+      type: kb.sourceType,
+      summary: kb.summary?.slice(0, 100) || "",
+      createdAt: kb.createdAt,
+    }));
+
+    const feedbackSummary: Record<string, number> = {};
+    for (const fb of feedbackRows.results ?? []) {
+      feedbackSummary[fb.rating] = fb.count;
+    }
+
+    return {
+      twin: { id: twin.id, name: twin.name, personality: twin.personality, tags: twin.tags || [] },
+      skills: skillNodes,
+      knowledge: knowledgeNodes,
+      feedback: feedbackSummary,
+      totalMatchings: matchRows.results?.length ?? 0,
+      totalKnowledge: kbRows.results?.length ?? 0,
+    };
+  }),
+
+  getGrowthPath: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIを作成してください" });
+
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "analysis", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "LLM APIキーが必要です" });
+
+    const db = ctx.env.DB;
+
+    // Gather context
+    const matchRows = await db.prepare(
+      `SELECT mr.scoreBreakdown, mr.compatibilityScore, ms.theme
+       FROM matching_results mr JOIN matching_sessions ms ON ms.id = mr.sessionId
+       WHERE ms.initiatorUserId=? AND ms.status='completed'
+       ORDER BY ms.createdAt DESC LIMIT 10`
+    ).bind(ctx.userId).all<any>();
+
+    const kbCount = await db.prepare(
+      `SELECT COUNT(*) as c FROM knowledge_base WHERE twinId=?`
+    ).bind(twin.id).first<any>();
+
+    const feedbackCount = await db.prepare(
+      `SELECT rating, COUNT(*) as c FROM dialogue_feedback df
+       JOIN matching_sessions ms ON ms.id = df.sessionId
+       WHERE df.userId=? GROUP BY df.rating`
+    ).bind(ctx.userId).all<any>();
+
+    const matchingSummary = (matchRows.results ?? []).map((r: any) => {
+      const bd = parseJson<any>(r.scoreBreakdown) || {};
+      return `テーマ「${r.theme}」: スコア${r.compatibilityScore}% — ${Object.entries(bd).map(([k, v]) => `${k}:${(v as any)?.score ?? 0}`).join(", ")}`;
+    }).join("\n");
+
+    const result = await invokeLLM(llmConfig, [
+      {
+        role: "system",
+        content: `あなたはデジタルツインのスキル成長アドバイザーです。
+ユーザーのマッチング履歴、ナレッジベース、フィードバックデータを分析し、成長パスを提案してください。
+JSON形式のみ出力:
+{
+  "strengths": ["強み1", "強み2", "強み3"],
+  "weaknesses": ["改善点1", "改善点2"],
+  "growthPath": [
+    {"step": 1, "action": "アクション説明", "area": "スキル領域", "impact": "high/medium/low"},
+    {"step": 2, "action": "...", "area": "...", "impact": "..."},
+    {"step": 3, "action": "...", "area": "...", "impact": "..."}
+  ],
+  "recommendation": "総合的な成長アドバイス（1-2文）"
+}`,
+      },
+      {
+        role: "user",
+        content: `ツイン: ${twin.name}
+性格: ${twin.personality || "未設定"}
+タグ: ${(twin.tags || []).join(", ")}
+ナレッジ数: ${kbCount?.c ?? 0}
+フィードバック: ${(feedbackCount.results ?? []).map((f: any) => `${f.rating}:${f.c}`).join(", ") || "なし"}
+
+直近マッチング結果:
+${matchingSummary || "なし"}`,
+      },
+    ], { maxTokens: 1024, temperature: 0.4 });
+
+    try {
+      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) return JSON.parse(jsonMatch[0]);
+    } catch { /* parse error */ }
+    return { strengths: [], weaknesses: [], growthPath: [], recommendation: result.content };
+  }),
+
   analyzeDocument: protectedProcedure
     .input(z.object({
       fileData: z.string(), // base64

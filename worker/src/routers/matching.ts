@@ -1604,6 +1604,58 @@ JSON形式で出力: {"personalityUpdate": "新しい性格設定テキスト", 
       return { adjusted: false, message: "LLM分析の結果を解析できませんでした" };
     }),
 
+  // ============ Spectator: AI Commentary ============
+  generateCommentary: protectedProcedure
+    .input(z.object({ sessionId: z.number(), turnNumber: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+
+      // Get dialogue up to this turn
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT md.*, dt.name as speakerName FROM matching_dialogues md
+         LEFT JOIN digital_twins dt ON dt.id = md.speakerTwinId
+         WHERE md.sessionId=? AND md.turnNumber<=? ORDER BY md.turnNumber ASC`
+      ).bind(input.sessionId, input.turnNumber).all<any>();
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "analysis", ctx.env);
+      if (!llmConfig) return { commentary: "解説AI: LLM APIキーが未設定です" };
+
+      const dialogueText = (dialogues.results ?? []).map((d: any) =>
+        `[ターン${d.turnNumber}] ${d.speakerName || "Twin"}: ${(d.content || "").slice(0, 200)}`
+      ).join("\n");
+
+      const result = await invokeLLM(llmConfig, [
+        {
+          role: "system",
+          content: `あなたはビジネスマッチング対話の解説者です。観戦者向けに、各ターンの注目ポイント、交渉テクニック、ビジネス戦略の見どころを簡潔に解説してください。\nフレンドリーなトーンで、3-4文で解説してください。日本語で回答。`,
+        },
+        { role: "user", content: `テーマ: ${session.theme}\n\n${dialogueText}\n\n最新ターン(${input.turnNumber})について解説してください。` },
+      ], { maxTokens: 300, temperature: 0.7 });
+
+      return { commentary: result.content, turnNumber: input.turnNumber };
+    }),
+
+  // Get spectator reaction summary for a session
+  getSpectatorReactions: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT turnNumber, type, COUNT(*) as count
+         FROM matching_reactions WHERE sessionId=?
+         GROUP BY turnNumber, type ORDER BY turnNumber`
+      ).bind(input.sessionId).all<any>();
+      // Group by turn
+      const byTurn: Record<number, Record<string, number>> = {};
+      for (const r of rows.results ?? []) {
+        if (!byTurn[r.turnNumber]) byTurn[r.turnNumber] = {};
+        byTurn[r.turnNumber][r.type] = r.count;
+      }
+      return byTurn;
+    }),
+
   // ============ Group Matching (3-5 participants) ============
   createGroup: protectedProcedure
     .input(z.object({

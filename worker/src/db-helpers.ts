@@ -967,6 +967,34 @@ CREATE TABLE IF NOT EXISTS tournament_matches (
   createdAt TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_tournament_matches_tournament ON tournament_matches(tournamentId);
+
+CREATE TABLE IF NOT EXISTS feed_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  data TEXT,
+  visibility TEXT NOT NULL DEFAULT 'friends' CHECK(visibility IN ('public','friends','private')),
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_feed_items_user ON feed_items(userId);
+CREATE INDEX IF NOT EXISTS idx_feed_items_created ON feed_items(createdAt);
+
+CREATE TABLE IF NOT EXISTS feed_likes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  feedItemId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(feedItemId, userId)
+);
+
+CREATE TABLE IF NOT EXISTS feed_comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  feedItemId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_feed_comments_item ON feed_comments(feedItemId);
 `;
 
 let schemaReady = false;

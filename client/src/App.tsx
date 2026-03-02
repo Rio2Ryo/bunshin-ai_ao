@@ -68,6 +68,8 @@ const ABTest = lazy(() => import("./pages/ABTest"));
 const PredictionDashboard = lazy(() => import("./pages/PredictionDashboard"));
 const ScenarioBuilder = lazy(() => import("./pages/ScenarioBuilder"));
 const Tournament = lazy(() => import("./pages/Tournament"));
+const Feed = lazy(() => import("./pages/Feed"));
+const SkillTree = lazy(() => import("./pages/SkillTree"));
 
 function PageLoader() {
   return (
@@ -140,6 +142,8 @@ function Router() {
         <Route path="/scenarios" component={ScenarioBuilder} />
         <Route path="/tournament" component={Tournament} />
         <Route path="/tournament/:id" component={Tournament} />
+        <Route path="/feed" component={Feed} />
+        <Route path="/skill-tree" component={SkillTree} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>
