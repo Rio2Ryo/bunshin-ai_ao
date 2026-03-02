@@ -85,6 +85,9 @@ const MatchingDigest = lazy(() => import("./pages/MatchingDigest"));
 const PlaybookLibrary = lazy(() => import("./pages/PlaybookLibrary"));
 const ConversationStyleAnalysis = lazy(() => import("./pages/ConversationStyleAnalysis"));
 const MatchingNetwork = lazy(() => import("./pages/MatchingNetwork"));
+const TwinMemoryBank = lazy(() => import("./pages/TwinMemoryBank"));
+const ScenarioComparison = lazy(() => import("./pages/ScenarioComparison"));
+const CustomWidgets = lazy(() => import("./pages/CustomWidgets"));
 
 function PageLoader() {
   return (
@@ -174,6 +177,9 @@ function Router() {
         <Route path="/playbooks" component={PlaybookLibrary} />
         <Route path="/conversation-style" component={ConversationStyleAnalysis} />
         <Route path="/network" component={MatchingNetwork} />
+        <Route path="/memory-bank" component={TwinMemoryBank} />
+        <Route path="/scenario-compare" component={ScenarioComparison} />
+        <Route path="/widgets" component={CustomWidgets} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

@@ -23,7 +23,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useRealtimeNotifications } from "@/hooks/useRealtimeNotifications";
 import { useWebPush } from "@/hooks/useWebPush";
 import { toast } from "sonner";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -247,6 +247,9 @@ function DashboardLayoutContent({
         { icon: Trophy, label: language === "en" ? "Challenges" : "チャレンジ", path: "/challenges" },
         { icon: Users, label: language === "en" ? "Collab" : "ツイン共同", path: "/collaboration" },
         { icon: Network, label: language === "en" ? "Knowledge Graph" : "ナレッジグラフ", path: "/knowledge-graph" },
+        { icon: Database, label: language === "en" ? "Memory Bank" : "メモリーバンク", path: "/memory-bank" },
+        { icon: GitCompare, label: language === "en" ? "Scenarios" : "シナリオ比較", path: "/scenario-compare" },
+        { icon: LayoutGrid, label: language === "en" ? "Widgets" : "ウィジェット", path: "/widgets" },
       ],
     },
   ], [t, language]);

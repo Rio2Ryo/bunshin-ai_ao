@@ -1970,4 +1970,144 @@ ${entrySummaries}
         };
       }).filter((r: any) => r.entryId != null);
     }),
+
+  // ============ Feature 22-1: ツインメモリーバンク ============
+
+  collectMemories: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+    // Collect from matching dialogues
+    const matchings = await ctx.env.DB.prepare(
+      `SELECT ms.id, ms.theme, mr.recommendations, mr.compatibilityScore
+       FROM matching_sessions ms
+       LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+       WHERE ms.initiatorUserId = ? AND mr.id IS NOT NULL
+       ORDER BY ms.createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+
+    // Collect from chat messages
+    const chats = await ctx.env.DB.prepare(
+      `SELECT cs.id, cs.title, COUNT(cm.id) as msgCount
+       FROM chat_sessions cs
+       LEFT JOIN chat_messages cm ON cm.sessionId = cs.id
+       WHERE cs.userId = ? AND cs.mode != 'onboarding'
+       GROUP BY cs.id ORDER BY cs.createdAt DESC LIMIT 10`
+    ).bind(ctx.userId).all<any>();
+
+    // Collect from feedback
+    const feedbacks = await ctx.env.DB.prepare(
+      `SELECT df.sessionId, df.turnNumber, df.rating, df.comment, ms.theme
+       FROM dialogue_feedback df
+       JOIN matching_sessions ms ON ms.id = df.sessionId
+       WHERE df.userId = ? ORDER BY df.createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+
+    let added = 0;
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "chat", ctx.env);
+
+    // Matching memories
+    for (const m of (matchings.results ?? [])) {
+      const existing = await ctx.env.DB.prepare(
+        `SELECT id FROM twin_memories WHERE twinId = ? AND sourceType = 'matching' AND sourceId = ?`
+      ).bind(twin.id, m.id).first();
+      if (existing) continue;
+
+      const recs = parseJson<any>(m.recommendations);
+      const summary = `テーマ「${m.theme}」でスコア${m.compatibilityScore}。${recs?.length ? recs[0] : ""}`;
+      await ctx.env.DB.prepare(
+        `INSERT INTO twin_memories (twinId, userId, sourceType, sourceId, title, content, summary, importance) VALUES (?, ?, 'matching', ?, ?, ?, ?, ?)`
+      ).bind(twin.id, ctx.userId, m.id, `マッチング: ${m.theme}`, toJson({ theme: m.theme, score: m.compatibilityScore, recommendations: recs }), summary, m.compatibilityScore >= 70 ? 8 : 5).run();
+      added++;
+    }
+
+    // Chat memories
+    for (const c of (chats.results ?? [])) {
+      if ((c.msgCount ?? 0) < 3) continue;
+      const existing = await ctx.env.DB.prepare(
+        `SELECT id FROM twin_memories WHERE twinId = ? AND sourceType = 'chat' AND sourceId = ?`
+      ).bind(twin.id, c.id).first();
+      if (existing) continue;
+
+      await ctx.env.DB.prepare(
+        `INSERT INTO twin_memories (twinId, userId, sourceType, sourceId, title, content, summary, importance) VALUES (?, ?, 'chat', ?, ?, ?, ?, 4)`
+      ).bind(twin.id, ctx.userId, c.id, `チャット: ${c.title || "会話"}`, toJson({ title: c.title, messageCount: c.msgCount }), `${c.title || "会話"} (${c.msgCount}メッセージ)`).run();
+      added++;
+    }
+
+    // Feedback memories
+    for (const f of (feedbacks.results ?? [])) {
+      if (!f.comment) continue;
+      const existing = await ctx.env.DB.prepare(
+        `SELECT id FROM twin_memories WHERE twinId = ? AND sourceType = 'feedback' AND sourceId = ? AND title LIKE ?`
+      ).bind(twin.id, f.sessionId, `%Turn${f.turnNumber}%`).first();
+      if (existing) continue;
+
+      await ctx.env.DB.prepare(
+        `INSERT INTO twin_memories (twinId, userId, sourceType, sourceId, title, content, summary, importance) VALUES (?, ?, 'feedback', ?, ?, ?, ?, ?)`
+      ).bind(twin.id, ctx.userId, f.sessionId, `フィードバック: ${f.theme} Turn${f.turnNumber}`, toJson({ rating: f.rating, comment: f.comment, theme: f.theme }), `${f.rating === "up" ? "👍" : "👎"} ${f.comment}`, f.rating === "down" ? 7 : 5).run();
+      added++;
+    }
+
+    // Auto-summarize with LLM if we have enough memories
+    const allMemories = await ctx.env.DB.prepare(
+      `SELECT * FROM twin_memories WHERE twinId = ? ORDER BY importance DESC LIMIT 30`
+    ).bind(twin.id).all<any>();
+
+    let autoSummary = null;
+    if ((allMemories.results ?? []).length >= 5 && llmConfig) {
+      try {
+        const memText = (allMemories.results ?? []).map((m: any) => `[${m.sourceType}] ${m.title}: ${m.summary || ""}`).join("\n");
+        const result = await invokeLLM(llmConfig, [
+          { role: "system", content: "ツインの記憶を要約して、人格の特徴や傾向を簡潔にまとめてください。JSON形式: {\"summary\": \"要約\", \"traits\": [\"特徴1\"], \"preferences\": [\"好み1\"]}" },
+          { role: "user", content: memText },
+        ], { maxTokens: 512, temperature: 0.5 });
+        const match = result.content.match(/\{[\s\S]*\}/);
+        if (match) autoSummary = JSON.parse(match[0]);
+      } catch { /* ignore */ }
+    }
+
+    return { added, total: (allMemories.results ?? []).length, autoSummary };
+  }),
+
+  listMemories: protectedProcedure
+    .input(z.object({ pinnedOnly: z.boolean().optional(), sourceType: z.string().optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) return [];
+      let sql = `SELECT * FROM twin_memories WHERE twinId = ?`;
+      const binds: any[] = [twin.id];
+      if (input?.pinnedOnly) { sql += ` AND isPinned = 1`; }
+      if (input?.sourceType) { sql += ` AND sourceType = ?`; binds.push(input.sourceType); }
+      sql += ` ORDER BY isPinned DESC, importance DESC, updatedAt DESC`;
+      const rows = await ctx.env.DB.prepare(sql).bind(...binds).all<any>();
+      return (rows.results ?? []).map((r: any) => ({ ...r, content: parseJson<any>(r.content), tags: parseJson<string[]>(r.tags) }));
+    }),
+
+  updateMemory: protectedProcedure
+    .input(z.object({ memoryId: z.number(), title: z.string().optional(), summary: z.string().optional(), isPinned: z.boolean().optional(), importance: z.number().min(1).max(10).optional(), tags: z.array(z.string()).optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const sets: string[] = []; const binds: any[] = [];
+      if (input.title !== undefined) { sets.push("title=?"); binds.push(input.title); }
+      if (input.summary !== undefined) { sets.push("summary=?"); binds.push(input.summary); }
+      if (input.isPinned !== undefined) { sets.push("isPinned=?"); binds.push(input.isPinned ? 1 : 0); }
+      if (input.importance !== undefined) { sets.push("importance=?"); binds.push(input.importance); }
+      if (input.tags !== undefined) { sets.push("tags=?"); binds.push(toJson(input.tags)); }
+      if (sets.length === 0) return { updated: false };
+      sets.push("updatedAt=datetime('now')");
+      binds.push(input.memoryId, ctx.userId);
+      await ctx.env.DB.prepare(`UPDATE twin_memories SET ${sets.join(",")} WHERE id=? AND userId=?`).bind(...binds).run();
+      return { updated: true };
+    }),
+
+  deleteMemory: protectedProcedure
+    .input(z.object({ memoryId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM twin_memories WHERE id=? AND userId=?`).bind(input.memoryId, ctx.userId).run();
+      return { deleted: true };
+    }),
 });

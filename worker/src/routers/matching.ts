@@ -4761,4 +4761,124 @@ ${historyContext ? `\nユーザーの過去マッチング傾向:\n${historyCont
       generatedAt: row.generatedAt,
     };
   }),
+
+  // ============ Feature 22-2: マッチングシナリオ・プレイバック比較 ============
+
+  compareScenarios: protectedProcedure
+    .input(z.object({ sessionIds: z.array(z.number()).min(2).max(5) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "chat", ctx.env);
+
+      const sessionsData: any[] = [];
+      for (const sid of input.sessionIds) {
+        const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(sid).first<any>();
+        if (!session) continue;
+        const dialogues = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(sid).all<any>();
+        const result = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(sid).first<any>();
+        const settings = parseJson<any>(session.settings) || {};
+        sessionsData.push({
+          sessionId: sid, theme: session.theme, settings,
+          turnCount: (dialogues.results ?? []).length,
+          dialogueSummary: (dialogues.results ?? []).map((d: any) => `[${d.speaker}] ${(d.content || "").slice(0, 100)}`).join("\n"),
+          score: result?.compatibilityScore ?? 0,
+          scoreBreakdown: parseJson<any>(result?.scoreBreakdown),
+          recommendations: parseJson<any>(result?.recommendations),
+        });
+      }
+
+      if (sessionsData.length < 2) throw new TRPCError({ code: "BAD_REQUEST", message: "比較には2つ以上のセッションが必要です" });
+
+      const comparisonText = sessionsData.map((s, i) => `セッション${i + 1} (ID:${s.sessionId}): テーマ「${s.theme}」, ターン数:${s.turnCount}, スコア:${s.score}\n設定: ${JSON.stringify(s.settings)}\n対話概要:\n${s.dialogueSummary}`).join("\n\n---\n\n");
+
+      if (!llmConfig) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "LLM設定がありません" });
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "あなたはマッチング対話の比較分析の専門家です。複数のマッチングセッションを比較して詳細な分析を提供してください。" },
+        { role: "user", content: `以下の${sessionsData.length}つのマッチングセッションを比較してください:\n\n${comparisonText}\n\nJSON形式で出力:\n{\n  "sessions": [\n    { "sessionId": 数値, "strengths": ["強み"], "weaknesses": ["弱み"], "uniquePoints": ["特徴的な点"] }\n  ],\n  "diffHighlights": [{ "aspect": "比較観点", "details": "詳細", "winner": セッションID }],\n  "bestSetting": { "recommendedTurns": 数値, "recommendedApproach": "推奨アプローチ", "reasoning": "理由" },\n  "overallInsight": "総合所見"\n}` },
+      ], { maxTokens: 2048, temperature: 0.5 });
+
+      let comparison: any = {};
+      try { const match = result.content.match(/\{[\s\S]*\}/); if (match) comparison = JSON.parse(match[0]); } catch { comparison = { sessions: [], diffHighlights: [], bestSetting: {}, overallInsight: "" }; }
+
+      const theme = sessionsData[0]?.theme || "比較";
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO scenario_comparisons (userId, theme, sessionIds, comparison, bestSettingAdvice, createdAt) VALUES (?, ?, ?, ?, ?, datetime('now'))`
+      ).bind(ctx.userId, theme, toJson(input.sessionIds), toJson(comparison), toJson(comparison.bestSetting)).run();
+
+      return { id: Number(res.meta.last_row_id), sessionsData, comparison };
+    }),
+
+  listComparisons: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT * FROM scenario_comparisons WHERE userId=? ORDER BY createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({
+      ...r,
+      sessionIds: parseJson<number[]>(r.sessionIds),
+      comparison: parseJson<any>(r.comparison),
+      bestSettingAdvice: parseJson<any>(r.bestSettingAdvice),
+    }));
+  }),
+
+  // ============ Feature 22-3: ユーザーダッシュボード・カスタムウィジェットAPI ============
+
+  listWidgets: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT * FROM custom_widgets WHERE userId=? OR isShared=1 ORDER BY position ASC, createdAt ASC`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, config: parseJson<any>(r.config) }));
+  }),
+
+  createWidget: protectedProcedure
+    .input(z.object({
+      widgetType: z.enum(["kpi", "chart", "query", "feed", "calendar", "notes", "links"]),
+      title: z.string().min(1),
+      config: z.record(z.string(), z.unknown()).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const maxPos = await ctx.env.DB.prepare(`SELECT MAX(position) as mp FROM custom_widgets WHERE userId=?`).bind(ctx.userId).first<any>();
+      const position = (maxPos?.mp ?? -1) + 1;
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO custom_widgets (userId, widgetType, title, config, position, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+      ).bind(ctx.userId, input.widgetType, input.title, toJson(input.config || {}), position).run();
+      return { id: Number(res.meta.last_row_id) };
+    }),
+
+  updateWidget: protectedProcedure
+    .input(z.object({ widgetId: z.number(), title: z.string().optional(), config: z.record(z.string(), z.unknown()).optional(), position: z.number().optional(), isVisible: z.boolean().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const sets: string[] = []; const binds: any[] = [];
+      if (input.title !== undefined) { sets.push("title=?"); binds.push(input.title); }
+      if (input.config !== undefined) { sets.push("config=?"); binds.push(toJson(input.config)); }
+      if (input.position !== undefined) { sets.push("position=?"); binds.push(input.position); }
+      if (input.isVisible !== undefined) { sets.push("isVisible=?"); binds.push(input.isVisible ? 1 : 0); }
+      if (sets.length === 0) return { updated: false };
+      sets.push("updatedAt=datetime('now')");
+      binds.push(input.widgetId, ctx.userId);
+      await ctx.env.DB.prepare(`UPDATE custom_widgets SET ${sets.join(",")} WHERE id=? AND userId=?`).bind(...binds).run();
+      return { updated: true };
+    }),
+
+  deleteWidget: protectedProcedure
+    .input(z.object({ widgetId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM custom_widgets WHERE id=? AND userId=?`).bind(input.widgetId, ctx.userId).run();
+      return { deleted: true };
+    }),
+
+  shareWidget: protectedProcedure
+    .input(z.object({ widgetId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const w = await ctx.env.DB.prepare(`SELECT * FROM custom_widgets WHERE id=? AND userId=?`).bind(input.widgetId, ctx.userId).first<any>();
+      if (!w) throw new TRPCError({ code: "NOT_FOUND" });
+      const shareCode = Array.from(crypto.getRandomValues(new Uint8Array(8))).map(b => b.toString(16).padStart(2, "0")).join("");
+      await ctx.env.DB.prepare(`UPDATE custom_widgets SET isShared=1, shareCode=?, updatedAt=datetime('now') WHERE id=?`).bind(shareCode, input.widgetId).run();
+      return { shareCode };
+    }),
 });

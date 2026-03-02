@@ -1271,6 +1271,46 @@ CREATE TABLE IF NOT EXISTS matching_network_graphs (
   generatedAt TEXT DEFAULT (datetime('now')),
   UNIQUE(userId)
 );
+
+CREATE TABLE IF NOT EXISTS twin_memories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  twinId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  sourceType TEXT NOT NULL,
+  sourceId INTEGER,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  summary TEXT,
+  isPinned INTEGER DEFAULT 0,
+  importance INTEGER DEFAULT 5,
+  tags TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS scenario_comparisons (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  theme TEXT NOT NULL,
+  sessionIds TEXT NOT NULL,
+  comparison TEXT,
+  bestSettingAdvice TEXT,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS custom_widgets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  widgetType TEXT NOT NULL,
+  title TEXT NOT NULL,
+  config TEXT,
+  position INTEGER DEFAULT 0,
+  isVisible INTEGER DEFAULT 1,
+  isShared INTEGER DEFAULT 0,
+  shareCode TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
 `;
 
 let schemaReady = false;
