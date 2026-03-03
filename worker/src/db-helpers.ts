@@ -1543,6 +1543,63 @@ CREATE TABLE IF NOT EXISTS matching_heatmap_analyses (
   suggestions TEXT,
   createdAt TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS matching_storyboards (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  story TEXT NOT NULL,
+  keyMoments TEXT,
+  characters TEXT,
+  structure TEXT,
+  shareCode TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, userId)
+);
+
+CREATE TABLE IF NOT EXISTS storyboard_collections (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  storyIds TEXT DEFAULT '[]',
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_quizzes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  knowledgeId INTEGER,
+  question TEXT NOT NULL,
+  choices TEXT NOT NULL,
+  correctIndex INTEGER NOT NULL,
+  explanation TEXT,
+  difficulty TEXT DEFAULT 'normal',
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS quiz_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  quizId INTEGER NOT NULL,
+  selectedIndex INTEGER NOT NULL,
+  correct INTEGER NOT NULL,
+  timeTakenMs INTEGER,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS facilitator_interventions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  turnNumber INTEGER NOT NULL,
+  interventionType TEXT NOT NULL,
+  suggestion TEXT NOT NULL,
+  accepted INTEGER DEFAULT 0,
+  effectScore REAL,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
 `;
 
 let schemaReady = false;

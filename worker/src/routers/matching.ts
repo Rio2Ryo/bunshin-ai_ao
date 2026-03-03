@@ -5922,4 +5922,220 @@ JSON形式で返してください:
     };
   }),
 
+
+  // ============ Matching Storyboard ============
+
+  generateStoryboard: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT speaker, content, turnNumber FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(input.sessionId).all<any>();
+
+      const result = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_results WHERE sessionId=?`
+      ).bind(input.sessionId).first<any>();
+
+      const settings = parseJson<any>(session.settings) || {};
+
+      const prompt = `以下のビジネスマッチング対話をストーリー形式に変換してください。
+
+テーマ: ${session.theme}
+対話:
+${(dialogues.results ?? []).map((d: any) => `${d.speaker}: ${d.content}`).join('\n')}
+
+結果スコア: ${result?.compatibilityScore || 'N/A'}
+
+起承転結の4幕構成で、キーモーメント（転機、共感、対立、合意）を抽出し、登場人物の心理描写を含めてください。
+
+JSON形式で返してください:
+{
+  "title": "ストーリータイトル",
+  "story": {
+    "introduction": "起: 出会いと背景",
+    "development": "承: 展開と深まり",
+    "twist": "転: 転機・発見",
+    "conclusion": "結: 合意と展望"
+  },
+  "keyMoments": [{"turnNumber": 1, "type": "empathy|conflict|agreement|discovery", "description": "説明", "quote": "引用"}],
+  "characters": [{"name": "名前", "role": "役割", "motivation": "動機", "psychologicalArc": "心理的変化"}]
+}`;
+
+      const resp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+      let parsed: any = {};
+      try { parsed = JSON.parse(resp.content); } catch {
+        parsed = {
+          title: `${session.theme} - ストーリー`,
+          story: { introduction: "対話が始まりました。", development: "議論が深まりました。", twist: "新しい発見がありました。", conclusion: "合意に至りました。" },
+          keyMoments: [],
+          characters: [],
+        };
+      }
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO matching_storyboards (sessionId, userId, title, story, keyMoments, characters, structure)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        input.sessionId, ctx.userId,
+        parsed.title || `${session.theme} - ストーリー`,
+        toJson(parsed.story),
+        toJson(parsed.keyMoments || []),
+        toJson(parsed.characters || []),
+        toJson({ theme: session.theme, score: result?.compatibilityScore })
+      ).run();
+
+      return { title: parsed.title, story: parsed.story, keyMoments: parsed.keyMoments, characters: parsed.characters };
+    }),
+
+  getStoryboard: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_storyboards WHERE sessionId=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!row) return null;
+      return {
+        ...row,
+        story: parseJson<any>(row.story),
+        keyMoments: parseJson<any[]>(row.keyMoments),
+        characters: parseJson<any[]>(row.characters),
+        structure: parseJson<any>(row.structure),
+      };
+    }),
+
+  shareStoryboard: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const code = [...Array(16)].map(() => Math.random().toString(16).charAt(2)).join('');
+      await ctx.env.DB.prepare(
+        `UPDATE matching_storyboards SET shareCode=? WHERE sessionId=? AND userId=?`
+      ).bind(code, input.sessionId, ctx.userId).run();
+      return { shareCode: code };
+    }),
+
+  listStoryboardCollections: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT * FROM storyboard_collections WHERE userId=? ORDER BY createdAt DESC`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, storyIds: parseJson<number[]>(r.storyIds) }));
+  }),
+
+  createStoryboardCollection: protectedProcedure
+    .input(z.object({ name: z.string(), description: z.string().optional(), storyIds: z.array(z.number()).optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(
+        `INSERT INTO storyboard_collections (userId, name, description, storyIds) VALUES (?, ?, ?, ?)`
+      ).bind(ctx.userId, input.name, input.description || null, toJson(input.storyIds || [])).run();
+      return { created: true };
+    }),
+
+  // ============ Matching AI Facilitator ============
+
+  getFacilitatorSuggestion: protectedProcedure
+    .input(z.object({ sessionId: z.number(), turnNumber: z.number(), recentDialogue: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const prompt = `あなたはビジネスマッチング対話のAIファシリテーターです。
+以下の対話を分析し、介入が必要かどうか判断してください。
+
+テーマ: ${session.theme}
+現在のターン: ${input.turnNumber}
+直近の対話:
+${input.recentDialogue}
+
+以下のパターンを検出してください:
+1. 沈黙/停滞 — 同じ話題の繰り返し
+2. 堂々巡り — 結論が出ない議論
+3. 対立 — 意見の衝突が激化
+4. 話題枯渇 — 新しい観点が必要
+
+JSON形式で返してください:
+{
+  "needsIntervention": true/false,
+  "interventionType": "topic_change|deep_question|consensus|encouragement|none",
+  "suggestion": "具体的な介入提案文",
+  "reason": "介入理由",
+  "confidence": 0.0-1.0
+}`;
+
+      const resp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+      let parsed: any = {};
+      try { parsed = JSON.parse(resp.content); } catch {
+        parsed = { needsIntervention: false, interventionType: "none", suggestion: "", reason: "分析不能", confidence: 0 };
+      }
+
+      if (parsed.needsIntervention) {
+        await ctx.env.DB.prepare(
+          `INSERT INTO facilitator_interventions (sessionId, turnNumber, interventionType, suggestion) VALUES (?, ?, ?, ?)`
+        ).bind(input.sessionId, input.turnNumber, parsed.interventionType, parsed.suggestion).run();
+      }
+
+      return parsed;
+    }),
+
+  acceptFacilitatorIntervention: protectedProcedure
+    .input(z.object({ interventionId: z.number(), accepted: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(
+        `UPDATE facilitator_interventions SET accepted=? WHERE id=?`
+      ).bind(input.accepted ? 1 : 0, input.interventionId).run();
+      return { updated: true };
+    }),
+
+  getFacilitatorHistory: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT * FROM facilitator_interventions WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(input.sessionId).all<any>();
+      return rows.results ?? [];
+    }),
+
+  getFacilitatorEffectiveness: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const stats = await ctx.env.DB.prepare(
+      `SELECT 
+        COUNT(*) as totalInterventions,
+        SUM(CASE WHEN accepted=1 THEN 1 ELSE 0 END) as acceptedCount,
+        AVG(effectScore) as avgEffectScore
+       FROM facilitator_interventions fi
+       JOIN matching_sessions ms ON ms.id = fi.sessionId
+       WHERE ms.initiatorUserId=?`
+    ).bind(ctx.userId).first<any>();
+
+    const byType = await ctx.env.DB.prepare(
+      `SELECT interventionType, COUNT(*) as count, SUM(CASE WHEN accepted=1 THEN 1 ELSE 0 END) as accepted
+       FROM facilitator_interventions fi
+       JOIN matching_sessions ms ON ms.id = fi.sessionId
+       WHERE ms.initiatorUserId=?
+       GROUP BY interventionType`
+    ).bind(ctx.userId).all<any>();
+
+    return {
+      total: stats?.totalInterventions || 0,
+      accepted: stats?.acceptedCount || 0,
+      avgEffectScore: stats?.avgEffectScore || 0,
+      byType: byType.results ?? [],
+    };
+  }),
+
 });

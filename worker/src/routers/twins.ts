@@ -2682,4 +2682,171 @@ JSON配列で返してください:
     return { suggestions };
   }),
 
+
+  // ============ Knowledge Quiz ============
+
+  generateQuiz: protectedProcedure
+    .input(z.object({ count: z.number().min(1).max(20).default(5) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "chat", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const knowledge = await ctx.env.DB.prepare(
+        `SELECT id, title, content, summary FROM knowledge_base WHERE userId=? ORDER BY RANDOM() LIMIT 10`
+      ).bind(ctx.userId).all<any>();
+
+      if (!knowledge.results?.length) throw new TRPCError({ code: "BAD_REQUEST", message: "ナレッジベースが空です" });
+
+      const prompt = `以下のナレッジベースの内容から4択クイズを${input.count}問生成してください。
+
+ナレッジ:
+${(knowledge.results ?? []).map((k: any) => `[${k.title}] ${k.content || k.summary || ''}`).join('\n---\n')}
+
+各問題は:
+- ナレッジの内容に基づいた正確な問題
+- 4つの選択肢（1つが正解、3つが誤答）
+- 難易度（easy/normal/hard）
+- 解説文
+
+JSON配列で返してください:
+[{
+  "knowledgeId": ナレッジID(整数),
+  "question": "問題文",
+  "choices": ["選択肢A", "選択肢B", "選択肢C", "選択肢D"],
+  "correctIndex": 正解インデックス(0-3),
+  "explanation": "解説",
+  "difficulty": "easy|normal|hard"
+}]`;
+
+      const resp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+      let quizzes: any[] = [];
+      try {
+        const p = JSON.parse(resp.content);
+        quizzes = Array.isArray(p) ? p : p.quizzes || [];
+      } catch {
+        quizzes = [{
+          knowledgeId: knowledge.results[0]?.id || null,
+          question: "このナレッジの主要なテーマは何ですか？",
+          choices: ["ビジネス戦略", "技術開発", "マーケティング", "人材育成"],
+          correctIndex: 0,
+          explanation: "ナレッジの内容を確認してください。",
+          difficulty: "normal",
+        }];
+      }
+
+      const inserted: any[] = [];
+      for (const q of quizzes.slice(0, input.count)) {
+        const res = await ctx.env.DB.prepare(
+          `INSERT INTO knowledge_quizzes (userId, twinId, knowledgeId, question, choices, correctIndex, explanation, difficulty)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+          ctx.userId, twin.id, q.knowledgeId || null,
+          q.question, toJson(q.choices), q.correctIndex,
+          q.explanation || null, q.difficulty || "normal"
+        ).run();
+        inserted.push({ id: res.meta?.last_row_id, ...q });
+      }
+
+      return { quizzes: inserted };
+    }),
+
+  answerQuiz: protectedProcedure
+    .input(z.object({ quizId: z.number(), selectedIndex: z.number(), timeTakenMs: z.number().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const quiz = await ctx.env.DB.prepare(
+        `SELECT * FROM knowledge_quizzes WHERE id=? AND userId=?`
+      ).bind(input.quizId, ctx.userId).first<any>();
+      if (!quiz) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const correct = quiz.correctIndex === input.selectedIndex ? 1 : 0;
+      await ctx.env.DB.prepare(
+        `INSERT INTO quiz_attempts (userId, quizId, selectedIndex, correct, timeTakenMs) VALUES (?, ?, ?, ?, ?)`
+      ).bind(ctx.userId, input.quizId, input.selectedIndex, correct, input.timeTakenMs || null).run();
+
+      // Award points for correct answers
+      if (correct) {
+        try {
+          await ctx.env.DB.prepare(
+            `UPDATE user_points SET balance = balance + 5 WHERE userId=?`
+          ).bind(ctx.userId).run();
+          await ctx.env.DB.prepare(
+            `INSERT INTO point_transactions (userId, amount, type, description) VALUES (?, 5, 'earn', 'クイズ正解ボーナス')`
+          ).bind(ctx.userId).run();
+        } catch { /* points table may not exist */ }
+      }
+
+      return {
+        correct: !!correct,
+        correctIndex: quiz.correctIndex,
+        explanation: quiz.explanation,
+        choices: parseJson<string[]>(quiz.choices),
+        pointsEarned: correct ? 5 : 0,
+      };
+    }),
+
+  getQuizHistory: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const stats = await ctx.env.DB.prepare(
+      `SELECT COUNT(*) as total, SUM(correct) as correctCount, AVG(timeTakenMs) as avgTime
+       FROM quiz_attempts WHERE userId=?`
+    ).bind(ctx.userId).first<any>();
+
+    const recent = await ctx.env.DB.prepare(
+      `SELECT qa.*, kq.question, kq.difficulty FROM quiz_attempts qa
+       JOIN knowledge_quizzes kq ON kq.id = qa.quizId
+       WHERE qa.userId=?
+       ORDER BY qa.createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+
+    const byDifficulty = await ctx.env.DB.prepare(
+      `SELECT kq.difficulty, COUNT(*) as total, SUM(qa.correct) as correctCount
+       FROM quiz_attempts qa JOIN knowledge_quizzes kq ON kq.id = qa.quizId
+       WHERE qa.userId=?
+       GROUP BY kq.difficulty`
+    ).bind(ctx.userId).all<any>();
+
+    return {
+      totalAttempts: stats?.total || 0,
+      correctCount: stats?.correctCount || 0,
+      accuracy: stats?.total ? Math.round(((stats?.correctCount || 0) / stats.total) * 100) : 0,
+      avgTimeMs: Math.round(stats?.avgTime || 0),
+      recent: recent.results ?? [],
+      byDifficulty: byDifficulty.results ?? [],
+    };
+  }),
+
+  getWeakKnowledge: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const weak = await ctx.env.DB.prepare(
+      `SELECT kq.knowledgeId, kb.title as knowledgeTitle,
+              COUNT(*) as attempts, SUM(qa.correct) as correctCount,
+              ROUND(CAST(SUM(qa.correct) AS REAL) / COUNT(*) * 100) as accuracy
+       FROM quiz_attempts qa
+       JOIN knowledge_quizzes kq ON kq.id = qa.quizId
+       LEFT JOIN knowledge_base kb ON kb.id = kq.knowledgeId
+       WHERE qa.userId=?
+       GROUP BY kq.knowledgeId
+       HAVING accuracy < 60
+       ORDER BY accuracy ASC`
+    ).bind(ctx.userId).all<any>();
+    return weak.results ?? [];
+  }),
+
+  getQuizScoreTrend: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const trend = await ctx.env.DB.prepare(
+      `SELECT DATE(qa.createdAt) as date, COUNT(*) as total, SUM(qa.correct) as correctCount,
+              ROUND(CAST(SUM(qa.correct) AS REAL) / COUNT(*) * 100) as accuracy
+       FROM quiz_attempts qa WHERE qa.userId=?
+       GROUP BY DATE(qa.createdAt)
+       ORDER BY date DESC LIMIT 30`
+    ).bind(ctx.userId).all<any>();
+    return trend.results ?? [];
+  }),
+
 });

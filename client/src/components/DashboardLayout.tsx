@@ -23,7 +23,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useRealtimeNotifications } from "@/hooks/useRealtimeNotifications";
 import { useWebPush } from "@/hooks/useWebPush";
 import { toast } from "sonner";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare, FileCheck, History, Mic, TrendingUp, MessageCircleHeart, CalendarDays, FlaskRound, Star, Gauge, Scale, BookHeart, Calendar, Captions, Goal, Grid3x3 } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare, FileCheck, History, Mic, TrendingUp, MessageCircleHeart, CalendarDays, FlaskRound, Star, Gauge, Scale, BookHeart, Calendar, Captions, Goal, Grid3x3, BookText, HelpCircle, MessageSquarePlus } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -231,6 +231,8 @@ function DashboardLayoutContent({
         { icon: Scale, label: language === "en" ? "Debate" : "ディベート", path: "/debate" },
         { icon: Calendar, label: language === "en" ? "Events" : "イベント", path: "/events" },
         { icon: Grid3x3, label: language === "en" ? "Heatmap" : "ヒートマップ", path: "/heatmap" },
+        { icon: BookText, label: language === "en" ? "Storyboard" : "ストーリーボード", path: "/storyboard" },
+        { icon: MessageSquarePlus, label: language === "en" ? "Facilitator" : "AIファシリ", path: "/facilitator" },
       ],
     },
     {
@@ -265,6 +267,7 @@ function DashboardLayoutContent({
         { icon: BookHeart, label: language === "en" ? "Emotion Journal" : "感情ジャーナル", path: "/emotion-journal" },
         { icon: Captions, label: language === "en" ? "Commentary" : "リプレイ解説", path: "/replay-commentary" },
         { icon: Goal, label: language === "en" ? "Goals" : "ツイン目標", path: "/goals" },
+        { icon: HelpCircle, label: language === "en" ? "Quiz" : "ナレッジクイズ", path: "/quiz" },
       ],
     },
   ], [t, language]);

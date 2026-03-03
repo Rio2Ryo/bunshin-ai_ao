@@ -103,6 +103,9 @@ const CommunityEvents = lazy(() => import("./pages/CommunityEvents"));
 const ReplayCommentary = lazy(() => import("./pages/ReplayCommentary"));
 const TwinGoals = lazy(() => import("./pages/TwinGoals"));
 const MatchingHeatmap = lazy(() => import("./pages/MatchingHeatmap"));
+const MatchingStoryboard = lazy(() => import("./pages/MatchingStoryboard"));
+const KnowledgeQuiz = lazy(() => import("./pages/KnowledgeQuiz"));
+const AIFacilitator = lazy(() => import("./pages/AIFacilitator"));
 
 function PageLoader() {
   return (
@@ -210,6 +213,9 @@ function Router() {
         <Route path="/replay-commentary" component={ReplayCommentary} />
         <Route path="/goals" component={TwinGoals} />
         <Route path="/heatmap" component={MatchingHeatmap} />
+        <Route path="/storyboard" component={MatchingStoryboard} />
+        <Route path="/quiz" component={KnowledgeQuiz} />
+        <Route path="/facilitator" component={AIFacilitator} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>
