@@ -4919,4 +4919,38 @@ ${reportData.mbti ? `<div class="card"><h2>MBTI</h2><p>${typeof reportData.mbti 
       return { deleted: true };
     }),
 
+
+  // ============ Public Embed Card ============
+
+  getEmbedCardData: protectedProcedure
+    .input(z.object({ twinId: z.number().optional() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      let twin: any;
+      if (input?.twinId) {
+        twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(input.twinId).first<any>();
+      } else {
+        twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      }
+      if (!twin) return null;
+      const user = await ctx.env.DB.prepare(`SELECT name FROM users WHERE id=?`).bind(twin.userId).first<any>();
+      const profile = await ctx.env.DB.prepare(`SELECT displayName, company, position, avatarUrl FROM user_profiles WHERE userId=?`).bind(twin.userId).first<any>();
+      const faqCount = await ctx.env.DB.prepare(`SELECT COUNT(*) as cnt FROM twin_faqs WHERE twinId=? AND isPublic=1`).bind(twin.id).first<any>();
+      const matchCount = await ctx.env.DB.prepare(`SELECT COUNT(*) as cnt FROM matching_sessions WHERE initiatorUserId=? AND status='completed'`).bind(twin.userId).first<any>();
+
+      return {
+        twinId: twin.id,
+        userId: twin.userId,
+        twinName: twin.name || 'ツイン',
+        userName: profile?.displayName || user?.name || 'ユーザー',
+        company: profile?.company || '',
+        position: profile?.position || '',
+        avatarUrl: profile?.avatarUrl || '',
+        description: (twin.description || '').substring(0, 120),
+        tags: (twin.tags || '').split(',').filter(Boolean).slice(0, 5),
+        faqCount: faqCount?.cnt || 0,
+        matchCount: matchCount?.cnt || 0,
+      };
+    }),
+
 });

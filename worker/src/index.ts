@@ -272,6 +272,62 @@ api.use("/api/trpc/matching.analyze*", perEndpointRateLimit("matching_analyze", 
 api.use("/api/trpc/personality.*", perEndpointRateLimit("personality", 5));
 
 api.get("/", (c) => c.json({ message: "Bunshin AI API v2. Use /api/* endpoints." }));
+// Public twin embed card (no auth required)
+api.get("/api/embed/:twinId", async (c) => {
+  const twinId = parseInt(c.req.param("twinId"), 10);
+  if (isNaN(twinId)) return c.text("Invalid twin ID", 400);
+  const db = c.env.DB;
+  try {
+    const twin = await db.prepare("SELECT * FROM digital_twins WHERE id=?").bind(twinId).first() as any;
+    if (!twin) return c.text("Twin not found", 404);
+    const user = await db.prepare("SELECT name FROM users WHERE id=?").bind(twin.userId).first() as any;
+    const profile = await db.prepare("SELECT displayName, company, position, avatarUrl FROM user_profiles WHERE userId=?").bind(twin.userId).first() as any;
+    const faqCount = await db.prepare("SELECT COUNT(*) as cnt FROM twin_faqs WHERE twinId=? AND isPublic=1").bind(twinId).first() as any;
+
+    const name = profile?.displayName || user?.name || "ユーザー";
+    const company = profile?.company || "";
+    const desc = ((twin.description || "") as string).substring(0, 120);
+    const avatar = profile?.avatarUrl || "";
+    const tags = ((twin.tags || "") as string).split(",").filter(Boolean).slice(0, 3);
+    const faqs = faqCount?.cnt || 0;
+    const frontendUrl = (c.env as any).FRONTEND_URL || "https://bunshin-ai.pages.dev";
+
+    const html = `<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta property="og:title" content="${name} - 分身AI">
+<meta property="og:description" content="${desc}">
+${avatar ? '<meta property="og:image" content="' + avatar + '">' : ''}
+<meta property="og:type" content="profile">
+<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:transparent}
+.card{border:1px solid #e5e7eb;border-radius:12px;padding:20px;max-width:360px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.header{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.avatar{width:48px;height:48px;border-radius:50%;background:#e5e7eb;object-fit:cover}
+.name{font-size:16px;font-weight:600;color:#111}
+.company{font-size:12px;color:#6b7280}
+.desc{font-size:13px;color:#374151;margin-bottom:12px;line-height:1.5}
+.tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.tag{font-size:11px;background:#f3f4f6;color:#4b5563;padding:2px 8px;border-radius:12px}
+.stats{font-size:11px;color:#9ca3af;margin-bottom:12px}
+.cta{display:block;text-align:center;background:#6366f1;color:#fff;text-decoration:none;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:500}
+.cta:hover{background:#4f46e5}
+</style></head><body>
+<div class="card">
+<div class="header">
+${avatar ? '<img class="avatar" src="' + avatar + '" alt="">' : '<div class="avatar"></div>'}
+<div><div class="name">${name}</div>${company ? '<div class="company">' + company + '</div>' : ''}</div>
+</div>
+${desc ? '<div class="desc">' + desc + '</div>' : ''}
+${tags.length > 0 ? '<div class="tags">' + tags.map((tg: string) => '<span class="tag">' + tg + '</span>').join('') + '</div>' : ''}
+<div class="stats">FAQ: ${faqs}件</div>
+<a class="cta" href="${frontendUrl}/users/${twin.userId}" target="_blank">プロフィールを見る</a>
+</div></body></html>`;
+
+    return c.html(html);
+  } catch {
+    return c.text("Error", 500);
+  }
+});
+
 api.get("/api/health", async (c) => {
   const env = c.env as Env;
   const start = Date.now();

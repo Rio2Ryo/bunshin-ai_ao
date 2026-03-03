@@ -5,3 +5,6 @@ export { TwinStatusWidget } from "./TwinStatusWidget";
 export { NotificationsWidget } from "./NotificationsWidget";
 export { QuickActionsWidget } from "./QuickActionsWidget";
 export { AnalyticsWidget } from "./AnalyticsWidget";
+export { BriefingWidget } from "./BriefingWidget";
+export { QualityTrendWidget } from "./QualityTrendWidget";
+export { BookmarksWidget } from "./BookmarksWidget";

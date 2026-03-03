@@ -8394,4 +8394,118 @@ ${(dialogues.results || []).map((d: any) => `${d.speaker}: ${(d.content || '').s
       return { deleted: true };
     }),
 
+
+  // ============ Dashboard Widget Data ============
+
+  getDashboardBriefing: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const today = new Date().toISOString().split('T')[0];
+    const briefing = await ctx.env.DB.prepare(
+      `SELECT * FROM daily_briefings WHERE userId=? AND briefingDate=? AND isDismissed=0`
+    ).bind(ctx.userId, today).first<any>();
+    if (!briefing) return null;
+    return {
+      content: briefing.content,
+      recommendations: parseJson<string[]>(briefing.recommendations) || [],
+      followUps: parseJson<string[]>(briefing.followUps) || [],
+    };
+  }),
+
+  getDashboardQualityTrend: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT dqs.sessionId, dqs.overallScores, ms.theme, ms.createdAt
+       FROM dialogue_quality_scores dqs
+       JOIN matching_sessions ms ON ms.id = dqs.sessionId
+       WHERE dqs.userId=?
+       ORDER BY ms.createdAt DESC LIMIT 5`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => {
+      const scores = parseJson<any>(r.overallScores) || {};
+      const avg = Math.round(((scores.logic || 0) + (scores.specificity || 0) + (scores.creativity || 0) + (scores.cooperation || 0)) / 4);
+      return { sessionId: r.sessionId, theme: r.theme, avg, createdAt: r.createdAt };
+    });
+  }),
+
+  getDashboardBookmarks: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT sb.sessionId, sb.category, ms.theme, mr.compatibilityScore
+       FROM session_bookmarks sb
+       JOIN matching_sessions ms ON ms.id = sb.sessionId
+       LEFT JOIN matching_results mr ON mr.sessionId = sb.sessionId
+       WHERE sb.userId=?
+       ORDER BY sb.createdAt DESC LIMIT 5`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
+  // ============ Bulk Export & Archive ============
+
+  bulkExport: protectedProcedure
+    .input(z.object({ sessionIds: z.array(z.number()), format: z.enum(["csv", "json"]) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const placeholders = input.sessionIds.map(() => '?').join(',');
+      const sessions = await ctx.env.DB.prepare(
+        `SELECT ms.*, mr.compatibilityScore, mr.scoreBreakdown, mr.summary as resultSummary, mr.recommendations
+         FROM matching_sessions ms
+         LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+         WHERE ms.id IN (${placeholders}) AND ms.initiatorUserId=?`
+      ).bind(...input.sessionIds, ctx.userId).all<any>();
+
+      if (input.format === "json") {
+        const data = (sessions.results ?? []).map((s: any) => ({
+          id: s.id, theme: s.theme, status: s.status,
+          score: s.compatibilityScore,
+          breakdown: parseJson<any>(s.scoreBreakdown),
+          summary: s.resultSummary,
+          recommendations: s.recommendations,
+          createdAt: s.createdAt,
+        }));
+        return { format: "json", data: JSON.stringify(data, null, 2), filename: `matchings-export-${Date.now()}.json` };
+      }
+
+      // CSV format
+      const header = "ID,テーマ,ステータス,スコア,作成日";
+      const csvRows = (sessions.results ?? []).map((s: any) =>
+        `${s.id},"${(s.theme || '').replace(/"/g, '""')}",${s.status},${s.compatibilityScore || ''},${s.createdAt || ''}`
+      );
+      return { format: "csv", data: [header, ...csvRows].join("\n"), filename: `matchings-export-${Date.now()}.csv` };
+    }),
+
+  archiveSessions: protectedProcedure
+    .input(z.object({ sessionIds: z.array(z.number()) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const placeholders = input.sessionIds.map(() => '?').join(',');
+      await ctx.env.DB.prepare(
+        `UPDATE matching_sessions SET status='archived' WHERE id IN (${placeholders}) AND initiatorUserId=?`
+      ).bind(...input.sessionIds, ctx.userId).run();
+      return { archived: input.sessionIds.length };
+    }),
+
+  unarchiveSessions: protectedProcedure
+    .input(z.object({ sessionIds: z.array(z.number()) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const placeholders = input.sessionIds.map(() => '?').join(',');
+      await ctx.env.DB.prepare(
+        `UPDATE matching_sessions SET status='completed' WHERE id IN (${placeholders}) AND initiatorUserId=? AND status='archived'`
+      ).bind(...input.sessionIds, ctx.userId).run();
+      return { unarchived: input.sessionIds.length };
+    }),
+
+  archivedSessions: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT ms.id, ms.theme, ms.createdAt, mr.compatibilityScore
+       FROM matching_sessions ms
+       LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+       WHERE ms.initiatorUserId=? AND ms.status='archived'
+       ORDER BY ms.createdAt DESC`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
 });

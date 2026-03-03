@@ -146,6 +146,8 @@ const SessionBookmarks = lazy(() => import("./pages/SessionBookmarks"));
 const CompareReport = lazy(() => import("./pages/CompareReport"));
 const TwinGallery = lazy(() => import("./pages/TwinGallery"));
 const ActionPlans = lazy(() => import("./pages/ActionPlans"));
+const SessionArchive = lazy(() => import("./pages/SessionArchive"));
+const TwinEmbedCard = lazy(() => import("./pages/TwinEmbedCard"));
 
 function PageLoader() {
   return (
@@ -296,6 +298,8 @@ function Router() {
         <Route path="/compare-report" component={CompareReport} />
         <Route path="/twin-gallery" component={TwinGallery} />
         <Route path="/action-plans" component={ActionPlans} />
+        <Route path="/session-archive" component={SessionArchive} />
+        <Route path="/twin-embed" component={TwinEmbedCard} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

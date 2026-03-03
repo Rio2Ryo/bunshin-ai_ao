@@ -9,7 +9,7 @@ import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { Crown, ArrowRight, Sparkles, Bell, Loader2, Pencil, RotateCcw, Eye, EyeOff, GripVertical, CheckCircle } from "lucide-react";
 import { useDashboardLayout, type WidgetId } from "@/hooks/useDashboardLayout";
-import { KpiWidget, RecentMatchingsWidget, FriendsListWidget, TwinStatusWidget, NotificationsWidget, QuickActionsWidget, AnalyticsWidget } from "@/components/widgets";
+import { KpiWidget, RecentMatchingsWidget, FriendsListWidget, TwinStatusWidget, NotificationsWidget, QuickActionsWidget, AnalyticsWidget, BriefingWidget, QualityTrendWidget, BookmarksWidget } from "@/components/widgets";
 import { useCallback, useRef, useState } from "react";
 
 const WIDGET_COMPONENTS: Record<WidgetId, { component: React.FC; label: string }> = {
@@ -20,6 +20,9 @@ const WIDGET_COMPONENTS: Record<WidgetId, { component: React.FC; label: string }
   notifications: { component: NotificationsWidget, label: "通知" },
   quickActions: { component: QuickActionsWidget, label: "クイックアクション" },
   analytics: { component: AnalyticsWidget, label: "アクティビティ" },
+  briefing: { component: BriefingWidget, label: "ブリーフィング" },
+  qualityTrend: { component: QualityTrendWidget, label: "品質トレンド" },
+  bookmarks: { component: BookmarksWidget, label: "ブックマーク" },
 };
 
 export default function Dashboard() {

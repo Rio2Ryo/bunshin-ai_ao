@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 
-export type WidgetId = "kpi" | "recentMatchings" | "friendsList" | "twinStatus" | "notifications" | "quickActions" | "analytics";
+export type WidgetId = "kpi" | "recentMatchings" | "friendsList" | "twinStatus" | "notifications" | "quickActions" | "analytics" | "briefing" | "qualityTrend" | "bookmarks";
 
 export type WidgetLayout = {
   id: WidgetId;
@@ -11,7 +11,7 @@ export type WidgetLayout = {
   visible: boolean;
 };
 
-const STORAGE_KEY = "bunshin-dashboard-layout-v1";
+const STORAGE_KEY = "bunshin-dashboard-layout-v2";
 
 const DEFAULT_LAYOUT: WidgetLayout[] = [
   { id: "kpi", x: 0, y: 0, w: 12, h: 1, visible: true },
@@ -21,6 +21,9 @@ const DEFAULT_LAYOUT: WidgetLayout[] = [
   { id: "friendsList", x: 6, y: 2, w: 6, h: 1, visible: true },
   { id: "notifications", x: 0, y: 3, w: 6, h: 1, visible: true },
   { id: "analytics", x: 6, y: 3, w: 6, h: 1, visible: true },
+  { id: "briefing", x: 0, y: 4, w: 6, h: 1, visible: true },
+  { id: "qualityTrend", x: 6, y: 4, w: 6, h: 1, visible: true },
+  { id: "bookmarks", x: 0, y: 5, w: 6, h: 1, visible: true },
 ];
 
 function loadLayout(): WidgetLayout[] {
