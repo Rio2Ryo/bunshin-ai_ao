@@ -3178,4 +3178,154 @@ JSON形式で返してください:
       return { sent: true };
     }),
 
+
+  // ============ Dialogue Style Learning ============
+
+  analyzeDialogueStyle: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "chat", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+    // Gather matching dialogues
+    const matchingDialogues = await ctx.env.DB.prepare(
+      `SELECT md.content FROM matching_dialogues md
+       JOIN matching_sessions ms ON ms.id=md.sessionId
+       WHERE ms.initiatorUserId=? AND md.speaker LIKE '%' || (SELECT name FROM digital_twins WHERE userId=? LIMIT 1) || '%'
+       ORDER BY md.id DESC LIMIT 50`
+    ).bind(ctx.userId, ctx.userId).all<any>();
+
+    // Gather chat messages (user messages)
+    const chatMessages = await ctx.env.DB.prepare(
+      `SELECT cm.content FROM chat_messages cm
+       JOIN chat_sessions cs ON cs.id=cm.sessionId
+       WHERE cs.userId=? AND cm.role='user'
+       ORDER BY cm.id DESC LIMIT 50`
+    ).bind(ctx.userId).all<any>();
+
+    const allTexts = [
+      ...(matchingDialogues.results ?? []).map((d: any) => d.content),
+      ...(chatMessages.results ?? []).map((m: any) => m.content),
+    ];
+
+    if (allTexts.length < 5) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "分析に十分な対話データがありません（最低5件必要）" });
+    }
+
+    const prompt = `以下のユーザーの対話テキストから、固有の口調・語彙・論理展開パターンを分析してください。
+
+テキストサンプル（${allTexts.length}件）:
+${allTexts.slice(0, 30).map((t: string, i: number) => `${i + 1}. ${t.slice(0, 200)}`).join('\n')}
+
+以下の8軸でスタイルプロファイルを生成してください（各0-100）:
+1. formality（フォーマル度）: カジュアル(0)〜ビジネスフォーマル(100)
+2. assertiveness（主張性）: 控えめ(0)〜断定的(100)
+3. empathy（共感度）: 事実重視(0)〜感情重視(100)
+4. technicality（専門用語頻度）: 平易(0)〜専門的(100)
+5. verbosity（饒舌度）: 簡潔(0)〜詳細(100)
+6. creativity（創造性）: 定型(0)〜独創的(100)
+7. logicality（論理性）: 直感的(0)〜論理的(100)
+8. questionFrequency（質問頻度）: 少ない(0)〜多い(100)
+
+また、特徴的なフレーズ・口癖・表現パターンを5つ抽出してください。
+
+JSON形式で返してください:
+{
+  "styleProfile": {
+    "formality": 数値, "assertiveness": 数値, "empathy": 数値, "technicality": 数値,
+    "verbosity": 数値, "creativity": 数値, "logicality": 数値, "questionFrequency": 数値
+  },
+  "samplePhrases": ["特徴的フレーズ1", "フレーズ2", "フレーズ3", "フレーズ4", "フレーズ5"],
+  "summary": "スタイル要約（2文）",
+  "systemPromptAddition": "ツインのシステムプロンプトに追加すべき指示文（口調・スタイルの再現指示）"
+}`;
+
+    const resp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+    let analysis: any = {};
+    try { analysis = JSON.parse(resp.content); } catch {
+      analysis = {
+        styleProfile: { formality: 50, assertiveness: 50, empathy: 50, technicality: 50, verbosity: 50, creativity: 50, logicality: 50, questionFrequency: 50 },
+        samplePhrases: [],
+        summary: "分析データが不足しています。",
+        systemPromptAddition: "",
+      };
+    }
+
+    await ctx.env.DB.prepare(
+      `INSERT OR REPLACE INTO dialogue_style_profiles (userId, twinId, styleProfile, samplePhrases, analysisSource, appliedToPrompt)
+       VALUES (?, ?, ?, ?, ?, 0)`
+    ).bind(
+      ctx.userId, twin.id,
+      toJson(analysis.styleProfile || {}),
+      toJson(analysis.samplePhrases || []),
+      toJson({ matchingCount: matchingDialogues.results?.length || 0, chatCount: chatMessages.results?.length || 0, summary: analysis.summary })
+    ).run();
+
+    return {
+      styleProfile: analysis.styleProfile,
+      samplePhrases: analysis.samplePhrases,
+      summary: analysis.summary,
+      systemPromptAddition: analysis.systemPromptAddition,
+    };
+  }),
+
+  getDialogueStyle: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) return null;
+    const row = await ctx.env.DB.prepare(
+      `SELECT * FROM dialogue_style_profiles WHERE userId=? AND twinId=?`
+    ).bind(ctx.userId, twin.id).first<any>();
+    if (!row) return null;
+    return {
+      ...row,
+      styleProfile: parseJson<any>(row.styleProfile),
+      samplePhrases: parseJson<string[]>(row.samplePhrases),
+      analysisSource: parseJson<any>(row.analysisSource),
+    };
+  }),
+
+  applyDialogueStyle: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) throw new TRPCError({ code: "NOT_FOUND" });
+
+    const profile = await ctx.env.DB.prepare(
+      `SELECT * FROM dialogue_style_profiles WHERE userId=? AND twinId=?`
+    ).bind(ctx.userId, twin.id).first<any>();
+    if (!profile) throw new TRPCError({ code: "NOT_FOUND", message: "スタイルプロファイルがありません" });
+
+    const styleData = parseJson<any>(profile.styleProfile) || {};
+    const phrases = parseJson<string[]>(profile.samplePhrases) || [];
+
+    // Build style instruction to append to systemPrompt
+    const styleInstruction = `\n\n【対話スタイル指示】
+以下のスタイルで応答してください:
+- フォーマル度: ${styleData.formality || 50}/100
+- 主張性: ${styleData.assertiveness || 50}/100
+- 共感度: ${styleData.empathy || 50}/100
+- 専門用語頻度: ${styleData.technicality || 50}/100
+- 饒舌度: ${styleData.verbosity || 50}/100
+- 創造性: ${styleData.creativity || 50}/100
+- 論理性: ${styleData.logicality || 50}/100
+- 質問頻度: ${styleData.questionFrequency || 50}/100
+${phrases.length ? '特徴的な表現: ' + phrases.join('、') : ''}`;
+
+    const currentPrompt = twin.systemPrompt || '';
+    // Remove old style instruction if exists
+    const cleanedPrompt = currentPrompt.replace(/\n\n【対話スタイル指示】[\s\S]*$/, '');
+    const newPrompt = cleanedPrompt + styleInstruction;
+
+    await ctx.env.DB.prepare(
+      `UPDATE digital_twins SET systemPrompt=? WHERE id=?`
+    ).bind(newPrompt, twin.id).run();
+
+    await ctx.env.DB.prepare(
+      `UPDATE dialogue_style_profiles SET appliedToPrompt=1, updatedAt=datetime('now') WHERE userId=? AND twinId=?`
+    ).bind(ctx.userId, twin.id).run();
+
+    return { applied: true };
+  }),
 });

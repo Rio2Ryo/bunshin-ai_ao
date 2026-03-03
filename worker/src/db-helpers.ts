@@ -1636,6 +1636,51 @@ CREATE TABLE IF NOT EXISTS weekly_reviews (
   createdAt TEXT DEFAULT (datetime('now')),
   UNIQUE(userId, weekStart)
 );
+
+CREATE TABLE IF NOT EXISTS theme_recommendations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  friendId INTEGER,
+  recommendations TEXT NOT NULL,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS theme_rankings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  theme TEXT NOT NULL,
+  sessionCount INTEGER DEFAULT 0,
+  avgScore REAL DEFAULT 0,
+  maxScore REAL DEFAULT 0,
+  updatedAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(userId, theme)
+);
+
+CREATE TABLE IF NOT EXISTS dialogue_style_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  styleProfile TEXT NOT NULL,
+  samplePhrases TEXT,
+  analysisSource TEXT,
+  appliedToPrompt INTEGER DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(userId, twinId)
+);
+
+CREATE TABLE IF NOT EXISTS success_patterns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  patternType TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  examples TEXT,
+  sourceSessionIds TEXT,
+  effectiveness REAL,
+  tags TEXT,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
 `;
 
 let schemaReady = false;

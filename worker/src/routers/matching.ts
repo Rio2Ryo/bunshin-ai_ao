@@ -6248,4 +6248,250 @@ JSON形式で返してください:
       return results.map((r: any) => ({ ...r, tags: r.tags ? r.tags.split(',') : [] }));
     }),
 
+
+  // ============ Theme Recommendation Engine ============
+
+  recommendThemes: protectedProcedure
+    .input(z.object({ friendId: z.number().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      // Gather context
+      const userProfile = await ctx.env.DB.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+      let friendProfile: any = null;
+      let friendTwin: any = null;
+      if (input.friendId) {
+        friendProfile = await ctx.env.DB.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(input.friendId).first<any>();
+        friendTwin = await ctx.env.DB.prepare(`SELECT name, personality, description, tags FROM digital_twins WHERE userId=?`).bind(input.friendId).first<any>();
+      }
+
+      // Past themes and scores
+      const pastThemes = await ctx.env.DB.prepare(
+        `SELECT ms.theme, mr.compatibilityScore FROM matching_sessions ms
+         LEFT JOIN matching_results mr ON mr.sessionId=ms.id
+         WHERE ms.initiatorUserId=?
+         ORDER BY ms.createdAt DESC LIMIT 20`
+      ).bind(ctx.userId).all<any>();
+
+      const prompt = `ビジネスマッチングの最適テーマを5件提案してください。
+
+ユーザープロフィール:
+- 業界: ${userProfile?.industry || '未設定'}
+- 会社: ${userProfile?.company || '未設定'}
+- 役職: ${userProfile?.position || '未設定'}
+- スキル: ${userProfile?.skills || '未設定'}
+${input.friendId ? `
+友達プロフィール:
+- 業界: ${friendProfile?.industry || '未設定'}
+- 会社: ${friendProfile?.company || '未設定'}
+- ツイン: ${friendTwin?.name || '未設定'} (${friendTwin?.personality || ''})
+` : ''}
+過去のテーマ実績:
+${(pastThemes.results ?? []).map((t: any) => `- ${t.theme}: ${t.compatibilityScore || 'N/A'}点`).join('\n')}
+
+各テーマに期待スコア(0-100)、難易度(1-5)、新規性スコア(1-5)を付けてください。
+過去に高スコアだったテーマの発展形や、未探索の有望エリアを含めてください。
+
+JSON配列で返してください:
+[{"theme":"テーマ名","expectedScore":数値,"difficulty":1-5,"novelty":1-5,"reason":"推薦理由","category":"業界トレンド|スキル活用|弱点克服|新規開拓|深掘り"}]`;
+
+      const resp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+      let recommendations: any[] = [];
+      try {
+        const p = JSON.parse(resp.content);
+        recommendations = Array.isArray(p) ? p : p.recommendations || [];
+      } catch {
+        recommendations = [{ theme: "ビジネス戦略について", expectedScore: 70, difficulty: 3, novelty: 3, reason: "汎用的なテーマ", category: "新規開拓" }];
+      }
+
+      await ctx.env.DB.prepare(
+        `INSERT INTO theme_recommendations (userId, friendId, recommendations) VALUES (?, ?, ?)`
+      ).bind(ctx.userId, input.friendId || null, toJson(recommendations)).run();
+
+      return { recommendations };
+    }),
+
+  getThemeRecommendations: protectedProcedure
+    .input(z.object({ friendId: z.number().optional() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      let query = `SELECT * FROM theme_recommendations WHERE userId=?`;
+      const binds: any[] = [ctx.userId];
+      if (input.friendId) {
+        query += ` AND friendId=?`;
+        binds.push(input.friendId);
+      }
+      query += ` ORDER BY createdAt DESC LIMIT 1`;
+      const row = await ctx.env.DB.prepare(query).bind(...binds).first<any>();
+      if (!row) return null;
+      return { ...row, recommendations: parseJson<any[]>(row.recommendations) };
+    }),
+
+  getThemeRankings: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+
+    // Build rankings from actual matching data
+    const rankings = await ctx.env.DB.prepare(
+      `SELECT ms.theme, COUNT(*) as sessionCount,
+              AVG(mr.compatibilityScore) as avgScore, MAX(mr.compatibilityScore) as maxScore
+       FROM matching_sessions ms
+       JOIN matching_results mr ON mr.sessionId=ms.id
+       WHERE ms.initiatorUserId=?
+       GROUP BY ms.theme
+       ORDER BY avgScore DESC`
+    ).bind(ctx.userId).all<any>();
+
+    return (rankings.results ?? []).map((r: any) => ({
+      theme: r.theme,
+      sessionCount: r.sessionCount,
+      avgScore: Math.round((r.avgScore || 0) * 10) / 10,
+      maxScore: r.maxScore || 0,
+    }));
+  }),
+
+  startFromRecommendation: protectedProcedure
+    .input(z.object({ theme: z.string(), friendId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      // Create a matching session with the recommended theme
+      const settings = toJson({ friendId: input.friendId, source: 'theme_recommendation' });
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO matching_sessions (initiatorUserId, theme, status, settings, createdAt)
+         VALUES (?, ?, 'pending', ?, datetime('now'))`
+      ).bind(ctx.userId, input.theme, settings).run();
+      return { sessionId: res.meta?.last_row_id };
+    }),
+
+  // ============ Success Pattern Library ============
+
+  extractSuccessPatterns: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+    // Get high-score matchings (80+)
+    const highScoreSessions = await ctx.env.DB.prepare(
+      `SELECT ms.id, ms.theme, mr.compatibilityScore
+       FROM matching_sessions ms
+       JOIN matching_results mr ON mr.sessionId=ms.id
+       WHERE ms.initiatorUserId=? AND mr.compatibilityScore >= 80
+       ORDER BY mr.compatibilityScore DESC LIMIT 10`
+    ).bind(ctx.userId).all<any>();
+
+    if (!highScoreSessions.results?.length) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "スコア80以上のマッチングがありません" });
+    }
+
+    // Get dialogues for top sessions
+    const sessionDialogues: any[] = [];
+    for (const s of (highScoreSessions.results ?? []).slice(0, 5)) {
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT speaker, content, turnNumber FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(s.id).all<any>();
+      sessionDialogues.push({
+        sessionId: s.id, theme: s.theme, score: s.compatibilityScore,
+        dialogue: (dialogues.results ?? []).map((d: any) => `${d.speaker}: ${d.content}`).join('\n'),
+      });
+    }
+
+    const prompt = `以下の高スコア（80点以上）ビジネスマッチング対話から成功パターンを抽出してください。
+
+${sessionDialogues.map((s: any) => `【${s.theme}】スコア: ${s.score}\n${s.dialogue}`).join('\n\n---\n\n')}
+
+以下の3カテゴリで共通パターンを抽出してください:
+1. opening_phrase — 効果的な開始フレーズ
+2. question_technique — 質問テクニック
+3. consensus_method — 合意形成手法
+
+JSON配列で返してください:
+[{
+  "patternType": "opening_phrase|question_technique|consensus_method",
+  "title": "パターン名",
+  "description": "詳細説明",
+  "examples": ["具体例1", "具体例2"],
+  "effectiveness": 0.0-1.0（推定効果）,
+  "tags": ["タグ"]
+}]`;
+
+    const resp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+    let patterns: any[] = [];
+    try {
+      const p = JSON.parse(resp.content);
+      patterns = Array.isArray(p) ? p : p.patterns || [];
+    } catch {
+      patterns = [{ patternType: "opening_phrase", title: "共感から始める", description: "相手の状況への共感を示す開始", examples: ["素晴らしいご経歴ですね"], effectiveness: 0.7, tags: ["共感"] }];
+    }
+
+    const sourceIds = (highScoreSessions.results ?? []).map((s: any) => s.id);
+    for (const pat of patterns) {
+      await ctx.env.DB.prepare(
+        `INSERT INTO success_patterns (userId, patternType, title, description, examples, sourceSessionIds, effectiveness, tags)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        ctx.userId, pat.patternType, pat.title, pat.description,
+        toJson(pat.examples || []), toJson(sourceIds),
+        pat.effectiveness || 0.5, toJson(pat.tags || [])
+      ).run();
+    }
+
+    return { patterns, sourceCount: sourceIds.length };
+  }),
+
+  listSuccessPatterns: protectedProcedure
+    .input(z.object({ patternType: z.string().optional() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      let query = `SELECT * FROM success_patterns WHERE userId=?`;
+      const binds: any[] = [ctx.userId];
+      if (input.patternType) {
+        query += ` AND patternType=?`;
+        binds.push(input.patternType);
+      }
+      query += ` ORDER BY effectiveness DESC`;
+      const rows = await ctx.env.DB.prepare(query).bind(...binds).all<any>();
+      return (rows.results ?? []).map((r: any) => ({
+        ...r,
+        examples: parseJson<string[]>(r.examples),
+        sourceSessionIds: parseJson<number[]>(r.sourceSessionIds),
+        tags: parseJson<string[]>(r.tags),
+      }));
+    }),
+
+  getPreMatchSuggestions: protectedProcedure
+    .input(z.object({ theme: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      // Get user's patterns
+      const patterns = await ctx.env.DB.prepare(
+        `SELECT patternType, title, description, examples FROM success_patterns WHERE userId=? ORDER BY effectiveness DESC LIMIT 10`
+      ).bind(ctx.userId).all<any>();
+
+      if (!patterns.results?.length) return { suggestions: [] };
+
+      const prompt = `次のマッチングテーマ「${input.theme}」に対して、以下の成功パターンから適用すべきものを選び、具体的なアドバイスを生成してください。
+
+成功パターン:
+${(patterns.results ?? []).map((p: any) => `[${p.patternType}] ${p.title}: ${p.description}`).join('\n')}
+
+JSON配列で返してください:
+[{"patternTitle":"パターン名","advice":"テーマに合わせた具体的アドバイス","priority":"high|medium|low","timing":"opening|middle|closing"}]`;
+
+      const resp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+      let suggestions: any[] = [];
+      try { const p = JSON.parse(resp.content); suggestions = Array.isArray(p) ? p : p.suggestions || []; } catch { suggestions = []; }
+      return { suggestions };
+    }),
+
+  deleteSuccessPattern: protectedProcedure
+    .input(z.object({ patternId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM success_patterns WHERE id=? AND userId=?`).bind(input.patternId, ctx.userId).run();
+      return { deleted: true };
+    }),
 });
