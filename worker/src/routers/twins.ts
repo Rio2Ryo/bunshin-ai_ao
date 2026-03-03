@@ -3328,4 +3328,179 @@ ${phrases.length ? '特徴的な表現: ' + phrases.join('、') : ''}`;
 
     return { applied: true };
   }),
+
+  // ============ Multi-modal Personality Report ============
+
+  generatePersonalityReport: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "chat", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+    const profile = await ctx.env.DB.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+
+    // Gather all personality data
+    const bigFive = twin.bigFiveScores ? (typeof twin.bigFiveScores === 'string' ? parseJson<any>(twin.bigFiveScores) : twin.bigFiveScores) : null;
+    const mbti = twin.mbtiType ? (typeof twin.mbtiType === 'string' ? parseJson<any>(twin.mbtiType) : twin.mbtiType) : null;
+
+    const skillLevels = await ctx.env.DB.prepare(
+      `SELECT * FROM twin_skill_levels WHERE twinId=?`
+    ).bind(twin.id).all<any>();
+
+    const matchingStats = await ctx.env.DB.prepare(
+      `SELECT COUNT(*) as count, AVG(mr.compatibilityScore) as avgScore, MAX(mr.compatibilityScore) as maxScore
+       FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id
+       WHERE ms.initiatorUserId=?`
+    ).bind(ctx.userId).first<any>();
+
+    const styleProfile = await ctx.env.DB.prepare(
+      `SELECT styleProfile, samplePhrases FROM dialogue_style_profiles WHERE userId=?`
+    ).bind(ctx.userId).first<any>();
+
+    const emotionStats = await ctx.env.DB.prepare(
+      `SELECT AVG(json_extract(emotions, '$.joy')) as joy, AVG(json_extract(emotions, '$.confidence')) as confidence,
+              AVG(json_extract(emotions, '$.anxiety')) as anxiety, AVG(json_extract(emotions, '$.anger')) as anger
+       FROM emotion_journal_entries WHERE userId=?`
+    ).bind(ctx.userId).first<any>();
+
+    const successPatternCount = await ctx.env.DB.prepare(
+      `SELECT COUNT(*) as c FROM success_patterns WHERE userId=?`
+    ).bind(ctx.userId).first<any>();
+
+    const reportData = {
+      twin: { name: twin.name, personality: twin.personality, description: twin.description, tags: twin.tags },
+      profile: { company: profile?.company, position: profile?.position, industry: profile?.industry },
+      bigFive,
+      mbti,
+      skills: (skillLevels.results ?? []).map((s: any) => ({ skill: s.skill, level: s.level, exp: s.experience })),
+      matchingStats: { count: matchingStats?.count || 0, avgScore: Math.round(matchingStats?.avgScore || 0), maxScore: matchingStats?.maxScore || 0 },
+      styleProfile: styleProfile ? parseJson<any>(styleProfile.styleProfile) : null,
+      samplePhrases: styleProfile ? parseJson<string[]>(styleProfile.samplePhrases) : [],
+      emotionAvg: {
+        joy: Math.round((emotionStats?.joy || 0) * 10) / 10,
+        confidence: Math.round((emotionStats?.confidence || 0) * 10) / 10,
+        anxiety: Math.round((emotionStats?.anxiety || 0) * 10) / 10,
+        anger: Math.round((emotionStats?.anger || 0) * 10) / 10,
+      },
+      successPatterns: successPatternCount?.c || 0,
+    };
+
+    // LLM generates comprehensive analysis
+    const prompt = `以下のデジタルツインの全データを統合分析し、包括的な人格レポートを生成してください。
+
+データ:
+${JSON.stringify(reportData)}
+
+JSON形式で返してください:
+{
+  "executiveSummary": "3文の概要",
+  "personalityOverview": "人格の総合的な説明（5文）",
+  "strengths": ["強み1", "強み2", "強み3"],
+  "growthAreas": ["成長領域1", "成長領域2", "成長領域3"],
+  "communicationStyle": "コミュニケーションスタイルの説明（3文）",
+  "matchingAdvice": "マッチングへのアドバイス（3文）",
+  "futureOutlook": "今後の展望（3文）",
+  "scores": {"overall": 0-100, "communication": 0-100, "expertise": 0-100, "adaptability": 0-100, "leadership": 0-100}
+}`;
+
+    const resp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+    let analysis: any = {};
+    try { analysis = JSON.parse(resp.content); } catch {
+      analysis = {
+        executiveSummary: `${twin.name}の人格レポートです。`,
+        personalityOverview: twin.personality || "分析中",
+        strengths: [], growthAreas: [], communicationStyle: "", matchingAdvice: "", futureOutlook: "",
+        scores: { overall: 50, communication: 50, expertise: 50, adaptability: 50, leadership: 50 },
+      };
+    }
+
+    const fullReportData = { ...reportData, analysis };
+
+    // Generate HTML report
+    const reportHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${twin.name} 人格レポート</title>
+<style>body{font-family:sans-serif;max-width:800px;margin:0 auto;padding:20px;color:#333}
+h1{color:#6366f1;border-bottom:2px solid #6366f1;padding-bottom:10px}
+h2{color:#4f46e5;margin-top:30px}.card{background:#f8fafc;border-radius:12px;padding:16px;margin:12px 0}
+.score{display:inline-block;background:#6366f1;color:white;border-radius:20px;padding:4px 12px;font-weight:bold}
+.badge{display:inline-block;background:#e0e7ff;color:#4338ca;border-radius:6px;padding:2px 8px;margin:2px;font-size:0.85em}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.progress{background:#e2e8f0;border-radius:8px;height:12px;overflow:hidden}
+.progress-bar{height:100%;border-radius:8px;background:linear-gradient(90deg,#6366f1,#8b5cf6)}</style></head>
+<body><h1>${twin.name} — 人格レポート</h1>
+<p><em>生成日: ${new Date().toISOString().split('T')[0]}</em></p>
+<div class="card"><h2>概要</h2><p>${analysis.executiveSummary || ''}</p></div>
+<div class="card"><h2>人格プロファイル</h2><p>${analysis.personalityOverview || ''}</p></div>
+<div class="grid">
+${Object.entries(analysis.scores || {}).map(([k, v]) => `<div class="card"><strong>${k}</strong><div class="progress"><div class="progress-bar" style="width:${v}%"></div></div><span class="score">${v}</span></div>`).join('')}
+</div>
+<div class="card"><h2>強み</h2><ul>${(analysis.strengths || []).map((s: string) => `<li>${s}</li>`).join('')}</ul></div>
+<div class="card"><h2>成長領域</h2><ul>${(analysis.growthAreas || []).map((g: string) => `<li>${g}</li>`).join('')}</ul></div>
+<div class="card"><h2>コミュニケーション</h2><p>${analysis.communicationStyle || ''}</p></div>
+<div class="card"><h2>マッチングアドバイス</h2><p>${analysis.matchingAdvice || ''}</p></div>
+<div class="card"><h2>今後の展望</h2><p>${analysis.futureOutlook || ''}</p></div>
+${reportData.bigFive ? `<div class="card"><h2>Big Five</h2><p>${JSON.stringify(reportData.bigFive)}</p></div>` : ''}
+${reportData.mbti ? `<div class="card"><h2>MBTI</h2><p>${typeof reportData.mbti === 'object' ? JSON.stringify(reportData.mbti) : reportData.mbti}</p></div>` : ''}
+<div class="card"><h2>マッチング統計</h2><p>回数: ${reportData.matchingStats.count} | 平均: ${reportData.matchingStats.avgScore} | 最高: ${reportData.matchingStats.maxScore}</p></div>
+<footer><p style="text-align:center;color:#94a3b8;margin-top:40px">分身AI — Digital Twin Personality Report</p></footer></body></html>`;
+
+    await ctx.env.DB.prepare(
+      `INSERT OR REPLACE INTO personality_reports (userId, twinId, reportHtml, reportData, shareCode)
+       VALUES (?, ?, ?, ?, NULL)`
+    ).bind(ctx.userId, twin.id, reportHtml, toJson(fullReportData)).run();
+
+    return { reportData: fullReportData, analysis };
+  }),
+
+  getPersonalityReport: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) return null;
+    const row = await ctx.env.DB.prepare(
+      `SELECT * FROM personality_reports WHERE userId=? AND twinId=?`
+    ).bind(ctx.userId, twin.id).first<any>();
+    if (!row) return null;
+    return { ...row, reportData: parseJson<any>(row.reportData) };
+  }),
+
+  sharePersonalityReport: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) throw new TRPCError({ code: "NOT_FOUND" });
+    const code = [...Array(16)].map(() => Math.random().toString(16).charAt(2)).join('');
+    await ctx.env.DB.prepare(
+      `UPDATE personality_reports SET shareCode=? WHERE userId=? AND twinId=?`
+    ).bind(code, ctx.userId, twin.id).run();
+    return { shareCode: code };
+  }),
+
+  sendPersonalityReportEmail: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) throw new TRPCError({ code: "NOT_FOUND" });
+
+    const report = await ctx.env.DB.prepare(
+      `SELECT reportHtml FROM personality_reports WHERE userId=? AND twinId=?`
+    ).bind(ctx.userId, twin.id).first<any>();
+    if (!report) throw new TRPCError({ code: "NOT_FOUND", message: "レポートがありません" });
+
+    const user = await ctx.env.DB.prepare(`SELECT email, name FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+    if (!user?.email) throw new TRPCError({ code: "BAD_REQUEST", message: "メールが設定されていません" });
+
+    if ((ctx.env as any).RESEND_API_KEY) {
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${(ctx.env as any).RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: (ctx.env as any).RESEND_FROM_EMAIL || 'noreply@bunshin-ai.com',
+          to: user.email,
+          subject: `【分身AI】${twin.name} 人格レポート`,
+          html: report.reportHtml,
+        }),
+      });
+    }
+
+    return { sent: true };
+  }),
 });

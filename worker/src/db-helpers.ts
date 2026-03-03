@@ -1681,6 +1681,53 @@ CREATE TABLE IF NOT EXISTS success_patterns (
   tags TEXT,
   createdAt TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS interactive_scenarios (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  friendId INTEGER,
+  theme TEXT NOT NULL,
+  status TEXT DEFAULT 'active',
+  dialogue TEXT DEFAULT '[]',
+  choices TEXT DEFAULT '[]',
+  analysisResult TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS personality_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  reportHtml TEXT NOT NULL,
+  reportData TEXT NOT NULL,
+  shareCode TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(userId, twinId)
+);
+
+CREATE TABLE IF NOT EXISTS translation_chat_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  originalText TEXT NOT NULL,
+  translatedText TEXT,
+  originalLang TEXT,
+  targetLang TEXT,
+  qualityRating TEXT,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS translation_chat_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  friendId INTEGER NOT NULL,
+  userLang TEXT DEFAULT 'ja',
+  friendLang TEXT DEFAULT 'en',
+  status TEXT DEFAULT 'active',
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(userId, friendId)
+);
 `;
 
 let schemaReady = false;

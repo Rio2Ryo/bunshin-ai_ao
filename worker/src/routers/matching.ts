@@ -6494,4 +6494,268 @@ JSON配列で返してください:
       await ctx.env.DB.prepare(`DELETE FROM success_patterns WHERE id=? AND userId=?`).bind(input.patternId, ctx.userId).run();
       return { deleted: true };
     }),
+
+  // ============ Interactive Negotiation Scenario ============
+
+  createInteractiveScenario: protectedProcedure
+    .input(z.object({ theme: z.string(), friendId: z.number().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      // Get opponent info
+      let opponentName = "交渉相手";
+      let opponentPersonality = "プロフェッショナルなビジネスパーソン";
+      if (input.friendId) {
+        const friendTwin = await ctx.env.DB.prepare(`SELECT name, personality FROM digital_twins WHERE userId=?`).bind(input.friendId).first<any>();
+        if (friendTwin) { opponentName = friendTwin.name || opponentName; opponentPersonality = friendTwin.personality || opponentPersonality; }
+      }
+
+      // Generate opening
+      const openingPrompt = `あなたは「${opponentName}」（${opponentPersonality}）です。テーマ「${input.theme}」についてビジネス交渉の冒頭発言をしてください。簡潔に2-3文で。`;
+      const openingResp = await invokeLLM(llmConfig, [{ role: "user", content: openingPrompt }]);
+
+      const dialogue = [{ turnNumber: 1, speaker: opponentName, content: openingResp.content, strategy: null as string | null }];
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO interactive_scenarios (userId, friendId, theme, dialogue, choices, status)
+         VALUES (?, ?, ?, ?, '[]', 'active')`
+      ).bind(ctx.userId, input.friendId || null, input.theme, toJson(dialogue)).run();
+
+      return { id: res.meta?.last_row_id, dialogue, opponentName };
+    }),
+
+  respondInteractiveScenario: protectedProcedure
+    .input(z.object({ scenarioId: z.number(), strategy: z.enum(["aggressive", "defensive", "compromise", "propose"]) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      const scenario = await ctx.env.DB.prepare(
+        `SELECT * FROM interactive_scenarios WHERE id=? AND userId=?`
+      ).bind(input.scenarioId, ctx.userId).first<any>();
+      if (!scenario) throw new TRPCError({ code: "NOT_FOUND" });
+      if (scenario.status !== 'active') throw new TRPCError({ code: "BAD_REQUEST", message: "シナリオは終了しています" });
+
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      const dialogue = parseJson<any[]>(scenario.dialogue) || [];
+      const choices = parseJson<any[]>(scenario.choices) || [];
+
+      const strategyLabels: Record<string, string> = {
+        aggressive: "攻めの姿勢で、自分の提案を強く推す",
+        defensive: "守りの姿勢で、リスクを慎重に検討する",
+        compromise: "妥協点を探り、双方にメリットのある提案をする",
+        propose: "新しいアイデアや創造的な解決策を提案する",
+      };
+
+      const dialogueText = dialogue.map((d: any) => `${d.speaker}: ${d.content}`).join('\n');
+
+      // Twin responds with chosen strategy
+      const twinPrompt = `あなたは「${twin?.name || 'ツイン'}」（${twin?.personality || 'ビジネスパーソン'}）です。
+テーマ「${scenario.theme}」について交渉中です。
+
+これまでの対話:
+${dialogueText}
+
+戦略指示: ${strategyLabels[input.strategy]}
+
+この戦略に従って応答してください。簡潔に2-3文で。`;
+      const twinResp = await invokeLLM(llmConfig, [{ role: "user", content: twinPrompt }]);
+      dialogue.push({ turnNumber: dialogue.length + 1, speaker: twin?.name || 'ツイン', content: twinResp.content, strategy: input.strategy });
+      choices.push({ turnNumber: dialogue.length, strategy: input.strategy });
+
+      // Opponent responds
+      let opponentName = "交渉相手";
+      if (scenario.friendId) {
+        const ft = await ctx.env.DB.prepare(`SELECT name FROM digital_twins WHERE userId=?`).bind(scenario.friendId).first<any>();
+        if (ft) opponentName = ft.name || opponentName;
+      }
+      const oppPrompt = `あなたは「${opponentName}」です。テーマ「${scenario.theme}」について交渉中です。\n\nこれまでの対話:\n${dialogueText}\n${twin?.name || 'ツイン'}: ${twinResp.content}\n\n自然に応答してください。簡潔に2-3文で。`;
+      const oppResp = await invokeLLM(llmConfig, [{ role: "user", content: oppPrompt }]);
+      dialogue.push({ turnNumber: dialogue.length + 1, speaker: opponentName, content: oppResp.content, strategy: null });
+
+      // Check if scenario should end (after 5 exchanges = 10 turns)
+      const isComplete = dialogue.length >= 10;
+      const newStatus = isComplete ? 'completed' : 'active';
+
+      await ctx.env.DB.prepare(
+        `UPDATE interactive_scenarios SET dialogue=?, choices=?, status=?, updatedAt=datetime('now') WHERE id=?`
+      ).bind(toJson(dialogue), toJson(choices), newStatus, input.scenarioId).run();
+
+      return { dialogue, choices, isComplete };
+    }),
+
+  analyzeInteractiveScenario: protectedProcedure
+    .input(z.object({ scenarioId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      const scenario = await ctx.env.DB.prepare(
+        `SELECT * FROM interactive_scenarios WHERE id=? AND userId=?`
+      ).bind(input.scenarioId, ctx.userId).first<any>();
+      if (!scenario) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const dialogue = parseJson<any[]>(scenario.dialogue) || [];
+      const choices = parseJson<any[]>(scenario.choices) || [];
+
+      const prompt = `以下の交渉シナリオを分析してください。
+
+テーマ: ${scenario.theme}
+対話:
+${dialogue.map((d: any) => `[${d.strategy ? '戦略:' + d.strategy : '相手'}] ${d.speaker}: ${d.content}`).join('\n')}
+
+ユーザーの選択:
+${choices.map((c: any) => `ターン${c.turnNumber}: ${c.strategy}`).join(', ')}
+
+JSON形式で返してください:
+{
+  "overallScore": 0-100,
+  "strategyEffectiveness": {"aggressive": 0-100, "defensive": 0-100, "compromise": 0-100, "propose": 0-100},
+  "bestChoice": {"turnNumber": 数値, "strategy": "選択", "reason": "理由"},
+  "worstChoice": {"turnNumber": 数値, "strategy": "選択", "reason": "理由"},
+  "optimalRoute": [{"turnNumber": 数値, "recommendedStrategy": "戦略", "reason": "理由"}],
+  "lessons": ["学び1", "学び2", "学び3"],
+  "summary": "総合評価"
+}`;
+
+      const resp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+      let analysis: any = {};
+      try { analysis = JSON.parse(resp.content); } catch {
+        analysis = { overallScore: 50, strategyEffectiveness: {}, bestChoice: null, worstChoice: null, optimalRoute: [], lessons: ["分析不能"], summary: "データ不足" };
+      }
+
+      await ctx.env.DB.prepare(
+        `UPDATE interactive_scenarios SET analysisResult=?, status='completed', updatedAt=datetime('now') WHERE id=?`
+      ).bind(toJson(analysis), input.scenarioId).run();
+
+      return analysis;
+    }),
+
+  getInteractiveScenario: protectedProcedure
+    .input(z.object({ scenarioId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM interactive_scenarios WHERE id=? AND userId=?`
+      ).bind(input.scenarioId, ctx.userId).first<any>();
+      if (!row) return null;
+      return { ...row, dialogue: parseJson<any[]>(row.dialogue), choices: parseJson<any[]>(row.choices), analysisResult: parseJson<any>(row.analysisResult) };
+    }),
+
+  listInteractiveScenarios: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT id, theme, status, createdAt, json_array_length(dialogue) as turnCount FROM interactive_scenarios WHERE userId=? ORDER BY createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
+  // ============ Real-time Translation Chat ============
+
+  createTranslationChat: protectedProcedure
+    .input(z.object({ friendId: z.number(), userLang: z.string().default("ja"), friendLang: z.string().default("en") }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      // Check friendship
+      const friendship = await ctx.env.DB.prepare(
+        `SELECT id FROM friendships WHERE ((userId=? AND friendId=?) OR (userId=? AND friendId=?)) AND status='accepted'`
+      ).bind(ctx.userId, input.friendId, input.friendId, ctx.userId).first<any>();
+      if (!friendship) throw new TRPCError({ code: "FORBIDDEN", message: "友達関係が必要です" });
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO translation_chat_sessions (userId, friendId, userLang, friendLang, status)
+         VALUES (?, ?, ?, ?, 'active')`
+      ).bind(ctx.userId, input.friendId, input.userLang, input.friendLang).run();
+
+      const session = await ctx.env.DB.prepare(
+        `SELECT * FROM translation_chat_sessions WHERE userId=? AND friendId=?`
+      ).bind(ctx.userId, input.friendId).first<any>();
+
+      return session;
+    }),
+
+  sendTranslationMessage: protectedProcedure
+    .input(z.object({ sessionId: z.number(), text: z.string(), targetLang: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "chat", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      const session = await ctx.env.DB.prepare(
+        `SELECT * FROM translation_chat_sessions WHERE id=?`
+      ).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+
+      // Determine target language
+      const isInitiator = session.userId === ctx.userId;
+      const targetLang = input.targetLang || (isInitiator ? session.friendLang : session.userLang);
+
+      // Detect language and translate
+      const translatePrompt = `以下のテキストを${targetLang === 'ja' ? '日本語' : targetLang === 'en' ? '英語' : targetLang === 'zh' ? '中国語' : targetLang === 'ko' ? '韓国語' : targetLang}に翻訳してください。自然で流暢な翻訳にしてください。
+
+テキスト: ${input.text}
+
+JSON形式で返してください:
+{"translatedText": "翻訳結果", "detectedLang": "検出された原文言語コード(ja/en/zh/ko/es/fr/de)"}`;
+
+      const resp = await invokeLLM(llmConfig, [{ role: "user", content: translatePrompt }]);
+      let translated: any = {};
+      try { translated = JSON.parse(resp.content); } catch { translated = { translatedText: input.text, detectedLang: "unknown" }; }
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO translation_chat_messages (sessionId, userId, originalText, translatedText, originalLang, targetLang)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(input.sessionId, ctx.userId, input.text, translated.translatedText, translated.detectedLang || null, targetLang).run();
+
+      return {
+        id: res.meta?.last_row_id,
+        originalText: input.text,
+        translatedText: translated.translatedText,
+        detectedLang: translated.detectedLang,
+        targetLang,
+      };
+    }),
+
+  getTranslationChatMessages: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT tcm.*, u.name as senderName FROM translation_chat_messages tcm
+         LEFT JOIN users u ON u.id = tcm.userId
+         WHERE tcm.sessionId=?
+         ORDER BY tcm.createdAt ASC`
+      ).bind(input.sessionId).all<any>();
+      return rows.results ?? [];
+    }),
+
+  rateTranslation: protectedProcedure
+    .input(z.object({ messageId: z.number(), rating: z.enum(["up", "down"]) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(
+        `UPDATE translation_chat_messages SET qualityRating=? WHERE id=?`
+      ).bind(input.rating, input.messageId).run();
+      return { rated: true };
+    }),
+
+  listTranslationChats: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT tcs.*, u.name as friendName,
+              (SELECT COUNT(*) FROM translation_chat_messages WHERE sessionId=tcs.id) as messageCount
+       FROM translation_chat_sessions tcs
+       LEFT JOIN users u ON u.id = tcs.friendId
+       WHERE tcs.userId=?
+       ORDER BY tcs.createdAt DESC`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
 });

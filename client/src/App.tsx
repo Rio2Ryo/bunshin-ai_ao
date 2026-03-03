@@ -112,6 +112,9 @@ const WeeklyReview = lazy(() => import("./pages/WeeklyReview"));
 const ThemeRecommender = lazy(() => import("./pages/ThemeRecommender"));
 const DialogueStyleLearning = lazy(() => import("./pages/DialogueStyleLearning"));
 const SuccessPatterns = lazy(() => import("./pages/SuccessPatterns"));
+const InteractiveScenario = lazy(() => import("./pages/InteractiveScenario"));
+const PersonalityReport = lazy(() => import("./pages/PersonalityReport"));
+const TranslationChat = lazy(() => import("./pages/TranslationChat"));
 
 function PageLoader() {
   return (
@@ -228,6 +231,9 @@ function Router() {
         <Route path="/theme-recommender" component={ThemeRecommender} />
         <Route path="/dialogue-style" component={DialogueStyleLearning} />
         <Route path="/success-patterns" component={SuccessPatterns} />
+        <Route path="/interactive-scenario" component={InteractiveScenario} />
+        <Route path="/personality-report" component={PersonalityReport} />
+        <Route path="/translation-chat" component={TranslationChat} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>
