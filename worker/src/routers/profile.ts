@@ -126,7 +126,7 @@ export const profileRouter = router({
       await ensureSchema(ctx.env.DB);
       const profile = await ctx.env.DB.prepare(`SELECT displayName, bio, industry, company, position, skills, expertise, experience, avatarUrl FROM user_profiles WHERE userId=?`).bind(input.userId).first<any>();
       if (!profile) return null;
-      const twin = await ctx.env.DB.prepare(`SELECT name, description, personality, tags FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.userId).first<any>();
+      const twin = await ctx.env.DB.prepare(`SELECT id, name, description, personality, tags FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.userId).first<any>();
       const trust = await ctx.env.DB.prepare(`SELECT score, rank FROM trust_scores WHERE userId=?`).bind(input.userId).first<any>();
       const user = await ctx.env.DB.prepare(`SELECT name, friendCode FROM users WHERE id=?`).bind(input.userId).first<any>();
       return {
@@ -144,7 +144,7 @@ export const profileRouter = router({
         expertise: parseJson<string[]>(profile.expertise) ?? [],
         trustScore: trust?.score ?? 0,
         trustRank: trust?.rank ?? "beginner",
-        twin: twin ? { name: twin.name, description: twin.description, tags: parseJson<string[]>(twin.tags) ?? [] } : null,
+        twin: twin ? { id: twin.id, name: twin.name, description: twin.description, tags: parseJson<string[]>(twin.tags) ?? [] } : null,
       };
     }),
   getPublicOgp: publicProcedure

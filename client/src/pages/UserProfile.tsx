@@ -14,7 +14,7 @@ import { useState } from "react";
 import {
   ArrowLeft, Bot, Shield, Briefcase, Building2, MapPin,
   UserPlus, Users, Loader2, MessageSquare, Sparkles, Tag,
-  Share2, Copy, Check,
+  Share2, Copy, Check, HelpCircle,
 } from "lucide-react";
 
 const rankLabels: Record<string, string> = {
@@ -47,6 +47,10 @@ export default function UserProfile() {
 
   const { data: friends } = trpc.friends.list.useQuery();
   const { data: myTwin } = trpc.myTwin.get.useQuery();
+  const { data: publicFaqs } = trpc.myTwin.getFaqs.useQuery(
+    { twinId: profile?.twin?.id ?? 0 },
+    { enabled: !!profile?.twin?.id }
+  );
 
   const utils = trpc.useUtils();
   const sendRequest = trpc.friends.sendRequest.useMutation({
@@ -286,6 +290,25 @@ export default function UserProfile() {
           </Card>
         )}
 
+        {/* Public FAQ */}
+        {publicFaqs && publicFaqs.length > 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <HelpCircle className="h-4 w-4 text-primary" />
+                よくある質問（FAQ）
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {publicFaqs.map((faq: any, i: number) => (
+                <div key={faq.id} className="rounded-lg bg-muted/50 p-3">
+                  <p className="text-sm font-medium">Q{i + 1}. {faq.question}</p>
+                  <p className="text-sm text-muted-foreground mt-1">{faq.answer}</p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
         {/* Action Buttons */}
         <div className="flex flex-col sm:flex-row gap-3">
           {isFriend ? (

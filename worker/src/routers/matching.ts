@@ -8118,5 +8118,148 @@ JSON形式で返してください:
       return { dismissed: true };
     }),
 
+  // ============ Session Bookmarks ============
+
+  bookmarkSession: protectedProcedure
+    .input(z.object({
+      sessionId: z.number(),
+      category: z.string().optional(),
+      note: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO session_bookmarks (sessionId, userId, category, note) VALUES (?,?,?,?)`
+      ).bind(input.sessionId, ctx.userId, input.category || "default", input.note || null).run();
+      return { bookmarked: true };
+    }),
+
+  unbookmarkSession: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(
+        `DELETE FROM session_bookmarks WHERE sessionId=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).run();
+      return { unbookmarked: true };
+    }),
+
+  listBookmarks: protectedProcedure
+    .input(z.object({ category: z.string().optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const cat = input?.category;
+      let rows;
+      if (cat) {
+        rows = await ctx.env.DB.prepare(`
+          SELECT sb.*, ms.theme, ms.status, ms.createdAt as sessionCreatedAt,
+                 mr.compatibilityScore
+          FROM session_bookmarks sb
+          JOIN matching_sessions ms ON ms.id = sb.sessionId
+          LEFT JOIN matching_results mr ON mr.sessionId = sb.sessionId
+          WHERE sb.userId=? AND sb.category=?
+          ORDER BY sb.createdAt DESC
+        `).bind(ctx.userId, cat).all<any>();
+      } else {
+        rows = await ctx.env.DB.prepare(`
+          SELECT sb.*, ms.theme, ms.status, ms.createdAt as sessionCreatedAt,
+                 mr.compatibilityScore
+          FROM session_bookmarks sb
+          JOIN matching_sessions ms ON ms.id = sb.sessionId
+          LEFT JOIN matching_results mr ON mr.sessionId = sb.sessionId
+          WHERE sb.userId=?
+          ORDER BY sb.createdAt DESC
+        `).bind(ctx.userId).all<any>();
+      }
+      return rows.results ?? [];
+    }),
+
+  getBookmarkCategories: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT category, COUNT(*) as count FROM session_bookmarks WHERE userId=? GROUP BY category ORDER BY count DESC`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
+  isBookmarked: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM session_bookmarks WHERE sessionId=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      return row ? { bookmarked: true, category: row.category, note: row.note } : { bookmarked: false };
+    }),
+
+  // ============ Auto Quality Scoring + Trend ============
+
+  getQualityTrendForDashboard: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(`
+      SELECT dqs.sessionId, dqs.overallScores, dqs.createdAt, ms.theme
+      FROM dialogue_quality_scores dqs
+      JOIN matching_sessions ms ON ms.id = dqs.sessionId
+      WHERE dqs.userId=?
+      ORDER BY dqs.createdAt DESC LIMIT 10
+    `).bind(ctx.userId).all<any>();
+
+    const items = (rows.results ?? []).map((r: any) => {
+      const scores = parseJson<any>(r.overallScores) || {};
+      const avg = Math.round(((scores.logic || 0) + (scores.specificity || 0) + (scores.creativity || 0) + (scores.cooperation || 0)) / 4);
+      return { sessionId: r.sessionId, theme: r.theme, date: r.createdAt?.split("T")[0], avg, ...scores };
+    });
+
+    return items;
+  }),
+
+  autoScoreQuality: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      // Check if already scored
+      const existing = await ctx.env.DB.prepare(
+        `SELECT id FROM dialogue_quality_scores WHERE sessionId=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (existing) return { alreadyScored: true, id: existing.id };
+
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(input.sessionId).all<any>();
+      if (!dialogues.results?.length) return { alreadyScored: false, skipped: true };
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "auto_quality_scoring", ctx.env);
+      if (!llmConfig) return { alreadyScored: false, skipped: true };
+
+      const turns = (dialogues.results).map((d: any) => `ターン${d.turnNumber} (${d.speakerRole}): ${d.message}`).join("\n");
+
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "あなたはビジネス対話の品質評価エキスパートです。全体を4軸（論理性logic/具体性specificity/創造性creativity/協調性cooperation、各0-100）で採点してください。品質が低い場合は改善ヒントも。JSON形式: { \"overall\": { \"logic\": 75, \"specificity\": 72, \"creativity\": 65, \"cooperation\": 85 }, \"improvementHints\": [\"ヒント1\"] }" },
+        { role: "user", content: `対話:\n${turns}` }
+      ], { maxTokens: 800 });
+
+      let parsed: any = { overall: {}, improvementHints: [] };
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch { parsed.improvementHints = [result.content]; }
+
+      const overall = parsed.overall || {};
+      const avg = Math.round(((overall.logic || 0) + (overall.specificity || 0) + (overall.creativity || 0) + (overall.cooperation || 0)) / 4);
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO dialogue_quality_scores (sessionId, userId, turnScores, overallScores, improvementHints) VALUES (?,?,?,?,?)`
+      ).bind(input.sessionId, ctx.userId, toJson([]), toJson(overall), toJson(parsed.improvementHints || [])).run();
+
+      // If quality is low (avg < 50), create notification
+      if (avg < 50) {
+        await createNotification(ctx.env.DB, ctx.userId, "quality_alert", "対話品質アラート",
+          `セッション #${input.sessionId} の品質スコアが ${avg}点 です。改善提案を確認してください。`,
+          { link: `/quality-meter` });
+      }
+
+      return { alreadyScored: false, scored: true, avg, overall, improvementHints: parsed.improvementHints || [] };
+    }),
 
 });

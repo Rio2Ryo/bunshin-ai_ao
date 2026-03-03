@@ -142,6 +142,7 @@ const BrainstormMode = lazy(() => import("./pages/BrainstormMode"));
 const VoiceNotes = lazy(() => import("./pages/VoiceNotes"));
 const TwinFaq = lazy(() => import("./pages/TwinFaq"));
 const DailyBriefing = lazy(() => import("./pages/DailyBriefing"));
+const SessionBookmarks = lazy(() => import("./pages/SessionBookmarks"));
 
 function PageLoader() {
   return (
@@ -288,6 +289,7 @@ function Router() {
         <Route path="/voice-notes" component={VoiceNotes} />
         <Route path="/twin-faq" component={TwinFaq} />
         <Route path="/daily-briefing" component={DailyBriefing} />
+        <Route path="/bookmarks" component={SessionBookmarks} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

@@ -4830,4 +4830,15 @@ ${reportData.mbti ? `<div class="card"><h2>MBTI</h2><p>${typeof reportData.mbti 
       return { deleted: true };
     }),
 
+
+  getPublicFaqs: protectedProcedure
+    .input(z.object({ twinId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT id, question, answer, sortOrder FROM twin_faqs WHERE twinId=? AND isPublic=1 ORDER BY sortOrder ASC`
+      ).bind(input.twinId).all<any>();
+      return rows.results ?? [];
+    }),
+
 });

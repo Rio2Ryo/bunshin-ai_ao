@@ -2133,6 +2133,16 @@ CREATE TABLE IF NOT EXISTS daily_briefings (
   UNIQUE(userId, briefingDate)
 );
 
+CREATE TABLE IF NOT EXISTS session_bookmarks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  category TEXT DEFAULT 'default',
+  note TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, userId)
+);
+
 `;
 
 let schemaReady = false;
