@@ -121,6 +121,9 @@ const ComparisonTimeline = lazy(() => import("./pages/ComparisonTimeline"));
 const LearningCurriculum = lazy(() => import("./pages/LearningCurriculum"));
 const EmotionFlow = lazy(() => import("./pages/EmotionFlow"));
 const ExternalConnectors = lazy(() => import("./pages/ExternalConnectors"));
+const MultiPerspective = lazy(() => import("./pages/MultiPerspective"));
+const LearningJournal = lazy(() => import("./pages/LearningJournal"));
+const TeamBattle = lazy(() => import("./pages/TeamBattle"));
 
 function PageLoader() {
   return (
@@ -246,6 +249,9 @@ function Router() {
         <Route path="/learning-curriculum" component={LearningCurriculum} />
         <Route path="/emotion-flow" component={EmotionFlow} />
         <Route path="/external-connectors" component={ExternalConnectors} />
+        <Route path="/multi-perspective" component={MultiPerspective} />
+        <Route path="/learning-journal" component={LearningJournal} />
+        <Route path="/team-battle" component={TeamBattle} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

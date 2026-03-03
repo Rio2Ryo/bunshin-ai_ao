@@ -3927,4 +3927,161 @@ ${reportData.mbti ? `<div class="card"><h2>MBTI</h2><p>${typeof reportData.mbti 
       ).bind(input.connectorId, ctx.userId).all<any>();
       return rows.results ?? [];
     }),
+
+  // ============ Learning Journal ============
+
+  generateJournalEntry: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
+
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(input.sessionId).all<any>();
+      const dialogueText = (dialogues.results || []).map((d: any) => `[${d.speaker}]: ${d.content}`).join("\n");
+
+      const result_row = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(input.sessionId).first<any>();
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "journal_entry", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が取得できません" });
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: `あなたはデジタルツイン「${twin.name}」です。マッチング対話を振り返り、自分の成長日記を書いてください。一人称（私）で、自分が何を学び、何を失敗し、次回どう改善するかを率直に記録してください。` },
+        { role: "user", content: `テーマ: ${session.theme}\nスコア: ${result_row?.compatibilityScore || "不明"}\n\n対話内容:\n${dialogueText}\n\nJSON:\n{"title":"日記タイトル","content":"振り返り本文(200-400字)","lessons":["学び1","学び2","学び3"],"failures":["失敗1"],"improvements":["改善点1","改善点2"]}` }
+      ], { maxTokens: 1500, temperature: 0.6 });
+
+      let parsed: any = {};
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch {
+        parsed = { title: `${session.theme}の振り返り`, content: result.content, lessons: [], failures: [], improvements: [] };
+      }
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO learning_journal_entries (twinId, userId, sessionId, entryType, title, content, lessons, failures, improvements) VALUES (?,?,?,'reflection',?,?,?,?,?)`
+      ).bind(
+        twin.id, ctx.userId, input.sessionId,
+        parsed.title || "振り返り", parsed.content || "",
+        toJson(parsed.lessons || []), toJson(parsed.failures || []), toJson(parsed.improvements || [])
+      ).run();
+
+      return { id: res.meta?.last_row_id, ...parsed };
+    }),
+
+  listJournalEntries: protectedProcedure
+    .input(z.object({ entryType: z.string().optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) return [];
+
+      let query = `SELECT lje.*, ms.theme as sessionTheme FROM learning_journal_entries lje LEFT JOIN matching_sessions ms ON ms.id=lje.sessionId WHERE lje.twinId=?`;
+      const binds: any[] = [twin.id];
+      if (input?.entryType) { query += ` AND lje.entryType=?`; binds.push(input.entryType); }
+      query += ` ORDER BY lje.createdAt DESC LIMIT 30`;
+
+      const rows = await ctx.env.DB.prepare(query).bind(...binds).all<any>();
+      return (rows.results ?? []).map((r: any) => ({
+        ...r,
+        lessons: parseJson<string[]>(r.lessons) || [],
+        failures: parseJson<string[]>(r.failures) || [],
+        improvements: parseJson<string[]>(r.improvements) || [],
+      }));
+    }),
+
+  addJournalComment: protectedProcedure
+    .input(z.object({ journalEntryId: z.number(), comment: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const entry = await ctx.env.DB.prepare(`SELECT * FROM learning_journal_entries WHERE id=? AND userId=?`).bind(input.journalEntryId, ctx.userId).first<any>();
+      if (!entry) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO journal_comments (journalEntryId, userId, comment) VALUES (?,?,?)`
+      ).bind(input.journalEntryId, ctx.userId, input.comment).run();
+
+      return { id: res.meta?.last_row_id, comment: input.comment };
+    }),
+
+  getJournalComments: protectedProcedure
+    .input(z.object({ journalEntryId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT jc.*, u.name as userName FROM journal_comments jc JOIN users u ON u.id=jc.userId WHERE jc.journalEntryId=? ORDER BY jc.createdAt ASC`
+      ).bind(input.journalEntryId).all<any>();
+      return rows.results ?? [];
+    }),
+
+  applyJournalFeedback: protectedProcedure
+    .input(z.object({ journalEntryId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const entry = await ctx.env.DB.prepare(`SELECT * FROM learning_journal_entries WHERE id=? AND userId=?`).bind(input.journalEntryId, ctx.userId).first<any>();
+      if (!entry) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const comments = await ctx.env.DB.prepare(
+        `SELECT comment FROM journal_comments WHERE journalEntryId=? AND appliedToTwin=0`
+      ).bind(input.journalEntryId).all<any>();
+
+      if (!comments.results?.length) throw new TRPCError({ code: "BAD_REQUEST", message: "未反映のコメントがありません" });
+
+      const commentTexts = comments.results.map((c: any) => c.comment).join("\n");
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "journal_feedback", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が取得できません" });
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "ユーザーのフィードバックコメントに基づいて、ツインの自己認識を改善するための追記文を生成してください。ツインの説明文(description)に追加する形式で、簡潔に（100字以内）。" },
+        { role: "user", content: `現在のツイン説明: ${twin.description || "なし"}\n日記の内容: ${entry.content}\nユーザーコメント:\n${commentTexts}\n\n追記文を1文で:` }
+      ], { maxTokens: 200, temperature: 0.3 });
+
+      const addition = result.content.trim();
+      const newDesc = (twin.description || "") + "\n" + addition;
+      await ctx.env.DB.prepare(`UPDATE digital_twins SET description=? WHERE id=?`).bind(newDesc, twin.id).run();
+      await ctx.env.DB.prepare(`UPDATE journal_comments SET appliedToTwin=1 WHERE journalEntryId=?`).bind(input.journalEntryId).run();
+
+      return { applied: true, addition };
+    }),
+
+  generateMonthlyReport: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) throw new TRPCError({ code: "NOT_FOUND" });
+
+    const entries = await ctx.env.DB.prepare(
+      `SELECT * FROM learning_journal_entries WHERE twinId=? AND createdAt >= datetime('now', '-30 days') ORDER BY createdAt ASC`
+    ).bind(twin.id).all<any>();
+
+    if (!entries.results?.length) throw new TRPCError({ code: "BAD_REQUEST", message: "過去30日間の日記がありません" });
+
+    const entrySummaries = entries.results.map((e: any) => `[${e.createdAt}] ${e.title}: ${(e.content || "").slice(0, 100)}`).join("\n");
+
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "monthly_report", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が取得できません" });
+    const result = await invokeLLM(llmConfig, [
+      { role: "system", content: `デジタルツイン「${twin.name}」の月次成長レポートを生成してください。過去30日間の学習ジャーナルを分析し、成長の軌跡、主要な学び、残課題、来月の推奨目標をまとめてください。` },
+      { role: "user", content: `日記一覧(${entries.results.length}件):\n${entrySummaries}\n\nJSON:\n{"title":"月次成長レポート","summary":"総括(200字)","growthAreas":["成長した点1","成長した点2"],"remainingChallenges":["課題1"],"nextMonthGoals":["目標1","目標2"],"overallGrowthScore":75}` }
+    ], { maxTokens: 1500, temperature: 0.4 });
+
+    let parsed: any = {};
+    try {
+      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+    } catch {
+      parsed = { title: "月次成長レポート", summary: result.content, growthAreas: [], remainingChallenges: [], nextMonthGoals: [], overallGrowthScore: 50 };
+    }
+
+    const res = await ctx.env.DB.prepare(
+      `INSERT INTO learning_journal_entries (twinId, userId, entryType, title, content, aiSummary) VALUES (?,?,'monthly_report',?,?,?)`
+    ).bind(twin.id, ctx.userId, parsed.title || "月次レポート", toJson(parsed), parsed.summary || "").run();
+
+    return { id: res.meta?.last_row_id, ...parsed };
+  }),
 });

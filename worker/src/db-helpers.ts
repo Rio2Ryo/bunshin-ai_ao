@@ -1840,6 +1840,63 @@ CREATE TABLE IF NOT EXISTS connector_sync_logs (
   errorMessage TEXT,
   syncedAt TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS multi_perspective_replays (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  perspectives TEXT NOT NULL,
+  perspectiveGap TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, userId)
+);
+
+CREATE TABLE IF NOT EXISTS learning_journal_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  twinId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  sessionId INTEGER,
+  entryType TEXT DEFAULT 'reflection' CHECK(entryType IN ('reflection','milestone','insight','monthly_report')),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  lessons TEXT,
+  failures TEXT,
+  improvements TEXT,
+  aiSummary TEXT,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS journal_comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  journalEntryId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  comment TEXT NOT NULL,
+  appliedToTwin INTEGER DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS team_battles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  theme TEXT NOT NULL,
+  creatorUserId INTEGER NOT NULL,
+  teamAMembers TEXT NOT NULL,
+  teamBMembers TEXT NOT NULL,
+  teamAStrategy TEXT,
+  teamBStrategy TEXT,
+  dialogue TEXT,
+  result TEXT,
+  status TEXT DEFAULT 'pending' CHECK(status IN ('pending','in_progress','completed')),
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS team_battle_members (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  battleId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  team TEXT NOT NULL CHECK(team IN ('A','B')),
+  role TEXT DEFAULT 'supporter' CHECK(role IN ('leader','supporter','specialist')),
+  UNIQUE(battleId, userId)
+);
 `;
 
 let schemaReady = false;

@@ -7040,4 +7040,209 @@ JSON形式で返してください:
     ).bind(ctx.userId).all<any>();
     return rows.results ?? [];
   }),
+
+  // ============ Multi-Perspective Replay ============
+
+  generateMultiPerspective: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(input.sessionId).all<any>();
+      if (!dialogues.results?.length) throw new TRPCError({ code: "BAD_REQUEST", message: "対話データがありません" });
+
+      const settings = parseJson<any>(session.settings) || {};
+      const initiatorTwin = await ctx.env.DB.prepare(`SELECT name, personality FROM digital_twins WHERE userId=?`).bind(session.initiatorUserId).first<any>();
+      const friendTwin = settings.friendId ? await ctx.env.DB.prepare(`SELECT name, personality FROM digital_twins WHERE userId=?`).bind(settings.friendId).first<any>() : null;
+
+      const dialogueText = dialogues.results.map((d: any) => `ターン${d.turnNumber} [${d.speaker}]: ${d.content}`).join("\n");
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "multi_perspective", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が取得できません" });
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "あなたは対話分析の専門家です。マッチング対話を3つの異なる視点から再解釈してください。各視点で、各ターンの内心モノローグ（心の中で何を考えていたか）、戦略意図（何を狙っていたか）、感情変化（どう感じたか）を生成してください。" },
+        { role: "user", content: `対話:\n${dialogueText}\n\n話者A: ${initiatorTwin?.name || "ツインA"}（性格: ${initiatorTwin?.personality || "不明"}）\n話者B: ${friendTwin?.name || "ツインB"}（性格: ${friendTwin?.personality || "不明"}）\n\nJSON:\n{"perspectives":{"myTwin":{"name":"${initiatorTwin?.name || "ツインA"}","turns":[{"turnNumber":1,"innerMonologue":"...","strategicIntent":"...","emotionChange":"..."}]},"opponentTwin":{"name":"${friendTwin?.name || "ツインB"}","turns":[{"turnNumber":1,"innerMonologue":"...","strategicIntent":"...","emotionChange":"..."}]},"observer":{"turns":[{"turnNumber":1,"analysis":"...","technique":"...","suggestion":"..."}]}},"perspectiveGap":{"summary":"3視点のギャップ要約","keyDifferences":["..."],"insights":["..."]}}` }
+      ], { maxTokens: 4000, temperature: 0.5 });
+
+      let parsed: any = {};
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch {
+        parsed = {
+          perspectives: {
+            myTwin: { name: initiatorTwin?.name || "ツインA", turns: [] },
+            opponentTwin: { name: friendTwin?.name || "ツインB", turns: [] },
+            observer: { turns: [] }
+          },
+          perspectiveGap: { summary: result.content, keyDifferences: [], insights: [] }
+        };
+      }
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO multi_perspective_replays (sessionId, userId, perspectives, perspectiveGap) VALUES (?,?,?,?)`
+      ).bind(input.sessionId, ctx.userId, toJson(parsed.perspectives || {}), toJson(parsed.perspectiveGap || {})).run();
+
+      return parsed;
+    }),
+
+  getMultiPerspective: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM multi_perspective_replays WHERE sessionId=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!row) return null;
+      return {
+        ...row,
+        perspectives: parseJson<any>(row.perspectives) || {},
+        perspectiveGap: parseJson<any>(row.perspectiveGap) || {},
+      };
+    }),
+
+  // ============ Team Battle ============
+
+  createTeamBattle: protectedProcedure
+    .input(z.object({
+      theme: z.string().min(1),
+      teamAUserIds: z.array(z.number()).min(1).max(3),
+      teamBUserIds: z.array(z.number()).min(1).max(3),
+      teamAStrategy: z.object({ approach: z.string().optional() }).optional(),
+      teamBStrategy: z.object({ approach: z.string().optional() }).optional(),
+      roles: z.record(z.string(), z.enum(["leader", "supporter", "specialist"])).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      // Verify creator is in one of the teams
+      const allUserIds = [...input.teamAUserIds, ...input.teamBUserIds];
+      if (!allUserIds.includes(ctx.userId)) throw new TRPCError({ code: "BAD_REQUEST", message: "作成者はチームに含まれている必要があります" });
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO team_battles (theme, creatorUserId, teamAMembers, teamBMembers, teamAStrategy, teamBStrategy, status) VALUES (?,?,?,?,?,?,'pending')`
+      ).bind(
+        input.theme, ctx.userId,
+        toJson(input.teamAUserIds), toJson(input.teamBUserIds),
+        toJson(input.teamAStrategy || {}), toJson(input.teamBStrategy || {})
+      ).run();
+
+      const battleId = res.meta?.last_row_id;
+      if (battleId) {
+        const stmts = allUserIds.map(uid => {
+          const team = input.teamAUserIds.includes(uid) ? "A" : "B";
+          const role = input.roles?.[String(uid)] || "supporter";
+          return ctx.env.DB.prepare(
+            `INSERT OR IGNORE INTO team_battle_members (battleId, userId, team, role) VALUES (?,?,?,?)`
+          ).bind(battleId, uid, team, role);
+        });
+        await ctx.env.DB.batch(stmts);
+      }
+
+      return { id: battleId, theme: input.theme, status: "pending" };
+    }),
+
+  runTeamBattle: protectedProcedure
+    .input(z.object({ battleId: z.number(), turns: z.number().min(2).max(10).default(6) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const battle = await ctx.env.DB.prepare(`SELECT * FROM team_battles WHERE id=?`).bind(input.battleId).first<any>();
+      if (!battle) throw new TRPCError({ code: "NOT_FOUND" });
+      if (battle.status === "completed") throw new TRPCError({ code: "BAD_REQUEST", message: "この対抗戦は既に完了しています" });
+
+      const teamAIds = parseJson<number[]>(battle.teamAMembers) || [];
+      const teamBIds = parseJson<number[]>(battle.teamBMembers) || [];
+
+      // Get twin data for all members
+      const getTwins = async (ids: number[]) => {
+        const results = [];
+        for (const uid of ids) {
+          const twin = await ctx.env.DB.prepare(`SELECT name, personality, description FROM digital_twins WHERE userId=?`).bind(uid).first<any>();
+          if (twin) results.push({ userId: uid, ...twin });
+        }
+        return results;
+      };
+
+      const teamATwins = await getTwins(teamAIds);
+      const teamBTwins = await getTwins(teamBIds);
+      const teamAStrategy = parseJson<any>(battle.teamAStrategy) || {};
+      const teamBStrategy = parseJson<any>(battle.teamBStrategy) || {};
+
+      // Get member roles
+      const members = await ctx.env.DB.prepare(`SELECT * FROM team_battle_members WHERE battleId=?`).bind(input.battleId).all<any>();
+      const roleMap: Record<number, string> = {};
+      (members.results || []).forEach((m: any) => { roleMap[m.userId] = m.role; });
+
+      const teamADesc = teamATwins.map(t => `${t.name}(${roleMap[t.userId] || "supporter"}: ${t.personality || ""})`).join(", ");
+      const teamBDesc = teamBTwins.map(t => `${t.name}(${roleMap[t.userId] || "supporter"}: ${t.personality || ""})`).join(", ");
+
+      await ctx.env.DB.prepare(`UPDATE team_battles SET status='in_progress' WHERE id=?`).bind(input.battleId).run();
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "team_battle", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が取得できません" });
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "あなたはチーム対抗ディスカッションのファシリテーターです。2チームがテーマについて議論します。各チームのメンバーの性格・役割を考慮し、リアルな対話を生成してください。チーム内では協力し、チーム間では競争的な対話を生成してください。" },
+        { role: "user", content: `テーマ: ${battle.theme}\n\nチームA: ${teamADesc}\n戦略: ${teamAStrategy.approach || "自由"}\n\nチームB: ${teamBDesc}\n戦略: ${teamBStrategy.approach || "自由"}\n\n${input.turns}ターンの対話を生成してください。各ターンでチームAとチームBが交互に発言します。\n\nJSON:\n{"dialogue":[{"turn":1,"team":"A","speaker":"名前","content":"..."},...],"result":{"teamAScore":{"cooperation":80,"argumentation":75,"creativity":70,"overall":75},"teamBScore":{"cooperation":80,"argumentation":75,"creativity":70,"overall":75},"mvp":{"name":"...","team":"A","reason":"..."},"summary":"..."}}` }
+      ], { maxTokens: 4000, temperature: 0.7 });
+
+      let parsed: any = {};
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch {
+        parsed = {
+          dialogue: [{ turn: 1, team: "A", speaker: teamATwins[0]?.name || "チームA", content: "議論を開始します。" }],
+          result: {
+            teamAScore: { cooperation: 70, argumentation: 70, creativity: 70, overall: 70 },
+            teamBScore: { cooperation: 70, argumentation: 70, creativity: 70, overall: 70 },
+            mvp: { name: teamATwins[0]?.name || "不明", team: "A", reason: "積極的な参加" },
+            summary: result.content
+          }
+        };
+      }
+
+      await ctx.env.DB.prepare(
+        `UPDATE team_battles SET dialogue=?, result=?, status='completed' WHERE id=?`
+      ).bind(toJson(parsed.dialogue || []), toJson(parsed.result || {}), input.battleId).run();
+
+      return { dialogue: parsed.dialogue || [], result: parsed.result || {} };
+    }),
+
+  getTeamBattle: protectedProcedure
+    .input(z.object({ battleId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const battle = await ctx.env.DB.prepare(`SELECT * FROM team_battles WHERE id=?`).bind(input.battleId).first<any>();
+      if (!battle) return null;
+      const members = await ctx.env.DB.prepare(`SELECT tbm.*, u.name as userName FROM team_battle_members tbm JOIN users u ON u.id=tbm.userId WHERE tbm.battleId=?`).bind(input.battleId).all<any>();
+      return {
+        ...battle,
+        teamAMembers: parseJson<number[]>(battle.teamAMembers) || [],
+        teamBMembers: parseJson<number[]>(battle.teamBMembers) || [],
+        teamAStrategy: parseJson<any>(battle.teamAStrategy) || {},
+        teamBStrategy: parseJson<any>(battle.teamBStrategy) || {},
+        dialogue: parseJson<any[]>(battle.dialogue) || [],
+        result: parseJson<any>(battle.result) || {},
+        members: members.results ?? [],
+      };
+    }),
+
+  listTeamBattles: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT tb.* FROM team_battles tb
+       JOIN team_battle_members tbm ON tbm.battleId=tb.id
+       WHERE tbm.userId=?
+       GROUP BY tb.id
+       ORDER BY tb.createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({
+      ...r,
+      teamAMembers: parseJson<number[]>(r.teamAMembers) || [],
+      teamBMembers: parseJson<number[]>(r.teamBMembers) || [],
+      result: parseJson<any>(r.result) || {},
+    }));
+  }),
 });
