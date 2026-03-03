@@ -7779,4 +7779,178 @@ JSON形式で返してください:
   }),
 
 
+
+  // === Phase 39: Trust Progress ===
+  getTrustProgress: protectedProcedure
+    .input(z.object({ friendId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      let row = await ctx.env.DB.prepare(`SELECT * FROM trust_progress WHERE userId=? AND friendId=?`).bind(ctx.userId, input.friendId).first<any>();
+      if (!row) {
+        const matchCount = await ctx.env.DB.prepare(`SELECT COUNT(*) as cnt FROM matching_sessions WHERE initiatorUserId=? AND settings LIKE ?`).bind(ctx.userId, `%"friendId":${input.friendId}%`).first<any>();
+        const cnt = matchCount?.cnt || 0;
+        const level = cnt >= 20 ? 5 : cnt >= 12 ? 4 : cnt >= 6 ? 3 : cnt >= 3 ? 2 : 1;
+        await ctx.env.DB.prepare(
+          `INSERT OR IGNORE INTO trust_progress (userId, friendId, trustLevel, matchCount) VALUES (?,?,?,?)`
+        ).bind(ctx.userId, input.friendId, level, cnt).run();
+        row = await ctx.env.DB.prepare(`SELECT * FROM trust_progress WHERE userId=? AND friendId=?`).bind(ctx.userId, input.friendId).first<any>();
+      }
+      return { ...row, unlockedThemes: parseJson<string[]>(row?.unlockedThemes) || [], achievements: parseJson<any[]>(row?.achievements) || [] };
+    }),
+
+  updateTrustProgress: protectedProcedure
+    .input(z.object({ friendId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const matchCount = await ctx.env.DB.prepare(`SELECT COUNT(*) as cnt FROM matching_sessions WHERE initiatorUserId=? AND settings LIKE ?`).bind(ctx.userId, `%"friendId":${input.friendId}%`).first<any>();
+      const cnt = matchCount?.cnt || 0;
+      const oldRow = await ctx.env.DB.prepare(`SELECT * FROM trust_progress WHERE userId=? AND friendId=?`).bind(ctx.userId, input.friendId).first<any>();
+      const oldLevel = oldRow?.trustLevel || 1;
+      const newLevel = cnt >= 20 ? 5 : cnt >= 12 ? 4 : cnt >= 6 ? 3 : cnt >= 3 ? 2 : 1;
+
+      const LEVEL_NAMES = ["", "表層", "本音", "秘密共有", "共同プロジェクト", "パートナー"];
+      const LEVEL_THEMES: Record<number, string[]> = {
+        1: ["自己紹介", "趣味・関心"],
+        2: ["本音の意見交換", "失敗談の共有", "価値観の深掘り"],
+        3: ["秘密のビジネスアイデア", "非公開プロジェクト相談"],
+        4: ["共同事業計画", "投資判断"],
+        5: ["長期パートナーシップ戦略", "M&A検討"],
+      };
+
+      const unlockedThemes: string[] = [];
+      for (let i = 1; i <= newLevel; i++) unlockedThemes.push(...(LEVEL_THEMES[i] || []));
+
+      const achievements = parseJson<any[]>(oldRow?.achievements) || [];
+      let pointsAwarded = 0;
+      if (newLevel > oldLevel) {
+        achievements.push({ level: newLevel, name: LEVEL_NAMES[newLevel], achievedAt: new Date().toISOString() });
+        pointsAwarded = newLevel * 20;
+        // Award points
+        await ctx.env.DB.prepare(`UPDATE user_points SET balance = balance + ? WHERE userId=?`).bind(pointsAwarded, ctx.userId).run();
+        await ctx.env.DB.prepare(
+          `INSERT INTO point_transactions (userId, amount, type, description) VALUES (?,?,?,?)`
+        ).bind(ctx.userId, pointsAwarded, "earn", `信頼レベル${newLevel}「${LEVEL_NAMES[newLevel]}」達成`).run();
+      }
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO trust_progress (userId, friendId, trustLevel, matchCount, unlockedThemes, achievements, updatedAt) VALUES (?,?,?,?,?,?,datetime('now'))`
+      ).bind(ctx.userId, input.friendId, newLevel, cnt, toJson(unlockedThemes), toJson(achievements)).run();
+
+      return { trustLevel: newLevel, matchCount: cnt, unlockedThemes, achievements, levelUp: newLevel > oldLevel, pointsAwarded, levelName: LEVEL_NAMES[newLevel] };
+    }),
+
+  getAllTrustProgress: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(`
+      SELECT tp.*, u.name as friendName FROM trust_progress tp
+      LEFT JOIN users u ON u.id = tp.friendId
+      WHERE tp.userId=? ORDER BY tp.trustLevel DESC, tp.matchCount DESC
+    `).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, unlockedThemes: parseJson<string[]>(r.unlockedThemes) || [], achievements: parseJson<any[]>(r.achievements) || [] }));
+  }),
+
+  getTrustThemes: protectedProcedure
+    .input(z.object({ friendId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(`SELECT unlockedThemes, trustLevel FROM trust_progress WHERE userId=? AND friendId=?`).bind(ctx.userId, input.friendId).first<any>();
+      if (!row) return { themes: ["自己紹介", "趣味・関心"], trustLevel: 1 };
+      return { themes: parseJson<string[]>(row.unlockedThemes) || [], trustLevel: row.trustLevel };
+    }),
+
+  getTrustLeaderboard: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(`
+      SELECT tp.friendId, tp.trustLevel, tp.matchCount, u.name as friendName
+      FROM trust_progress tp LEFT JOIN users u ON u.id = tp.friendId
+      WHERE tp.userId=? ORDER BY tp.trustLevel DESC, tp.matchCount DESC LIMIT 10
+    `).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
+  // === Phase 39: Brainstorm Mode ===
+  startBrainstorm: protectedProcedure
+    .input(z.object({ theme: z.string().min(1), friendId: z.number().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      let friendTwin: any = null;
+      if (input.friendId) {
+        friendTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.friendId).first<any>();
+      }
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "brainstorm_diverge", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+      const twinA = twin.name || "ツインA";
+      const twinB = friendTwin?.name || "ツインB";
+
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: `あなたは2人のビジネスパーソン（${twinA}と${twinB}）のブレインストーミングをシミュレーションしてください。テーマ「${input.theme}」について、アイデア発散フェーズとして、お互いに自由にアイデアを出し合ってください。各アイデアには発案者を明記してください。最低8個のアイデアを出してください。JSON形式: { \"ideas\": [{ \"id\": 1, \"author\": \"${twinA}\", \"idea\": \"アイデア内容\", \"category\": \"カテゴリ名\" }] }` },
+        { role: "user", content: `テーマ: ${input.theme}\n${twinA}の特徴: ${twin.description?.substring(0, 200) || "ビジネスプロフェッショナル"}\n${twinB}の特徴: ${friendTwin?.description?.substring(0, 200) || "ビジネスパートナー"}` }
+      ], { maxTokens: 2000 });
+
+      let ideas: any[] = [];
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) { const parsed = JSON.parse(jsonMatch[0]); ideas = parsed.ideas || []; }
+      } catch { ideas = [{ id: 1, author: twinA, idea: result.content, category: "全般" }]; }
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO brainstorm_sessions (userId, friendId, theme, phase, ideas) VALUES (?,?,?,?,?)`
+      ).bind(ctx.userId, input.friendId || null, input.theme, "diverge", toJson(ideas)).run();
+
+      return { sessionId: res.meta?.last_row_id, ideas, phase: "diverge" as const };
+    }),
+
+  convergeBrainstorm: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT * FROM brainstorm_sessions WHERE id=? AND userId=?`).bind(input.sessionId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const ideas = parseJson<any[]>(session.ideas) || [];
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "brainstorm_converge", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+      const ideasText = ideas.map((i: any) => `#${i.id} [${i.author}] ${i.idea} (${i.category})`).join("\n");
+
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "あなたはアイデア収束の専門家です。以下のアイデアをクラスタリングし、上位3案の実行プランを生成してください。各アイデアの独自性/実現性/インパクトを評価してください。JSON形式: { \"clusters\": [{ \"name\": \"クラスタ名\", \"ideaIds\": [1,2], \"summary\": \"要約\" }], \"topPlans\": [{ \"rank\": 1, \"title\": \"プランタイトル\", \"description\": \"実行プラン\", \"basedOnIds\": [1,3], \"originality\": 0-100, \"feasibility\": 0-100, \"impact\": 0-100 }], \"evaluation\": { \"totalIdeas\": 8, \"uniqueCategories\": 4, \"bestIdea\": \"最も革新的なアイデア\", \"overallQuality\": \"全体評価\" } }" },
+        { role: "user", content: `テーマ: ${session.theme}\n\nアイデア一覧:\n${ideasText}` }
+      ], { maxTokens: 2000 });
+
+      let parsed: any = { clusters: [], topPlans: [], evaluation: {} };
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch { parsed.evaluation = { overallQuality: result.content }; }
+
+      await ctx.env.DB.prepare(
+        `UPDATE brainstorm_sessions SET phase='complete', clusters=?, topPlans=?, evaluation=? WHERE id=?`
+      ).bind(toJson(parsed.clusters || []), toJson(parsed.topPlans || []), toJson(parsed.evaluation || {}), input.sessionId).run();
+
+      return { clusters: parsed.clusters, topPlans: parsed.topPlans, evaluation: parsed.evaluation };
+    }),
+
+  getBrainstorm: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(`SELECT * FROM brainstorm_sessions WHERE id=? AND userId=?`).bind(input.sessionId, ctx.userId).first<any>();
+      if (!row) return null;
+      return { ...row, ideas: parseJson<any[]>(row.ideas) || [], clusters: parseJson<any[]>(row.clusters) || [], topPlans: parseJson<any[]>(row.topPlans) || [], evaluation: parseJson<any>(row.evaluation) || null };
+    }),
+
+  listBrainstorms: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT id, theme, phase, friendId, createdAt FROM brainstorm_sessions WHERE userId=? ORDER BY createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
 });

@@ -250,6 +250,8 @@ function DashboardLayoutContent({
         { icon: Handshake, label: language === "en" ? "Consensus" : "合意形成", path: "/consensus" },
         { icon: Globe, label: language === "en" ? "Cross-Culture" : "異文化分析", path: "/cross-culture" },
         { icon: Eye, label: language === "en" ? "Second Opinion" : "セカンドオピニオン", path: "/second-opinion" },
+        { icon: Shield, label: language === "en" ? "Trust Progress" : "信頼構築", path: "/trust-progress" },
+        { icon: Zap, label: language === "en" ? "Brainstorm" : "ブレスト", path: "/brainstorm" },
       ],
     },
     {
@@ -298,6 +300,7 @@ function DashboardLayoutContent({
         { icon: MessageSquare, label: language === "en" ? "Rehearsal" : "リハーサル", path: "/rehearsal" },
         { icon: SlidersHorizontal, label: language === "en" ? "Calibration" : "感情調整", path: "/emotion-calibration" },
         { icon: Network, label: language === "en" ? "Knowledge Graph Builder" : "知識グラフ", path: "/knowledge-graph-builder" },
+        { icon: Mic, label: language === "en" ? "Multimodal" : "マルチモーダル", path: "/multimodal-input" },
       ],
     },
   ], [t, language]);

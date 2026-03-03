@@ -2059,6 +2059,45 @@ CREATE TABLE IF NOT EXISTS emotion_calibration (
   createdAt TEXT DEFAULT (datetime('now')),
   updatedAt TEXT DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS trust_progress (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  friendId INTEGER NOT NULL,
+  trustLevel INTEGER NOT NULL DEFAULT 1 CHECK(trustLevel BETWEEN 1 AND 5),
+  matchCount INTEGER NOT NULL DEFAULT 0,
+  unlockedThemes TEXT DEFAULT '[]',
+  achievements TEXT DEFAULT '[]',
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(userId, friendId)
+);
+
+CREATE TABLE IF NOT EXISTS multimodal_inputs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  inputType TEXT NOT NULL CHECK(inputType IN ('voice','image','screenshot')),
+  rawContent TEXT,
+  processedText TEXT,
+  knowledgeEntryId INTEGER,
+  accuracy REAL,
+  feedbackRating TEXT CHECK(feedbackRating IN ('good','bad',NULL)),
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS brainstorm_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  friendId INTEGER,
+  theme TEXT NOT NULL,
+  phase TEXT NOT NULL DEFAULT 'diverge' CHECK(phase IN ('diverge','converge','complete')),
+  ideas TEXT NOT NULL DEFAULT '[]',
+  clusters TEXT DEFAULT '[]',
+  topPlans TEXT DEFAULT '[]',
+  evaluation TEXT,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
 `;
 
 let schemaReady = false;

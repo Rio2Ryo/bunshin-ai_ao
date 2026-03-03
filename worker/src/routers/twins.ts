@@ -4643,4 +4643,97 @@ ${reportData.mbti ? `<div class="card"><h2>MBTI</h2><p>${typeof reportData.mbti 
   }),
 
 
+
+  // === Phase 39: Multimodal Input Learning ===
+  processVoiceInput: protectedProcedure
+    .input(z.object({ transcript: z.string().min(1), title: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await ctx.env.DB.prepare(`SELECT id FROM digital_twins WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "voice_process", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "音声メモのテキストを構造化してナレッジベースに追加できる形にまとめてください。JSON形式: { \"title\": \"タイトル\", \"summary\": \"要約（200文字以内）\", \"keyPoints\": [\"ポイント1\"], \"processedText\": \"整理されたテキスト\" }" },
+        { role: "user", content: input.transcript }
+      ], { maxTokens: 1000 });
+
+      let processed: any = { title: input.title || "音声メモ", summary: input.transcript.substring(0, 200), keyPoints: [], processedText: input.transcript };
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) processed = JSON.parse(jsonMatch[0]);
+      } catch {}
+
+      const kbRes = await ctx.env.DB.prepare(
+        `INSERT INTO knowledge_base (twinId, title, content, summary, sourceType) VALUES (?,?,?,?,?)`
+      ).bind(twin.id, processed.title || "音声メモ", processed.processedText || input.transcript, processed.summary || "", "voice").run();
+
+      const mmRes = await ctx.env.DB.prepare(
+        `INSERT INTO multimodal_inputs (userId, twinId, inputType, rawContent, processedText, knowledgeEntryId) VALUES (?,?,?,?,?,?)`
+      ).bind(ctx.userId, twin.id, "voice", input.transcript, processed.processedText || input.transcript, kbRes.meta?.last_row_id || null).run();
+
+      return { id: mmRes.meta?.last_row_id, knowledgeEntryId: kbRes.meta?.last_row_id, processed };
+    }),
+
+  processImageInput: protectedProcedure
+    .input(z.object({ imageDescription: z.string().min(1), title: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await ctx.env.DB.prepare(`SELECT id FROM digital_twins WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "image_process", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "画像から抽出されたテキスト/説明を構造化してナレッジベースに追加できる形にまとめてください。JSON形式: { \"title\": \"タイトル\", \"summary\": \"要約\", \"processedText\": \"整理テキスト\", \"tags\": [\"タグ\"] }" },
+        { role: "user", content: input.imageDescription }
+      ], { maxTokens: 1000 });
+
+      let processed: any = { title: input.title || "画像メモ", summary: input.imageDescription.substring(0, 200), processedText: input.imageDescription, tags: [] };
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) processed = JSON.parse(jsonMatch[0]);
+      } catch {}
+
+      const kbRes = await ctx.env.DB.prepare(
+        `INSERT INTO knowledge_base (twinId, title, content, summary, sourceType) VALUES (?,?,?,?,?)`
+      ).bind(twin.id, processed.title || "画像メモ", processed.processedText || input.imageDescription, processed.summary || "", "image").run();
+
+      const mmRes = await ctx.env.DB.prepare(
+        `INSERT INTO multimodal_inputs (userId, twinId, inputType, rawContent, processedText, knowledgeEntryId) VALUES (?,?,?,?,?,?)`
+      ).bind(ctx.userId, twin.id, "image", input.imageDescription, processed.processedText || input.imageDescription, kbRes.meta?.last_row_id || null).run();
+
+      return { id: mmRes.meta?.last_row_id, knowledgeEntryId: kbRes.meta?.last_row_id, processed };
+    }),
+
+  getMultimodalStats: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await ctx.env.DB.prepare(`SELECT id FROM digital_twins WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+    if (!twin) return { voice: 0, image: 0, screenshot: 0, total: 0, avgAccuracy: null };
+
+    const rows = await ctx.env.DB.prepare(`
+      SELECT inputType, COUNT(*) as count, AVG(accuracy) as avgAcc
+      FROM multimodal_inputs WHERE userId=? AND twinId=? GROUP BY inputType
+    `).bind(ctx.userId, twin.id).all<any>();
+
+    const stats: Record<string, number> = { voice: 0, image: 0, screenshot: 0 };
+    let totalAcc = 0; let accCount = 0;
+    for (const r of (rows.results ?? []) as any[]) {
+      stats[r.inputType] = r.count || 0;
+      if (r.avgAcc) { totalAcc += r.avgAcc * r.count; accCount += r.count; }
+    }
+    return { ...stats, total: Object.values(stats).reduce((a, b) => a + b, 0), avgAccuracy: accCount > 0 ? Math.round(totalAcc / accCount) : null };
+  }),
+
+  listMultimodalInputs: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT id, inputType, rawContent, processedText, accuracy, feedbackRating, createdAt FROM multimodal_inputs WHERE userId=? ORDER BY createdAt DESC LIMIT 30`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
 });

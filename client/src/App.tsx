@@ -136,6 +136,9 @@ const EmotionCalibration = lazy(() => import("./pages/EmotionCalibration"));
 const CrossCultureAdapter = lazy(() => import("./pages/CrossCultureAdapter"));
 const TwinKnowledgeGraphBuilder = lazy(() => import("./pages/TwinKnowledgeGraphBuilder"));
 const SecondOpinion = lazy(() => import("./pages/SecondOpinion"));
+const TrustProgress = lazy(() => import("./pages/TrustProgress"));
+const MultimodalInput = lazy(() => import("./pages/MultimodalInput"));
+const BrainstormMode = lazy(() => import("./pages/BrainstormMode"));
 
 function PageLoader() {
   return (
@@ -276,6 +279,9 @@ function Router() {
         <Route path="/cross-culture" component={CrossCultureAdapter} />
         <Route path="/knowledge-graph-builder" component={TwinKnowledgeGraphBuilder} />
         <Route path="/second-opinion" component={SecondOpinion} />
+        <Route path="/trust-progress" component={TrustProgress} />
+        <Route path="/multimodal-input" component={MultimodalInput} />
+        <Route path="/brainstorm" component={BrainstormMode} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>
