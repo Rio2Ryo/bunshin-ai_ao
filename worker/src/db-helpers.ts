@@ -1946,6 +1946,40 @@ CREATE TABLE IF NOT EXISTS impact_map_reports (
   totalImpactScore REAL DEFAULT 0,
   createdAt TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS strategy_annotations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  turnNumber INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  tag TEXT NOT NULL CHECK(tag IN ('attack','defend','empathy','gather','propose','consensus','avoid')),
+  comment TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, turnNumber, userId)
+);
+
+CREATE TABLE IF NOT EXISTS twin_clones (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sourceType TEXT NOT NULL CHECK(sourceType IN ('clone','fork')),
+  sourceTwinId INTEGER NOT NULL,
+  sourceUserId INTEGER NOT NULL,
+  clonedTwinId INTEGER NOT NULL,
+  clonedByUserId INTEGER NOT NULL,
+  diffLog TEXT DEFAULT '[]',
+  feedbackMessage TEXT,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS dialogue_quality_scores (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  turnScores TEXT NOT NULL DEFAULT '[]',
+  overallScores TEXT,
+  improvementHints TEXT DEFAULT '[]',
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, userId)
+);
 `;
 
 let schemaReady = false;

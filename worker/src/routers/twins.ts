@@ -4223,4 +4223,119 @@ ${reportData.mbti ? `<div class="card"><h2>MBTI</h2><p>${typeof reportData.mbti 
     ).bind(ctx.userId).all<any>();
     return rows.results ?? [];
   }),
+
+  // === Phase 36: Twin Clone & Fork ===
+  cloneTwin: protectedProcedure
+    .input(z.object({ twinId: z.number(), newName: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=? AND userId=?`).bind(input.twinId, ctx.userId).first<any>();
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const cloneName = input.newName || `${twin.name} (クローン)`;
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO digital_twins (userId, name, description, personality, tags, systemPrompt, isPublic, createdAt, updatedAt)
+         VALUES (?,?,?,?,?,?,?,datetime('now'),datetime('now'))`
+      ).bind(ctx.userId, cloneName, twin.description, twin.personality, twin.tags, twin.systemPrompt, 0).run();
+
+      const clonedTwinId = res.meta?.last_row_id;
+      await ctx.env.DB.prepare(
+        `INSERT INTO twin_clones (sourceType, sourceTwinId, sourceUserId, clonedTwinId, clonedByUserId, diffLog) VALUES (?,?,?,?,?,?)`
+      ).bind("clone", input.twinId, ctx.userId, clonedTwinId, ctx.userId, "[]").run();
+
+      return { clonedTwinId, name: cloneName };
+    }),
+
+  forkTwin: protectedProcedure
+    .input(z.object({ twinId: z.number(), newName: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=? AND isPublic=1`).bind(input.twinId).first<any>();
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "公開ツインが見つかりません" });
+      if (twin.userId === ctx.userId) throw new TRPCError({ code: "BAD_REQUEST", message: "自分のツインはクローンを使ってください" });
+
+      const forkName = input.newName || `${twin.name} (フォーク)`;
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO digital_twins (userId, name, description, personality, tags, systemPrompt, isPublic, createdAt, updatedAt)
+         VALUES (?,?,?,?,?,?,?,datetime('now'),datetime('now'))`
+      ).bind(ctx.userId, forkName, twin.description, twin.personality, twin.tags, twin.systemPrompt, 0).run();
+
+      const clonedTwinId = res.meta?.last_row_id;
+      await ctx.env.DB.prepare(
+        `INSERT INTO twin_clones (sourceType, sourceTwinId, sourceUserId, clonedTwinId, clonedByUserId, diffLog) VALUES (?,?,?,?,?,?)`
+      ).bind("fork", input.twinId, twin.userId, clonedTwinId, ctx.userId, "[]").run();
+
+      // Notify source user
+      const cloner = await ctx.env.DB.prepare(`SELECT name FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      await createNotification(ctx.env.DB, twin.userId, "twin_forked", "ツインがフォークされました", `${cloner?.name || "ユーザー"}さんがあなたのツイン「${twin.name}」をフォークしました`, { link: `/twins/${input.twinId}` });
+
+      return { clonedTwinId, name: forkName, sourceOwner: twin.userId };
+    }),
+
+  getCloneHistory: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(`
+      SELECT tc.*, dt_source.name as sourceName, dt_clone.name as cloneName,
+        u_source.name as sourceUserName
+      FROM twin_clones tc
+      LEFT JOIN digital_twins dt_source ON dt_source.id = tc.sourceTwinId
+      LEFT JOIN digital_twins dt_clone ON dt_clone.id = tc.clonedTwinId
+      LEFT JOIN users u_source ON u_source.id = tc.sourceUserId
+      WHERE tc.clonedByUserId=?
+      ORDER BY tc.createdAt DESC LIMIT 20
+    `).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, diffLog: parseJson<any[]>(r.diffLog) || [] }));
+  }),
+
+  getCloneDiff: protectedProcedure
+    .input(z.object({ cloneId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const clone = await ctx.env.DB.prepare(`SELECT * FROM twin_clones WHERE id=? AND clonedByUserId=?`).bind(input.cloneId, ctx.userId).first<any>();
+      if (!clone) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const source = await ctx.env.DB.prepare(`SELECT name, description, personality, tags, systemPrompt FROM digital_twins WHERE id=?`).bind(clone.sourceTwinId).first<any>();
+      const cloned = await ctx.env.DB.prepare(`SELECT name, description, personality, tags, systemPrompt FROM digital_twins WHERE id=?`).bind(clone.clonedTwinId).first<any>();
+
+      if (!source || !cloned) return { clone, diffs: [], source: null, cloned: null };
+
+      const fields = ["name", "description", "personality", "tags", "systemPrompt"] as const;
+      const diffs = fields.filter(f => (source as any)[f] !== (cloned as any)[f]).map(f => ({
+        field: f,
+        source: (source as any)[f]?.substring(0, 200) || "",
+        cloned: (cloned as any)[f]?.substring(0, 200) || "",
+      }));
+
+      return { clone: { ...clone, diffLog: parseJson<any[]>(clone.diffLog) || [] }, diffs, source, cloned };
+    }),
+
+  sendForkFeedback: protectedProcedure
+    .input(z.object({ cloneId: z.number(), message: z.string().min(1).max(500) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const clone = await ctx.env.DB.prepare(`SELECT * FROM twin_clones WHERE id=? AND clonedByUserId=? AND sourceType='fork'`).bind(input.cloneId, ctx.userId).first<any>();
+      if (!clone) throw new TRPCError({ code: "NOT_FOUND" });
+
+      await ctx.env.DB.prepare(`UPDATE twin_clones SET feedbackMessage=? WHERE id=?`).bind(input.message, input.cloneId).run();
+
+      const sender = await ctx.env.DB.prepare(`SELECT name FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      await createNotification(ctx.env.DB, clone.sourceUserId, "fork_feedback", "フォークからのフィードバック", `${sender?.name || "ユーザー"}さんからフィードバック: ${input.message.substring(0, 100)}`, { link: `/twins/${clone.sourceTwinId}` });
+
+      return { success: true };
+    }),
+
+  listForkFeedback: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(`
+      SELECT tc.id, tc.sourceTwinId, tc.clonedTwinId, tc.feedbackMessage, tc.createdAt,
+        dt.name as cloneName, u.name as forkerName
+      FROM twin_clones tc
+      JOIN digital_twins dt ON dt.id = tc.clonedTwinId
+      JOIN users u ON u.id = tc.clonedByUserId
+      WHERE tc.sourceUserId=? AND tc.sourceType='fork' AND tc.feedbackMessage IS NOT NULL
+      ORDER BY tc.createdAt DESC LIMIT 20
+    `).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
 });

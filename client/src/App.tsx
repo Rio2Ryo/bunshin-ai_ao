@@ -127,6 +127,9 @@ const TeamBattle = lazy(() => import("./pages/TeamBattle"));
 const RiskAssessment = lazy(() => import("./pages/RiskAssessment"));
 const RoleplayTraining = lazy(() => import("./pages/RoleplayTraining"));
 const ImpactMap = lazy(() => import("./pages/ImpactMap"));
+const StrategyAnnotation = lazy(() => import("./pages/StrategyAnnotation"));
+const TwinCloneFork = lazy(() => import("./pages/TwinCloneFork"));
+const QualityMeter = lazy(() => import("./pages/QualityMeter"));
 
 function PageLoader() {
   return (
@@ -258,6 +261,9 @@ function Router() {
         <Route path="/risk-assessment" component={RiskAssessment} />
         <Route path="/roleplay-training" component={RoleplayTraining} />
         <Route path="/impact-map" component={ImpactMap} />
+        <Route path="/strategy-annotation" component={StrategyAnnotation} />
+        <Route path="/twin-clone" component={TwinCloneFork} />
+        <Route path="/quality-meter" component={QualityMeter} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

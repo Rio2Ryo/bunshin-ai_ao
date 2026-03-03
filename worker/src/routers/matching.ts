@@ -7395,4 +7395,134 @@ JSON形式で返してください:
     ).bind(ctx.userId).all<any>();
     return (rows.results ?? []).map((r: any) => ({ ...r, reportData: parseJson<any>(r.reportData) || {} }));
   }),
+
+  // === Phase 36: Strategy Annotations ===
+  addStrategyAnnotation: protectedProcedure
+    .input(z.object({ sessionId: z.number(), turnNumber: z.number(), tag: z.enum(["attack","defend","empathy","gather","propose","consensus","avoid"]), comment: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+      const settings = parseJson<any>(session.settings) || {};
+      if (session.initiatorUserId !== ctx.userId && settings.friendId !== ctx.userId) throw new TRPCError({ code: "FORBIDDEN" });
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO strategy_annotations (sessionId, turnNumber, userId, tag, comment) VALUES (?,?,?,?,?)`
+      ).bind(input.sessionId, input.turnNumber, ctx.userId, input.tag, input.comment || null).run();
+      return { success: true };
+    }),
+
+  getStrategyAnnotations: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT * FROM strategy_annotations WHERE sessionId=? AND userId=? ORDER BY turnNumber`
+      ).bind(input.sessionId, ctx.userId).all<any>();
+      return rows.results ?? [];
+    }),
+
+  getStrategyStats: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(`
+      SELECT sa.tag, COUNT(*) as count,
+        AVG(CAST(mr.compatibilityScore AS REAL)) as avgScore,
+        MAX(CAST(mr.compatibilityScore AS REAL)) as maxScore
+      FROM strategy_annotations sa
+      JOIN matching_results mr ON mr.sessionId = sa.sessionId
+      WHERE sa.userId=?
+      GROUP BY sa.tag
+      ORDER BY avgScore DESC
+    `).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
+  suggestOptimalStrategy: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(input.sessionId).all<any>();
+      const stats = await ctx.env.DB.prepare(`
+        SELECT sa.tag, COUNT(*) as count, AVG(CAST(mr.compatibilityScore AS REAL)) as avgScore
+        FROM strategy_annotations sa JOIN matching_results mr ON mr.sessionId = sa.sessionId
+        WHERE sa.userId=? GROUP BY sa.tag
+      `).bind(ctx.userId).all<any>();
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "strategy_suggestion", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+      const turns = (dialogues.results ?? []).map((d: any) => `ターン${d.turnNumber}: ${d.speakerRole}: ${d.message}`).join("\n");
+      const statsText = (stats.results ?? []).map((s: any) => `${s.tag}: ${s.count}回, 平均スコア${Math.round(s.avgScore || 0)}`).join(", ");
+
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "あなたはビジネス対話戦略の専門家です。以下の対話とユーザーの戦略統計を分析し、各ターンの最適な戦略タグ（attack/defend/empathy/gather/propose/consensus/avoid）と理由を提案してください。JSON形式で返答: { \"suggestions\": [{ \"turnNumber\": 1, \"recommendedTag\": \"...\", \"reason\": \"...\" }], \"optimalSequence\": [\"tag1\",\"tag2\",...], \"patternAdvice\": \"全体的なアドバイス\" }" },
+        { role: "user", content: `対話:\n${turns}\n\nユーザーの戦略統計: ${statsText || "データなし"}` }
+      ], { maxTokens: 2000 });
+
+      let parsed: any = { suggestions: [], optimalSequence: [], patternAdvice: result.content };
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch {}
+
+      return parsed;
+    }),
+
+  // === Phase 36: Dialogue Quality Meter ===
+  scoreDialogueQuality: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(input.sessionId).all<any>();
+      if (!dialogues.results?.length) throw new TRPCError({ code: "NOT_FOUND", message: "対話データがありません" });
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "quality_scoring", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+      const turns = (dialogues.results).map((d: any) => `ターン${d.turnNumber} (${d.speakerRole}): ${d.message}`).join("\n");
+
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "あなたはビジネス対話の品質評価エキスパートです。各ターンを4軸（論理性logic/具体性specificity/創造性creativity/協調性cooperation、各0-100）で採点してください。品質が低いターンには改善ヒントを付けてください。JSON形式: { \"turnScores\": [{ \"turnNumber\": 1, \"logic\": 80, \"specificity\": 70, \"creativity\": 60, \"cooperation\": 90, \"hint\": \"改善ヒントあれば\" }], \"overall\": { \"logic\": 75, \"specificity\": 72, \"creativity\": 65, \"cooperation\": 85 }, \"improvementHints\": [\"全体的なヒント1\", \"ヒント2\"] }" },
+        { role: "user", content: `対話:\n${turns}` }
+      ], { maxTokens: 2000 });
+
+      let parsed: any = { turnScores: [], overall: {}, improvementHints: [] };
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch { parsed = { turnScores: [], overall: {}, improvementHints: [result.content] }; }
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO dialogue_quality_scores (sessionId, userId, turnScores, overallScores, improvementHints) VALUES (?,?,?,?,?)`
+      ).bind(input.sessionId, ctx.userId, toJson(parsed.turnScores || []), toJson(parsed.overall || {}), toJson(parsed.improvementHints || [])).run();
+
+      return parsed;
+    }),
+
+  getDialogueQuality: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM dialogue_quality_scores WHERE sessionId=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!row) return null;
+      return { ...row, turnScores: parseJson<any[]>(row.turnScores) || [], overallScores: parseJson<any>(row.overallScores) || {}, improvementHints: parseJson<any[]>(row.improvementHints) || [] };
+    }),
+
+  getQualityHistory: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(`
+      SELECT dqs.sessionId, dqs.overallScores, dqs.createdAt, ms.theme
+      FROM dialogue_quality_scores dqs
+      JOIN matching_sessions ms ON ms.id = dqs.sessionId
+      WHERE dqs.userId=?
+      ORDER BY dqs.createdAt DESC LIMIT 20
+    `).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, overallScores: parseJson<any>(r.overallScores) || {} }));
+  }),
+
 });
