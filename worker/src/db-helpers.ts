@@ -2170,6 +2170,26 @@ CREATE TABLE IF NOT EXISTS action_plans (
   updatedAt TEXT DEFAULT (datetime('now'))
 );
 
+
+CREATE TABLE IF NOT EXISTS matching_streaks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL UNIQUE,
+  currentStreak INTEGER NOT NULL DEFAULT 0,
+  longestStreak INTEGER NOT NULL DEFAULT 0,
+  lastMatchDate TEXT,
+  totalBonusEarned INTEGER NOT NULL DEFAULT 0,
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS matching_achievements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  achievementKey TEXT NOT NULL,
+  unlockedAt TEXT DEFAULT (datetime('now')),
+  claimed INTEGER NOT NULL DEFAULT 0,
+  claimedAt TEXT,
+  UNIQUE(userId, achievementKey)
+);
 `;
 
 let schemaReady = false;

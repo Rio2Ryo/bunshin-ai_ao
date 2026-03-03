@@ -148,6 +148,7 @@ const TwinGallery = lazy(() => import("./pages/TwinGallery"));
 const ActionPlans = lazy(() => import("./pages/ActionPlans"));
 const SessionArchive = lazy(() => import("./pages/SessionArchive"));
 const TwinEmbedCard = lazy(() => import("./pages/TwinEmbedCard"));
+const MatchingStreaks = lazy(() => import("./pages/MatchingStreaks"));
 
 function PageLoader() {
   return (
@@ -300,6 +301,7 @@ function Router() {
         <Route path="/action-plans" component={ActionPlans} />
         <Route path="/session-archive" component={SessionArchive} />
         <Route path="/twin-embed" component={TwinEmbedCard} />
+        <Route path="/streaks" component={MatchingStreaks} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

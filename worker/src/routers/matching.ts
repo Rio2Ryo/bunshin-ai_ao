@@ -8508,4 +8508,189 @@ ${(dialogues.results || []).map((d: any) => `${d.speaker}: ${(d.content || '').s
     return rows.results ?? [];
   }),
 
+
+  // ============ Matching Streaks & Achievements ============
+
+  getStreak: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    let streak = await ctx.env.DB.prepare(
+      `SELECT * FROM matching_streaks WHERE userId=?`
+    ).bind(ctx.userId).first<any>();
+    if (!streak) {
+      await ctx.env.DB.prepare(
+        `INSERT OR IGNORE INTO matching_streaks (userId, currentStreak, longestStreak, totalBonusEarned) VALUES (?, 0, 0, 0)`
+      ).bind(ctx.userId).run();
+      streak = { currentStreak: 0, longestStreak: 0, lastMatchDate: null, totalBonusEarned: 0 };
+    }
+    // Count total matchings
+    const countResult = await ctx.env.DB.prepare(
+      `SELECT COUNT(*) as total FROM matching_sessions WHERE initiatorUserId=? AND status='completed'`
+    ).bind(ctx.userId).first<any>();
+    const totalMatchings = countResult?.total ?? 0;
+    // Define achievements
+    const ACHIEVEMENTS = [
+      { key: "first_matching", label: "初めてのマッチング", description: "初回マッチングを完了", threshold: 1, points: 10, icon: "🎯" },
+      { key: "matching_10", label: "マッチング10回達成", description: "10回のマッチングを完了", threshold: 10, points: 30, icon: "⭐" },
+      { key: "matching_50", label: "マッチング50回達成", description: "50回のマッチングを完了", threshold: 50, points: 80, icon: "🏆" },
+      { key: "matching_100", label: "マッチングマスター", description: "100回のマッチングを完了", threshold: 100, points: 150, icon: "👑" },
+      { key: "streak_3", label: "3日連続マッチング", description: "3日連続でマッチングを実行", threshold: 3, points: 10, icon: "🔥" },
+      { key: "streak_7", label: "7日連続マッチング", description: "7日連続でマッチングを実行", threshold: 7, points: 30, icon: "💪" },
+      { key: "streak_30", label: "30日連続マッチング", description: "30日間毎日マッチングを実行", threshold: 30, points: 100, icon: "🌟" },
+    ];
+    // Get unlocked achievements
+    const unlockedRows = await ctx.env.DB.prepare(
+      `SELECT achievementKey, claimed, claimedAt FROM matching_achievements WHERE userId=?`
+    ).bind(ctx.userId).all<any>();
+    const unlockedMap = new Map<string, { claimed: boolean; claimedAt: string | null }>();
+    for (const row of (unlockedRows.results ?? [])) {
+      unlockedMap.set(row.achievementKey, { claimed: !!row.claimed, claimedAt: row.claimedAt });
+    }
+    const achievements = ACHIEVEMENTS.map(a => ({
+      ...a,
+      unlocked: unlockedMap.has(a.key),
+      claimed: unlockedMap.get(a.key)?.claimed ?? false,
+      claimedAt: unlockedMap.get(a.key)?.claimedAt ?? null,
+      progress: a.key.startsWith("streak_") ? Math.min(streak.currentStreak, a.threshold) : Math.min(totalMatchings, a.threshold),
+    }));
+    // Streak bonus thresholds
+    const STREAK_BONUSES = [
+      { days: 3, bonus: 10 },
+      { days: 7, bonus: 30 },
+      { days: 30, bonus: 100 },
+    ];
+    const nextBonus = STREAK_BONUSES.find(b => streak.currentStreak < b.days) || null;
+    return {
+      currentStreak: streak.currentStreak,
+      longestStreak: streak.longestStreak,
+      lastMatchDate: streak.lastMatchDate,
+      totalBonusEarned: streak.totalBonusEarned,
+      totalMatchings,
+      achievements,
+      nextBonus,
+      streakBonuses: STREAK_BONUSES,
+    };
+  }),
+
+  updateStreak: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const today = new Date().toISOString().slice(0, 10);
+    let streak = await ctx.env.DB.prepare(
+      `SELECT * FROM matching_streaks WHERE userId=?`
+    ).bind(ctx.userId).first<any>();
+    if (!streak) {
+      await ctx.env.DB.prepare(
+        `INSERT INTO matching_streaks (userId, currentStreak, longestStreak, lastMatchDate, totalBonusEarned) VALUES (?, 1, 1, ?, 0)`
+      ).bind(ctx.userId, today).run();
+      return { currentStreak: 1, bonusAwarded: 0 };
+    }
+    // Already recorded today
+    if (streak.lastMatchDate === today) {
+      return { currentStreak: streak.currentStreak, bonusAwarded: 0 };
+    }
+    const lastDate = streak.lastMatchDate ? new Date(streak.lastMatchDate) : null;
+    const todayDate = new Date(today);
+    let newStreak = 1;
+    if (lastDate) {
+      const diffMs = todayDate.getTime() - lastDate.getTime();
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      if (diffDays === 1) {
+        newStreak = (streak.currentStreak || 0) + 1;
+      }
+    }
+    const longestStreak = Math.max(newStreak, streak.longestStreak || 0);
+    // Check streak bonuses
+    const STREAK_BONUSES = [
+      { days: 3, bonus: 10 },
+      { days: 7, bonus: 30 },
+      { days: 30, bonus: 100 },
+    ];
+    let bonusAwarded = 0;
+    for (const sb of STREAK_BONUSES) {
+      if (newStreak >= sb.days && (streak.currentStreak || 0) < sb.days) {
+        bonusAwarded += sb.bonus;
+      }
+    }
+    const totalBonusEarned = (streak.totalBonusEarned || 0) + bonusAwarded;
+    await ctx.env.DB.prepare(
+      `UPDATE matching_streaks SET currentStreak=?, longestStreak=?, lastMatchDate=?, totalBonusEarned=?, updatedAt=datetime('now') WHERE userId=?`
+    ).bind(newStreak, longestStreak, today, totalBonusEarned, ctx.userId).run();
+    // Award bonus points if any
+    if (bonusAwarded > 0) {
+      try {
+        await ctx.env.DB.prepare(
+          `UPDATE user_points SET balance = balance + ?, totalEarned = totalEarned + ? WHERE userId=?`
+        ).bind(bonusAwarded, bonusAwarded, ctx.userId).run();
+        await ctx.env.DB.prepare(
+          `INSERT INTO point_transactions (userId, type, points, description, balanceAfter, createdAt) VALUES (?, 'earn', ?, ?, (SELECT balance FROM user_points WHERE userId=?), datetime('now'))`
+        ).bind(ctx.userId, bonusAwarded, `ストリークボーナス: ${newStreak}日連続`, ctx.userId).run();
+      } catch {}
+    }
+    // Auto-unlock streak achievements
+    for (const sb of STREAK_BONUSES) {
+      if (newStreak >= sb.days) {
+        const key = `streak_${sb.days}`;
+        await ctx.env.DB.prepare(
+          `INSERT OR IGNORE INTO matching_achievements (userId, achievementKey) VALUES (?, ?)`
+        ).bind(ctx.userId, key).run();
+      }
+    }
+    // Auto-unlock count achievements
+    const countResult = await ctx.env.DB.prepare(
+      `SELECT COUNT(*) as total FROM matching_sessions WHERE initiatorUserId=? AND status='completed'`
+    ).bind(ctx.userId).first<any>();
+    const total = countResult?.total ?? 0;
+    const COUNT_THRESHOLDS = [
+      { count: 1, key: "first_matching" },
+      { count: 10, key: "matching_10" },
+      { count: 50, key: "matching_50" },
+      { count: 100, key: "matching_100" },
+    ];
+    for (const ct of COUNT_THRESHOLDS) {
+      if (total >= ct.count) {
+        await ctx.env.DB.prepare(
+          `INSERT OR IGNORE INTO matching_achievements (userId, achievementKey) VALUES (?, ?)`
+        ).bind(ctx.userId, ct.key).run();
+      }
+    }
+    return { currentStreak: newStreak, bonusAwarded };
+  }),
+
+  checkAchievements: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT * FROM matching_achievements WHERE userId=? ORDER BY unlockedAt DESC`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
+  claimAchievement: protectedProcedure
+    .input(z.object({ achievementKey: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const ACHIEVEMENT_POINTS: Record<string, number> = {
+        first_matching: 10, matching_10: 30, matching_50: 80, matching_100: 150,
+        streak_3: 10, streak_7: 30, streak_30: 100,
+      };
+      const achievement = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_achievements WHERE userId=? AND achievementKey=?`
+      ).bind(ctx.userId, input.achievementKey).first<any>();
+      if (!achievement) throw new TRPCError({ code: "NOT_FOUND", message: "アチーブメントが見つかりません" });
+      if (achievement.claimed) throw new TRPCError({ code: "BAD_REQUEST", message: "既に報酬を受け取っています" });
+      const points = ACHIEVEMENT_POINTS[input.achievementKey] || 0;
+      await ctx.env.DB.prepare(
+        `UPDATE matching_achievements SET claimed=1, claimedAt=datetime('now') WHERE userId=? AND achievementKey=?`
+      ).bind(ctx.userId, input.achievementKey).run();
+      if (points > 0) {
+        try {
+          await ctx.env.DB.prepare(
+            `UPDATE user_points SET balance = balance + ?, totalEarned = totalEarned + ? WHERE userId=?`
+          ).bind(points, points, ctx.userId).run();
+          await ctx.env.DB.prepare(
+            `INSERT INTO point_transactions (userId, type, points, description, balanceAfter, createdAt) VALUES (?, 'earn', ?, ?, (SELECT balance FROM user_points WHERE userId=?), datetime('now'))`
+          ).bind(ctx.userId, points, `アチーブメント報酬: ${input.achievementKey}`, ctx.userId).run();
+        } catch {}
+      }
+      return { claimed: true, pointsAwarded: points };
+    }),
+
 });
