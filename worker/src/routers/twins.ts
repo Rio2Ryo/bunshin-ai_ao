@@ -4084,4 +4084,143 @@ ${reportData.mbti ? `<div class="card"><h2>MBTI</h2><p>${typeof reportData.mbti 
 
     return { id: res.meta?.last_row_id, ...parsed };
   }),
+  // ============ Roleplay Training ============
+
+  startRoleplay: protectedProcedure
+    .input(z.object({
+      scene: z.enum(["sales", "presentation", "complaint", "interview"]),
+      difficulty: z.enum(["beginner", "intermediate", "advanced"]),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const sceneLabels: Record<string, string> = { sales: "商談", presentation: "プレゼン", complaint: "クレーム対応", interview: "面接" };
+      const difficultyLabels: Record<string, string> = { beginner: "初級", intermediate: "中級", advanced: "上級" };
+      const roleNames: Record<string, string> = { sales: "見込み顧客", presentation: "審査員", complaint: "不満を持つ顧客", interview: "面接官" };
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "roleplay_training", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が取得できません" });
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: `あなたは${sceneLabels[input.scene]}シーンの${roleNames[input.scene]}を演じます。難易度: ${difficultyLabels[input.difficulty]}。ツイン「${twin.name}」（性格: ${twin.personality || "不明"}）が練習相手です。まず冒頭の発言を1つだけしてください。` },
+        { role: "user", content: `${sceneLabels[input.scene]}シーン（${difficultyLabels[input.difficulty]}）を開始してください。相手役として最初の発言をしてください。\n\nJSON:\n{"opening":"最初の発言","coachingHint":"ツインへのコーチングヒント"}` }
+      ], { maxTokens: 500, temperature: 0.7 });
+
+      let parsed: any = {};
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch { parsed = { opening: result.content, coachingHint: "相手の意図を読み取り、適切に応答しましょう" }; }
+
+      const dialogue = [{ turn: 1, speaker: roleNames[input.scene], content: parsed.opening || result.content, isRole: true }];
+      const hints = [{ turn: 1, hint: parsed.coachingHint || "" }];
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO roleplay_sessions (twinId, userId, scene, difficulty, roleName, dialogue, coachingHints, status) VALUES (?,?,?,?,?,?,?,'active')`
+      ).bind(twin.id, ctx.userId, input.scene, input.difficulty, roleNames[input.scene], toJson(dialogue), toJson(hints)).run();
+
+      return { id: res.meta?.last_row_id, dialogue, coachingHint: parsed.coachingHint || "" };
+    }),
+
+  respondRoleplay: protectedProcedure
+    .input(z.object({ sessionId: z.number(), message: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT * FROM roleplay_sessions WHERE id=? AND userId=?`).bind(input.sessionId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+      if (session.status === "completed") throw new TRPCError({ code: "BAD_REQUEST", message: "このセッションは完了済みです" });
+
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      const dialogue = parseJson<any[]>(session.dialogue) || [];
+      const hints = parseJson<any[]>(session.coachingHints) || [];
+      const turnNum = dialogue.length + 1;
+
+      // Add user's response
+      dialogue.push({ turn: turnNum, speaker: twin?.name || "ツイン", content: input.message, isRole: false });
+
+      const sceneLabels: Record<string, string> = { sales: "商談", presentation: "プレゼン", complaint: "クレーム対応", interview: "面接" };
+      const dialogueText = dialogue.map((d: any) => `[${d.speaker}]: ${d.content}`).join("\n");
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "roleplay_training", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が取得できません" });
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: `あなたは${sceneLabels[session.scene]}シーンの${session.roleName}を演じています。難易度: ${session.difficulty}。会話を続けてください。` },
+        { role: "user", content: `会話履歴:\n${dialogueText}\n\n次の応答とコーチングヒントをJSON:\n{"response":"相手役の応答","coachingHint":"次のターンへのヒント","shouldEnd":false}` }
+      ], { maxTokens: 500, temperature: 0.6 });
+
+      let parsed: any = {};
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch { parsed = { response: result.content, coachingHint: "", shouldEnd: dialogue.length >= 10 }; }
+
+      dialogue.push({ turn: turnNum + 1, speaker: session.roleName, content: parsed.response || result.content, isRole: true });
+      hints.push({ turn: turnNum + 1, hint: parsed.coachingHint || "" });
+
+      await ctx.env.DB.prepare(
+        `UPDATE roleplay_sessions SET dialogue=?, coachingHints=? WHERE id=?`
+      ).bind(toJson(dialogue), toJson(hints), input.sessionId).run();
+
+      return { dialogue, coachingHint: parsed.coachingHint || "", shouldEnd: parsed.shouldEnd || dialogue.length >= 12 };
+    }),
+
+  endRoleplay: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT * FROM roleplay_sessions WHERE id=? AND userId=?`).bind(input.sessionId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      const dialogue = parseJson<any[]>(session.dialogue) || [];
+      const sceneLabels: Record<string, string> = { sales: "商談", presentation: "プレゼン", complaint: "クレーム対応", interview: "面接" };
+      const dialogueText = dialogue.map((d: any) => `[${d.speaker}]: ${d.content}`).join("\n");
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "roleplay_evaluation", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が取得できません" });
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: `${sceneLabels[session.scene]}ロールプレイの評価を行ってください。5軸で0-100点評価し、改善提案と模範回答を提示してください。` },
+        { role: "user", content: `シーン: ${sceneLabels[session.scene]}（${session.difficulty}）\n\n対話:\n${dialogueText}\n\nJSON:\n{"scores":{"communication":80,"problemSolving":75,"empathy":70,"expertise":65,"adaptability":60},"overallScore":70,"strengths":["強み1"],"improvements":["改善点1"],"modelAnswer":"模範的な応答例（1ターン分）","summary":"総評"}` }
+      ], { maxTokens: 2000, temperature: 0.3 });
+
+      let parsed: any = {};
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch {
+        parsed = { scores: { communication: 60, problemSolving: 60, empathy: 60, expertise: 60, adaptability: 60 }, overallScore: 60, strengths: [], improvements: [], modelAnswer: "", summary: result.content };
+      }
+
+      await ctx.env.DB.prepare(
+        `UPDATE roleplay_sessions SET evaluation=?, status='completed' WHERE id=?`
+      ).bind(toJson(parsed), input.sessionId).run();
+
+      // Update twin skill levels
+      if (twin) {
+        const skillName = `roleplay_${session.scene}`;
+        await ctx.env.DB.prepare(
+          `INSERT OR REPLACE INTO twin_skill_levels (twinId, skillName, level, xp) VALUES (?, ?, COALESCE((SELECT level FROM twin_skill_levels WHERE twinId=? AND skillName=?), 0) + 1, COALESCE((SELECT xp FROM twin_skill_levels WHERE twinId=? AND skillName=?), 0) + ?)`
+        ).bind(twin.id, skillName, twin.id, skillName, twin.id, skillName, parsed.overallScore || 50).run();
+      }
+
+      return parsed;
+    }),
+
+  getRoleplay: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(`SELECT * FROM roleplay_sessions WHERE id=? AND userId=?`).bind(input.sessionId, ctx.userId).first<any>();
+      if (!row) return null;
+      return { ...row, dialogue: parseJson<any[]>(row.dialogue) || [], coachingHints: parseJson<any[]>(row.coachingHints) || [], evaluation: parseJson<any>(row.evaluation) || null };
+    }),
+
+  listRoleplays: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT id, scene, difficulty, roleName, status, createdAt FROM roleplay_sessions WHERE userId=? ORDER BY createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
 });

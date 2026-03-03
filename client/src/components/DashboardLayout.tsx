@@ -23,7 +23,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useRealtimeNotifications } from "@/hooks/useRealtimeNotifications";
 import { useWebPush } from "@/hooks/useWebPush";
 import { toast } from "sonner";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare, FileCheck, History, Mic, TrendingUp, MessageCircleHeart, CalendarDays, FlaskRound, Star, Gauge, Scale, BookHeart, Calendar, Captions, Goal, Grid3x3, BookText, HelpCircle, MessageSquarePlus, TestTubes, Tags, CalendarRange, Wand2, PenLine, Library, Gamepad2, FileBarChart, ScrollText, Repeat2, ArrowLeftRight, GraduationCap, Waves, Plug, Binoculars, BookMarked } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare, FileCheck, History, Mic, TrendingUp, MessageCircleHeart, CalendarDays, FlaskRound, Star, Gauge, Scale, BookHeart, Calendar, Captions, Goal, Grid3x3, BookText, HelpCircle, MessageSquarePlus, TestTubes, Tags, CalendarRange, Wand2, PenLine, Library, Gamepad2, FileBarChart, ScrollText, Repeat2, ArrowLeftRight, GraduationCap, Waves, Plug, Binoculars, BookMarked, Drama, MapPin } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -243,6 +243,8 @@ function DashboardLayoutContent({
         { icon: Waves, label: language === "en" ? "Emotion Flow" : "感情フロー", path: "/emotion-flow" },
         { icon: Binoculars, label: language === "en" ? "Multi-View" : "マルチ視点", path: "/multi-perspective" },
         { icon: Swords, label: language === "en" ? "Team Battle" : "チーム対抗戦", path: "/team-battle" },
+        { icon: ShieldAlert, label: language === "en" ? "Risk" : "リスク診断", path: "/risk-assessment" },
+        { icon: MapPin, label: language === "en" ? "Impact Map" : "インパクトマップ", path: "/impact-map" },
       ],
     },
     {
@@ -286,6 +288,7 @@ function DashboardLayoutContent({
         { icon: GraduationCap, label: language === "en" ? "Curriculum" : "学習カリキュラム", path: "/learning-curriculum" },
         { icon: Plug, label: language === "en" ? "Connectors" : "外部コネクター", path: "/external-connectors" },
         { icon: BookMarked, label: language === "en" ? "Journal" : "学習ジャーナル", path: "/learning-journal" },
+        { icon: Drama, label: language === "en" ? "Roleplay" : "ロールプレイ", path: "/roleplay-training" },
       ],
     },
   ], [t, language]);

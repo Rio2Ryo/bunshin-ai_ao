@@ -124,6 +124,9 @@ const ExternalConnectors = lazy(() => import("./pages/ExternalConnectors"));
 const MultiPerspective = lazy(() => import("./pages/MultiPerspective"));
 const LearningJournal = lazy(() => import("./pages/LearningJournal"));
 const TeamBattle = lazy(() => import("./pages/TeamBattle"));
+const RiskAssessment = lazy(() => import("./pages/RiskAssessment"));
+const RoleplayTraining = lazy(() => import("./pages/RoleplayTraining"));
+const ImpactMap = lazy(() => import("./pages/ImpactMap"));
 
 function PageLoader() {
   return (
@@ -252,6 +255,9 @@ function Router() {
         <Route path="/multi-perspective" component={MultiPerspective} />
         <Route path="/learning-journal" component={LearningJournal} />
         <Route path="/team-battle" component={TeamBattle} />
+        <Route path="/risk-assessment" component={RiskAssessment} />
+        <Route path="/roleplay-training" component={RoleplayTraining} />
+        <Route path="/impact-map" component={ImpactMap} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

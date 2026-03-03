@@ -7245,4 +7245,154 @@ JSON形式で返してください:
       result: parseJson<any>(r.result) || {},
     }));
   }),
+  // ============ Risk Assessment ============
+
+  assessRisk: protectedProcedure
+    .input(z.object({ friendId: z.number(), theme: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const friend = await ctx.env.DB.prepare(`SELECT u.name, up.industry, up.company, up.position FROM users u LEFT JOIN user_profiles up ON up.userId=u.id WHERE u.id=?`).bind(input.friendId).first<any>();
+      if (!friend) throw new TRPCError({ code: "NOT_FOUND", message: "相手が見つかりません" });
+
+      const pastSessions = await ctx.env.DB.prepare(
+        `SELECT ms.theme, mr.compatibilityScore, mr.scoreBreakdown FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id WHERE (ms.initiatorUserId=? AND json_extract(ms.settings,'$.friendId')=?) OR (ms.initiatorUserId=? AND json_extract(ms.settings,'$.friendId')=?) ORDER BY ms.createdAt DESC LIMIT 5`
+      ).bind(ctx.userId, input.friendId, input.friendId, ctx.userId).all<any>();
+
+      const myProfile = await ctx.env.DB.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "risk_assessment", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が取得できません" });
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "あなたはビジネスマッチングのリスク分析専門家です。相手プロフィール・過去の対話履歴・業界情報から潜在リスクを診断し、リスクレベルと軽減策を提案してください。" },
+        { role: "user", content: `自分: ${myProfile?.displayName || "ユーザー"} (${myProfile?.industry || "業界不明"}, ${myProfile?.company || "会社不明"})\n相手: ${friend.name} (${friend.industry || "業界不明"}, ${friend.company || "会社不明"}, ${friend.position || "役職不明"})\nテーマ: ${input.theme || "未定"}\n過去マッチング: ${JSON.stringify((pastSessions.results || []).map((s: any) => ({ theme: s.theme, score: s.compatibilityScore })))}\n\nJSON:\n{"riskLevel":"high|medium|low","risks":[{"category":"value_conflict|knowledge_gap|communication_mismatch|interest_conflict|other","description":"...","severity":"high|medium|low"}],"mitigations":[{"risk":"...","strategy":"...","priority":"high|medium|low"}],"overallAssessment":"..."}` }
+      ], { maxTokens: 2000, temperature: 0.3 });
+
+      let parsed: any = {};
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch {
+        parsed = { riskLevel: "medium", risks: [{ category: "other", description: result.content, severity: "medium" }], mitigations: [], overallAssessment: result.content };
+      }
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO risk_assessments (userId, friendId, riskLevel, risks, mitigations) VALUES (?,?,?,?,?)`
+      ).bind(ctx.userId, input.friendId, parsed.riskLevel || "medium", toJson(parsed.risks || []), toJson(parsed.mitigations || [])).run();
+
+      return { id: res.meta?.last_row_id, ...parsed };
+    }),
+
+  getRiskAssessment: protectedProcedure
+    .input(z.object({ friendId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM risk_assessments WHERE userId=? AND friendId=? ORDER BY createdAt DESC LIMIT 1`
+      ).bind(ctx.userId, input.friendId).first<any>();
+      if (!row) return null;
+      return { ...row, risks: parseJson<any[]>(row.risks) || [], mitigations: parseJson<any[]>(row.mitigations) || [] };
+    }),
+
+  verifyRisk: protectedProcedure
+    .input(z.object({ assessmentId: z.number(), actualOutcome: z.string(), accuracy: z.number().min(0).max(100) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(
+        `UPDATE risk_assessments SET verified=1, actualOutcome=?, accuracy=? WHERE id=? AND userId=?`
+      ).bind(input.actualOutcome, input.accuracy, input.assessmentId, ctx.userId).run();
+      return { verified: true };
+    }),
+
+  listRiskAssessments: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT ra.*, u.name as friendName FROM risk_assessments ra JOIN users u ON u.id=ra.friendId WHERE ra.userId=? ORDER BY ra.createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, risks: parseJson<any[]>(r.risks) || [], mitigations: parseJson<any[]>(r.mitigations) || [] }));
+  }),
+
+  // ============ Impact Map ============
+
+  addImpactEntry: protectedProcedure
+    .input(z.object({
+      sessionId: z.number().optional(),
+      outcomeType: z.enum(["deal", "partnership", "introduction", "idea", "meeting", "other"]),
+      title: z.string().min(1),
+      description: z.string().optional(),
+      monetaryValue: z.number().default(0),
+      linkedEntryId: z.number().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO impact_map_entries (userId, sessionId, outcomeType, title, description, monetaryValue, linkedEntryId) VALUES (?,?,?,?,?,?,?)`
+      ).bind(ctx.userId, input.sessionId ?? null, input.outcomeType, input.title, input.description || "", input.monetaryValue, input.linkedEntryId ?? null).run();
+      return { id: res.meta?.last_row_id };
+    }),
+
+  listImpactEntries: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT ime.*, ms.theme as sessionTheme FROM impact_map_entries ime LEFT JOIN matching_sessions ms ON ms.id=ime.sessionId WHERE ime.userId=? ORDER BY ime.createdAt DESC LIMIT 50`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
+  deleteImpactEntry: protectedProcedure
+    .input(z.object({ entryId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM impact_map_entries WHERE id=? AND userId=?`).bind(input.entryId, ctx.userId).run();
+      return { deleted: true };
+    }),
+
+  getImpactSummary: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const entries = await ctx.env.DB.prepare(
+      `SELECT * FROM impact_map_entries WHERE userId=?`
+    ).bind(ctx.userId).all<any>();
+    const all = entries.results ?? [];
+    const totalValue = all.reduce((sum: number, e: any) => sum + (e.monetaryValue || 0), 0);
+    const byType: Record<string, number> = {};
+    all.forEach((e: any) => { byType[e.outcomeType] = (byType[e.outcomeType] || 0) + 1; });
+    const chainCount = all.filter((e: any) => e.linkedEntryId).length;
+    return { totalEntries: all.length, totalValue, byType, chainCount };
+  }),
+
+  generateImpactReport: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const entries = await ctx.env.DB.prepare(
+      `SELECT ime.*, ms.theme as sessionTheme FROM impact_map_entries ime LEFT JOIN matching_sessions ms ON ms.id=ime.sessionId WHERE ime.userId=? AND ime.createdAt >= datetime('now','-30 days') ORDER BY ime.createdAt`
+    ).bind(ctx.userId).all<any>();
+    if (!entries.results?.length) throw new TRPCError({ code: "BAD_REQUEST", message: "過去30日間のインパクトデータがありません" });
+
+    const entrySummary = (entries.results || []).map((e: any) => `[${e.outcomeType}] ${e.title}: ¥${e.monetaryValue || 0}`).join("\n");
+
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "impact_report", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が取得できません" });
+    const result = await invokeLLM(llmConfig, [
+      { role: "system", content: "マッチングのビジネスインパクトを分析し、月次レポートを生成してください。ROI計算、成果の因果連鎖分析、来月の予測を含めてください。" },
+      { role: "user", content: `インパクトデータ(${entries.results.length}件):\n${entrySummary}\n\nJSON:\n{"summary":"総括","totalImpactScore":85,"roi":"ROI分析","causalChains":["連鎖1の説明"],"topOutcomes":["成果1"],"predictions":["予測1"],"recommendations":["提案1"]}` }
+    ], { maxTokens: 1500, temperature: 0.4 });
+
+    let parsed: any = {};
+    try {
+      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+    } catch { parsed = { summary: result.content, totalImpactScore: 50 }; }
+
+    const res = await ctx.env.DB.prepare(
+      `INSERT INTO impact_map_reports (userId, period, reportData, totalImpactScore) VALUES (?,?,?,?)`
+    ).bind(ctx.userId, "monthly", toJson(parsed), parsed.totalImpactScore || 0).run();
+
+    return { id: res.meta?.last_row_id, ...parsed };
+  }),
+
+  listImpactReports: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT * FROM impact_map_reports WHERE userId=? ORDER BY createdAt DESC LIMIT 10`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, reportData: parseJson<any>(r.reportData) || {} }));
+  }),
 });

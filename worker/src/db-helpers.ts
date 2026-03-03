@@ -1897,6 +1897,55 @@ CREATE TABLE IF NOT EXISTS team_battle_members (
   role TEXT DEFAULT 'supporter' CHECK(role IN ('leader','supporter','specialist')),
   UNIQUE(battleId, userId)
 );
+
+CREATE TABLE IF NOT EXISTS risk_assessments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER,
+  userId INTEGER NOT NULL,
+  friendId INTEGER,
+  riskLevel TEXT NOT NULL CHECK(riskLevel IN ('high','medium','low')),
+  risks TEXT NOT NULL,
+  mitigations TEXT,
+  verified INTEGER DEFAULT 0,
+  actualOutcome TEXT,
+  accuracy INTEGER,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS roleplay_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  twinId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  scene TEXT NOT NULL CHECK(scene IN ('sales','presentation','complaint','interview')),
+  difficulty TEXT NOT NULL CHECK(difficulty IN ('beginner','intermediate','advanced')),
+  roleName TEXT NOT NULL,
+  dialogue TEXT,
+  coachingHints TEXT,
+  evaluation TEXT,
+  status TEXT DEFAULT 'active' CHECK(status IN ('active','completed')),
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS impact_map_entries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  sessionId INTEGER,
+  outcomeType TEXT NOT NULL CHECK(outcomeType IN ('deal','partnership','introduction','idea','meeting','other')),
+  title TEXT NOT NULL,
+  description TEXT,
+  monetaryValue REAL DEFAULT 0,
+  linkedEntryId INTEGER,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS impact_map_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  period TEXT NOT NULL,
+  reportData TEXT NOT NULL,
+  totalImpactScore REAL DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
 `;
 
 let schemaReady = false;
