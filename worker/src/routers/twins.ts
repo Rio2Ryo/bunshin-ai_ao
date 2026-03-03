@@ -4841,4 +4841,82 @@ ${reportData.mbti ? `<div class="card"><h2>MBTI</h2><p>${typeof reportData.mbti 
       return rows.results ?? [];
     }),
 
+
+  // ============ Twin Template Gallery ============
+
+  createTemplate: protectedProcedure
+    .input(z.object({ name: z.string(), description: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: 'NOT_FOUND', message: 'ツインが見つかりません' });
+      const stmt = await ctx.env.DB.prepare(
+        `INSERT INTO twin_templates (userId, twinId, name, description, personality, systemPrompt, tags) VALUES (?,?,?,?,?,?,?)`
+      ).bind(ctx.userId, twin.id, input.name, input.description || '', twin.personality || '', twin.systemPrompt || '', twin.tags || '').run();
+      return { id: (stmt.meta as any)?.last_row_id, name: input.name };
+    }),
+
+  listTemplates: protectedProcedure
+    .input(z.object({ publicOnly: z.boolean().optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const publicOnly = input?.publicOnly ?? false;
+      let rows;
+      if (publicOnly) {
+        rows = await ctx.env.DB.prepare(
+          `SELECT tt.*, u.name as authorName FROM twin_templates tt LEFT JOIN users u ON u.id=tt.userId WHERE tt.isPublic=1 ORDER BY tt.useCount DESC, tt.createdAt DESC LIMIT 50`
+        ).all<any>();
+      } else {
+        rows = await ctx.env.DB.prepare(
+          `SELECT tt.*, u.name as authorName FROM twin_templates tt LEFT JOIN users u ON u.id=tt.userId WHERE tt.userId=? OR tt.isPublic=1 ORDER BY tt.useCount DESC, tt.createdAt DESC LIMIT 50`
+        ).bind(ctx.userId).all<any>();
+      }
+      return rows.results ?? [];
+    }),
+
+  getTemplate: protectedProcedure
+    .input(z.object({ templateId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT tt.*, u.name as authorName FROM twin_templates tt LEFT JOIN users u ON u.id=tt.userId WHERE tt.id=?`
+      ).bind(input.templateId).first<any>();
+      if (!row) throw new TRPCError({ code: 'NOT_FOUND' });
+      return row;
+    }),
+
+  applyTemplate: protectedProcedure
+    .input(z.object({ templateId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const template = await ctx.env.DB.prepare(`SELECT * FROM twin_templates WHERE id=?`).bind(input.templateId).first<any>();
+      if (!template) throw new TRPCError({ code: 'NOT_FOUND', message: 'テンプレートが見つかりません' });
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: 'NOT_FOUND', message: 'ツインが見つかりません' });
+      await ctx.env.DB.prepare(
+        `UPDATE digital_twins SET personality=?, systemPrompt=?, tags=?, updatedAt=datetime('now') WHERE id=?`
+      ).bind(template.personality || '', template.systemPrompt || '', template.tags || '', twin.id).run();
+      await ctx.env.DB.prepare(`UPDATE twin_templates SET useCount=useCount+1 WHERE id=?`).bind(input.templateId).run();
+      return { applied: true, templateName: template.name };
+    }),
+
+  toggleTemplatePublic: protectedProcedure
+    .input(z.object({ templateId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const template = await ctx.env.DB.prepare(`SELECT * FROM twin_templates WHERE id=? AND userId=?`).bind(input.templateId, ctx.userId).first<any>();
+      if (!template) throw new TRPCError({ code: 'NOT_FOUND' });
+      const newVal = template.isPublic ? 0 : 1;
+      await ctx.env.DB.prepare(`UPDATE twin_templates SET isPublic=?, updatedAt=datetime('now') WHERE id=?`).bind(newVal, input.templateId).run();
+      return { isPublic: newVal === 1 };
+    }),
+
+  deleteTemplate: protectedProcedure
+    .input(z.object({ templateId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM twin_templates WHERE id=? AND userId=?`).bind(input.templateId, ctx.userId).run();
+      return { deleted: true };
+    }),
+
 });

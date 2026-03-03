@@ -8262,4 +8262,136 @@ JSON形式で返してください:
       return { alreadyScored: false, scored: true, avg, overall, improvementHints: parsed.improvementHints || [] };
     }),
 
+
+  // ============ Session Comparison Report ============
+
+  compareSessions: protectedProcedure
+    .input(z.object({ sessionIdA: z.number(), sessionIdB: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const [sessionA, sessionB] = await Promise.all([
+        ctx.env.DB.prepare(`SELECT ms.*, mr.compatibilityScore, mr.scoreBreakdown, mr.recommendations FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id WHERE ms.id=?`).bind(input.sessionIdA).first<any>(),
+        ctx.env.DB.prepare(`SELECT ms.*, mr.compatibilityScore, mr.scoreBreakdown, mr.recommendations FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id WHERE ms.id=?`).bind(input.sessionIdB).first<any>(),
+      ]);
+      if (!sessionA || !sessionB) throw new TRPCError({ code: 'NOT_FOUND', message: 'セッションが見つかりません' });
+      const dialoguesA = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionIdA).all<any>();
+      const dialoguesB = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionIdB).all<any>();
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, 'matching_compare', ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'LLM設定が見つかりません' });
+
+      const breakdownA = parseJson<any>(sessionA.scoreBreakdown) || {};
+      const breakdownB = parseJson<any>(sessionB.scoreBreakdown) || {};
+
+      const result = await invokeLLM(llmConfig, [
+        { role: 'system', content: 'あなたはビジネスマッチング分析の専門家です。2つのマッチングセッションを比較分析してください。JSONで回答してください。' },
+        { role: 'user', content: `セッションA (テーマ: ${sessionA.theme}, スコア: ${sessionA.compatibilityScore || 0}):
+スコア内訳: ${JSON.stringify(breakdownA)}
+対話: ${(dialoguesA.results || []).map((d: any) => `${d.speaker}: ${(d.content || '').substring(0, 200)}`).join('\n')}
+
+セッションB (テーマ: ${sessionB.theme}, スコア: ${sessionB.compatibilityScore || 0}):
+スコア内訳: ${JSON.stringify(breakdownB)}
+対話: ${(dialoguesB.results || []).map((d: any) => `${d.speaker}: ${(d.content || '').substring(0, 200)}`).join('\n')}
+
+以下のJSON形式で比較分析してください:
+{"scoreDiff": number, "improvements": ["改善点1", ...], "regressions": ["退化点1", ...], "highlights": ["ハイライト1", ...], "overallVerdict": "AとBの総合比較所見", "growthAreas": ["成長エリア1", ...]}
+JSONのみ出力:` },
+      ], { maxTokens: 800 });
+
+      let parsed: any = {};
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch { parsed = { overallVerdict: result.content }; }
+
+      return {
+        sessionA: { id: sessionA.id, theme: sessionA.theme, score: sessionA.compatibilityScore || 0, breakdown: breakdownA, createdAt: sessionA.createdAt },
+        sessionB: { id: sessionB.id, theme: sessionB.theme, score: sessionB.compatibilityScore || 0, breakdown: breakdownB, createdAt: sessionB.createdAt },
+        scoreDiff: parsed.scoreDiff ?? ((sessionA.compatibilityScore || 0) - (sessionB.compatibilityScore || 0)),
+        improvements: parsed.improvements || [],
+        regressions: parsed.regressions || [],
+        highlights: parsed.highlights || [],
+        overallVerdict: parsed.overallVerdict || '',
+        growthAreas: parsed.growthAreas || [],
+      };
+    }),
+
+  // ============ Action Plan Auto-generation ============
+
+  generateActionPlan: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT ms.*, mr.compatibilityScore, mr.scoreBreakdown, mr.recommendations FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id WHERE ms.id=?`).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: 'NOT_FOUND' });
+      const dialogues = await ctx.env.DB.prepare(`SELECT speaker, content FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionId).all<any>();
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, 'action_plan', ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'LLM設定が見つかりません' });
+
+      const result = await invokeLLM(llmConfig, [
+        { role: 'system', content: 'あなたはビジネスアクションプラン作成の専門家です。マッチング対話の結果から具体的なアクションプランを生成してください。JSONで回答してください。' },
+        { role: 'user', content: `テーマ: ${session.theme}
+スコア: ${session.compatibilityScore || 0}
+推奨: ${session.recommendations || 'なし'}
+対話:
+${(dialogues.results || []).map((d: any) => `${d.speaker}: ${(d.content || '').substring(0, 150)}`).join('\n')}
+
+以下のJSON形式でアクションプランを生成:
+{"title": "プランタイトル", "items": [{"text": "アクション内容", "priority": "high|medium|low", "dueOffset": 7, "done": false}, ...]}
+5-8個のアクションアイテムを生成。dueOffsetは今日からの日数。JSONのみ出力:` },
+      ], { maxTokens: 600 });
+
+      let parsed: any = { title: `${session.theme} アクションプラン`, items: [] };
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch { /* use default */ }
+
+      const items = (parsed.items || []).map((item: any, i: number) => ({
+        id: i + 1,
+        text: item.text || `アクション ${i + 1}`,
+        priority: item.priority || 'medium',
+        dueDate: new Date(Date.now() + (item.dueOffset || 7) * 86400000).toISOString().split('T')[0],
+        done: false,
+      }));
+
+      const stmt = await ctx.env.DB.prepare(
+        `INSERT INTO action_plans (sessionId, userId, title, items) VALUES (?,?,?,?)`
+      ).bind(input.sessionId, ctx.userId, parsed.title || `${session.theme} アクションプラン`, toJson(items)).run();
+
+      return { id: (stmt.meta as any)?.last_row_id, title: parsed.title, items };
+    }),
+
+  getActionPlans: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT ap.*, ms.theme FROM action_plans ap LEFT JOIN matching_sessions ms ON ms.id=ap.sessionId WHERE ap.userId=? ORDER BY ap.createdAt DESC LIMIT 50`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, items: parseJson<any[]>(r.items) || [] }));
+  }),
+
+  updatePlanItem: protectedProcedure
+    .input(z.object({ planId: z.number(), itemId: z.number(), done: z.boolean().optional(), text: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const plan = await ctx.env.DB.prepare(`SELECT * FROM action_plans WHERE id=? AND userId=?`).bind(input.planId, ctx.userId).first<any>();
+      if (!plan) throw new TRPCError({ code: 'NOT_FOUND' });
+      const items = parseJson<any[]>(plan.items) || [];
+      const item = items.find((i: any) => i.id === input.itemId);
+      if (!item) throw new TRPCError({ code: 'NOT_FOUND', message: 'アイテムが見つかりません' });
+      if (input.done !== undefined) item.done = input.done;
+      if (input.text !== undefined) item.text = input.text;
+      await ctx.env.DB.prepare(`UPDATE action_plans SET items=?, updatedAt=datetime('now') WHERE id=?`).bind(toJson(items), input.planId).run();
+      return { updated: true, items };
+    }),
+
+  deleteActionPlan: protectedProcedure
+    .input(z.object({ planId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM action_plans WHERE id=? AND userId=?`).bind(input.planId, ctx.userId).run();
+      return { deleted: true };
+    }),
+
 });

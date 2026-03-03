@@ -2143,6 +2143,33 @@ CREATE TABLE IF NOT EXISTS session_bookmarks (
   UNIQUE(sessionId, userId)
 );
 
+CREATE TABLE IF NOT EXISTS twin_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  personality TEXT,
+  systemPrompt TEXT,
+  tags TEXT,
+  isPublic INTEGER DEFAULT 0,
+  useCount INTEGER DEFAULT 0,
+  rating REAL DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS action_plans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  items TEXT DEFAULT '[]',
+  status TEXT DEFAULT 'active',
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
 `;
 
 let schemaReady = false;

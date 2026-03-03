@@ -143,6 +143,9 @@ const VoiceNotes = lazy(() => import("./pages/VoiceNotes"));
 const TwinFaq = lazy(() => import("./pages/TwinFaq"));
 const DailyBriefing = lazy(() => import("./pages/DailyBriefing"));
 const SessionBookmarks = lazy(() => import("./pages/SessionBookmarks"));
+const CompareReport = lazy(() => import("./pages/CompareReport"));
+const TwinGallery = lazy(() => import("./pages/TwinGallery"));
+const ActionPlans = lazy(() => import("./pages/ActionPlans"));
 
 function PageLoader() {
   return (
@@ -290,6 +293,9 @@ function Router() {
         <Route path="/twin-faq" component={TwinFaq} />
         <Route path="/daily-briefing" component={DailyBriefing} />
         <Route path="/bookmarks" component={SessionBookmarks} />
+        <Route path="/compare-report" component={CompareReport} />
+        <Route path="/twin-gallery" component={TwinGallery} />
+        <Route path="/action-plans" component={ActionPlans} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

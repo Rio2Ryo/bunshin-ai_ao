@@ -23,7 +23,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useRealtimeNotifications } from "@/hooks/useRealtimeNotifications";
 import { useWebPush } from "@/hooks/useWebPush";
 import { toast } from "sonner";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare, FileCheck, History, Mic, TrendingUp, MessageCircleHeart, CalendarDays, FlaskRound, Star, Gauge, Scale, BookHeart, Calendar, Captions, Goal, Grid3x3, BookText, HelpCircle, MessageSquarePlus, TestTubes, Tags, CalendarRange, Wand2, PenLine, Library, Gamepad2, FileBarChart, ScrollText, Repeat2, ArrowLeftRight, GraduationCap, Waves, Plug, Binoculars, BookMarked, Drama, MapPin, Handshake, SlidersHorizontal, GitFork, Eye, Sun, Bookmark } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare, FileCheck, History, Mic, TrendingUp, MessageCircleHeart, CalendarDays, FlaskRound, Star, Gauge, Scale, BookHeart, Calendar, Captions, Goal, Grid3x3, BookText, HelpCircle, MessageSquarePlus, TestTubes, Tags, CalendarRange, Wand2, PenLine, Library, Gamepad2, FileBarChart, ScrollText, Repeat2, ArrowLeftRight, GraduationCap, Waves, Plug, Binoculars, BookMarked, Drama, MapPin, Handshake, SlidersHorizontal, GitFork, Eye, Sun, Bookmark, ListTodo, LayoutTemplate } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -255,6 +255,8 @@ function DashboardLayoutContent({
         { icon: Mic, label: language === "en" ? "Voice Notes" : "音声ノート", path: "/voice-notes" },
         { icon: Sun, label: language === "en" ? "Briefing" : "ブリーフィング", path: "/daily-briefing" },
         { icon: Bookmark, label: language === "en" ? "Bookmarks" : "ブックマーク", path: "/bookmarks" },
+        { icon: ArrowLeftRight, label: language === "en" ? "Compare" : "セッション比較", path: "/compare-report" },
+        { icon: ListTodo, label: language === "en" ? "Action Plans" : "アクションプラン", path: "/action-plans" },
       ],
     },
     {
@@ -305,6 +307,7 @@ function DashboardLayoutContent({
         { icon: Network, label: language === "en" ? "Knowledge Graph Builder" : "知識グラフ", path: "/knowledge-graph-builder" },
         { icon: Mic, label: language === "en" ? "Multimodal" : "マルチモーダル", path: "/multimodal-input" },
         { icon: HelpCircle, label: language === "en" ? "Twin FAQ" : "ツインFAQ", path: "/twin-faq" },
+        { icon: LayoutTemplate, label: language === "en" ? "Gallery" : "テンプレート", path: "/twin-gallery" },
       ],
     },
   ], [t, language]);
