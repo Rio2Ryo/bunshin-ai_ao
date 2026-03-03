@@ -7525,4 +7525,84 @@ JSON形式で返してください:
     return (rows.results ?? []).map((r: any) => ({ ...r, overallScores: parseJson<any>(r.overallScores) || {} }));
   }),
 
+  // === Phase 37: Consensus Tracking ===
+  trackConsensus: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(input.sessionId).all<any>();
+      if (!dialogues.results?.length) throw new TRPCError({ code: "NOT_FOUND", message: "対話データがありません" });
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "consensus_tracking", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+      const turns = (dialogues.results).map((d: any) => `ターン${d.turnNumber} (${d.speakerRole}): ${d.message}`).join("\n");
+
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "あなたはビジネス対話の合意形成分析エキスパートです。以下の対話から合意事項と未合意事項を抽出してください。JSON形式: { \"agreements\": [{ \"topic\": \"合意した内容\", \"level\": \"full|partial\", \"turnNumber\": 3 }], \"disagreements\": [{ \"topic\": \"未合意の内容\", \"level\": \"unresolved|conflict\", \"turnNumber\": 5, \"followUp\": \"フォローアップ提案\" }], \"consensusRate\": 0-100の合意率, \"followUpTasks\": [{ \"task\": \"タスク内容\", \"priority\": \"high|medium|low\", \"relatedTopic\": \"関連トピック\" }] }" },
+        { role: "user", content: `対話:\n${turns}` }
+      ], { maxTokens: 2000 });
+
+      let parsed: any = { agreements: [], disagreements: [], consensusRate: 0, followUpTasks: [] };
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch { parsed = { agreements: [], disagreements: [], consensusRate: 0, followUpTasks: [{ task: result.content, priority: "medium", relatedTopic: "全般" }] }; }
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO consensus_tracking (sessionId, userId, agreements, disagreements, consensusRate, followUpTasks) VALUES (?,?,?,?,?,?)`
+      ).bind(input.sessionId, ctx.userId, toJson(parsed.agreements || []), toJson(parsed.disagreements || []), parsed.consensusRate || 0, toJson(parsed.followUpTasks || [])).run();
+
+      return parsed;
+    }),
+
+  getConsensus: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM consensus_tracking WHERE sessionId=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!row) return null;
+      return {
+        ...row,
+        agreements: parseJson<any[]>(row.agreements) || [],
+        disagreements: parseJson<any[]>(row.disagreements) || [],
+        followUpTasks: parseJson<any[]>(row.followUpTasks) || [],
+      };
+    }),
+
+  getConsensusHistory: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(`
+      SELECT ct.sessionId, ct.consensusRate, ct.createdAt, ms.theme
+      FROM consensus_tracking ct
+      JOIN matching_sessions ms ON ms.id = ct.sessionId
+      WHERE ct.userId=?
+      ORDER BY ct.createdAt DESC LIMIT 20
+    `).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
+  getConsensusFollowUps: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(`
+      SELECT ct.sessionId, ct.followUpTasks, ms.theme
+      FROM consensus_tracking ct
+      JOIN matching_sessions ms ON ms.id = ct.sessionId
+      WHERE ct.userId=?
+      ORDER BY ct.createdAt DESC LIMIT 10
+    `).bind(ctx.userId).all<any>();
+    const allTasks: any[] = [];
+    for (const r of (rows.results ?? []) as any[]) {
+      const tasks = parseJson<any[]>(r.followUpTasks) || [];
+      for (const t of tasks) {
+        allTasks.push({ ...t, sessionId: r.sessionId, theme: r.theme });
+      }
+    }
+    return allTasks;
+  }),
+
 });

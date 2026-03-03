@@ -4338,4 +4338,215 @@ ${reportData.mbti ? `<div class="card"><h2>MBTI</h2><p>${typeof reportData.mbti 
     return rows.results ?? [];
   }),
 
+
+  // === Phase 37: Rehearsal Mode ===
+  startRehearsal: protectedProcedure
+    .input(z.object({ theme: z.string().min(1), friendId: z.number().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      let opponentContext = "ビジネスパートナー";
+      if (input.friendId) {
+        const friendTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.friendId).first<any>();
+        if (friendTwin) opponentContext = `${friendTwin.name}: ${friendTwin.description?.substring(0, 200) || ""}`;
+      }
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "rehearsal", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: `あなたは「${opponentContext}」の役割を演じてください。テーマ「${input.theme}」について、ビジネス対話の相手として現実的な発言をしてください。日本語で最初の発言を1つだけ返してください。` },
+        { role: "user", content: `テーマ: ${input.theme}\nリハーサルを始めましょう。相手役として最初の発言をお願いします。` }
+      ], { maxTokens: 500 });
+
+      const dialogue = [{ turnNumber: 1, role: "opponent", message: result.content }];
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO rehearsal_sessions (userId, twinId, friendId, theme, dialogue, status) VALUES (?,?,?,?,?,?)`
+      ).bind(ctx.userId, twin.id, input.friendId || null, input.theme, toJson(dialogue), "active").run();
+
+      return { sessionId: res.meta?.last_row_id, dialogue };
+    }),
+
+  respondRehearsal: protectedProcedure
+    .input(z.object({ sessionId: z.number(), message: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT * FROM rehearsal_sessions WHERE id=? AND userId=?`).bind(input.sessionId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+      if (session.status !== "active") throw new TRPCError({ code: "BAD_REQUEST", message: "セッションは終了しています" });
+
+      const dialogue = parseJson<any[]>(session.dialogue) || [];
+      const turnNumber = dialogue.length + 1;
+      dialogue.push({ turnNumber, role: "user", message: input.message });
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "rehearsal_respond", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+      const messages = dialogue.map((d: any) => ({
+        role: d.role === "user" ? "user" as const : "assistant" as const,
+        message: d.message
+      }));
+
+      const historyMessages = [
+        { role: "system" as const, content: `あなたはビジネス対話の相手役です。テーマ「${session.theme}」について現実的で建設的な対話をしてください。日本語で応答してください。` },
+        ...messages.map((m: any) => ({ role: m.role, content: m.message }))
+      ];
+
+      const result = await invokeLLM(llmConfig, historyMessages, { maxTokens: 500 });
+
+      const opponentTurn = turnNumber + 1;
+      dialogue.push({ turnNumber: opponentTurn, role: "opponent", message: result.content });
+
+      await ctx.env.DB.prepare(`UPDATE rehearsal_sessions SET dialogue=? WHERE id=?`).bind(toJson(dialogue), input.sessionId).run();
+
+      return { dialogue, opponentMessage: result.content };
+    }),
+
+  endRehearsal: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT * FROM rehearsal_sessions WHERE id=? AND userId=?`).bind(input.sessionId, ctx.userId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const dialogue = parseJson<any[]>(session.dialogue) || [];
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "rehearsal_evaluate", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+      const dialogueText = dialogue.map((d: any) => `${d.role === "user" ? "ユーザー" : "相手"}: ${d.message}`).join("\n");
+
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "あなたはビジネス対話コーチです。以下のリハーサル対話を評価してください。JSON形式: { \"readinessScore\": 0-100の準備度, \"strengths\": [\"強み1\",\"強み2\"], \"weaknesses\": [\"弱点1\",\"弱点2\"], \"improvements\": [\"改善1\",\"改善2\"], \"modelResponses\": [\"模範回答例1\"], \"strategyTips\": \"本番への戦略アドバイス\" }" },
+        { role: "user", content: `テーマ: ${session.theme}\n\n対話:\n${dialogueText}` }
+      ], { maxTokens: 1500 });
+
+      let evaluation: any = { readinessScore: 50, strengths: [], weaknesses: [], improvements: [result.content], modelResponses: [], strategyTips: "" };
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) evaluation = JSON.parse(jsonMatch[0]);
+      } catch {}
+
+      const score = evaluation.readinessScore || 50;
+      await ctx.env.DB.prepare(
+        `UPDATE rehearsal_sessions SET status='completed', readinessScore=?, evaluation=? WHERE id=?`
+      ).bind(score, toJson(evaluation), input.sessionId).run();
+
+      return { readinessScore: score, evaluation };
+    }),
+
+  getRehearsal: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(`SELECT * FROM rehearsal_sessions WHERE id=? AND userId=?`).bind(input.sessionId, ctx.userId).first<any>();
+      if (!row) return null;
+      return { ...row, dialogue: parseJson<any[]>(row.dialogue) || [], evaluation: parseJson<any>(row.evaluation) || null };
+    }),
+
+  listRehearsals: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT id, theme, status, readinessScore, friendId, createdAt FROM rehearsal_sessions WHERE userId=? ORDER BY createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
+  // === Phase 37: Emotion Calibration ===
+  getEmotionCalibration: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await ctx.env.DB.prepare(`SELECT id FROM digital_twins WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+    if (!twin) return [];
+    const rows = await ctx.env.DB.prepare(
+      `SELECT ec.*, u.name as friendName FROM emotion_calibration ec LEFT JOIN users u ON u.id = ec.targetFriendId WHERE ec.userId=? AND ec.twinId=? ORDER BY ec.updatedAt DESC`
+    ).bind(ctx.userId, twin.id).all<any>();
+    return rows.results ?? [];
+  }),
+
+  saveEmotionCalibration: protectedProcedure
+    .input(z.object({
+      empathy: z.number().min(0).max(100),
+      aggression: z.number().min(0).max(100),
+      optimism: z.number().min(0).max(100),
+      caution: z.number().min(0).max(100),
+      humor: z.number().min(0).max(100),
+      presetName: z.string().optional(),
+      targetFriendId: z.number().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await ctx.env.DB.prepare(`SELECT id FROM digital_twins WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO emotion_calibration (userId, twinId, empathy, aggression, optimism, caution, humor, presetName, targetFriendId) VALUES (?,?,?,?,?,?,?,?,?)`
+      ).bind(ctx.userId, twin.id, input.empathy, input.aggression, input.optimism, input.caution, input.humor, input.presetName || null, input.targetFriendId || null).run();
+
+      return { id: res.meta?.last_row_id, success: true };
+    }),
+
+  previewEmotionCalibration: protectedProcedure
+    .input(z.object({
+      empathy: z.number().min(0).max(100),
+      aggression: z.number().min(0).max(100),
+      optimism: z.number().min(0).max(100),
+      caution: z.number().min(0).max(100),
+      humor: z.number().min(0).max(100),
+      samplePrompt: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "emotion_preview", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+      const emotionInstructions = `感情パラメータに基づいて応答してください:
+- 共感度: ${input.empathy}/100 (${input.empathy > 70 ? "非常に共感的" : input.empathy > 40 ? "適度に共感" : "クール"})
+- 攻撃性: ${input.aggression}/100 (${input.aggression > 70 ? "主張が強い" : input.aggression > 40 ? "適度に主張" : "穏やか"})
+- 楽観度: ${input.optimism}/100 (${input.optimism > 70 ? "非常にポジティブ" : input.optimism > 40 ? "バランス型" : "慎重・現実的"})
+- 慎重さ: ${input.caution}/100 (${input.caution > 70 ? "非常に慎重" : input.caution > 40 ? "適度に慎重" : "大胆"})
+- ユーモア度: ${input.humor}/100 (${input.humor > 70 ? "ユーモアたっぷり" : input.humor > 40 ? "時々ユーモア" : "真面目"})`;
+
+      const prompt = input.samplePrompt || "新しいビジネスパートナーシップについて提案されました。どう思いますか？";
+
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: `あなたは「${twin.name}」というデジタルツインです。${twin.description || ""}\n\n${emotionInstructions}\n\n上記の感情パラメータを反映した口調・内容で返答してください。` },
+        { role: "user", content: prompt }
+      ], { maxTokens: 500 });
+
+      return { response: result.content, prompt };
+    }),
+
+  deleteEmotionCalibration: protectedProcedure
+    .input(z.object({ calibrationId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM emotion_calibration WHERE id=? AND userId=?`).bind(input.calibrationId, ctx.userId).run();
+      return { success: true };
+    }),
+
+  applyEmotionCalibration: protectedProcedure
+    .input(z.object({ calibrationId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const cal = await ctx.env.DB.prepare(`SELECT * FROM emotion_calibration WHERE id=? AND userId=?`).bind(input.calibrationId, ctx.userId).first<any>();
+      if (!cal) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const emotionPrompt = `\n[感情設定] 共感度:${cal.empathy} 攻撃性:${cal.aggression} 楽観度:${cal.optimism} 慎重さ:${cal.caution} ユーモア:${cal.humor}`;
+
+      const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=? AND userId=?`).bind(cal.twinId, ctx.userId).first<any>();
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND" });
+
+      // Remove any existing emotion setting block and append new one
+      let prompt = (twin.systemPrompt || "").replace(/\n\[感情設定\].*$/m, "");
+      prompt += emotionPrompt;
+
+      await ctx.env.DB.prepare(`UPDATE digital_twins SET systemPrompt=?, updatedAt=datetime('now') WHERE id=?`).bind(prompt, cal.twinId).run();
+
+      return { success: true, appliedTo: twin.name };
+    }),
 });

@@ -130,6 +130,9 @@ const ImpactMap = lazy(() => import("./pages/ImpactMap"));
 const StrategyAnnotation = lazy(() => import("./pages/StrategyAnnotation"));
 const TwinCloneFork = lazy(() => import("./pages/TwinCloneFork"));
 const QualityMeter = lazy(() => import("./pages/QualityMeter"));
+const RehearsalMode = lazy(() => import("./pages/RehearsalMode"));
+const ConsensusTracker = lazy(() => import("./pages/ConsensusTracker"));
+const EmotionCalibration = lazy(() => import("./pages/EmotionCalibration"));
 
 function PageLoader() {
   return (
@@ -264,6 +267,9 @@ function Router() {
         <Route path="/strategy-annotation" component={StrategyAnnotation} />
         <Route path="/twin-clone" component={TwinCloneFork} />
         <Route path="/quality-meter" component={QualityMeter} />
+        <Route path="/rehearsal" component={RehearsalMode} />
+        <Route path="/consensus" component={ConsensusTracker} />
+        <Route path="/emotion-calibration" component={EmotionCalibration} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

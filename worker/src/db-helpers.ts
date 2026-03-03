@@ -1980,6 +1980,46 @@ CREATE TABLE IF NOT EXISTS dialogue_quality_scores (
   createdAt TEXT DEFAULT (datetime('now')),
   UNIQUE(sessionId, userId)
 );
+
+CREATE TABLE IF NOT EXISTS rehearsal_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  friendId INTEGER,
+  theme TEXT NOT NULL,
+  dialogue TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','completed')),
+  readinessScore INTEGER,
+  evaluation TEXT,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS consensus_tracking (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  agreements TEXT NOT NULL DEFAULT '[]',
+  disagreements TEXT NOT NULL DEFAULT '[]',
+  consensusRate REAL DEFAULT 0,
+  followUpTasks TEXT DEFAULT '[]',
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, userId)
+);
+
+CREATE TABLE IF NOT EXISTS emotion_calibration (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  empathy INTEGER NOT NULL DEFAULT 50 CHECK(empathy BETWEEN 0 AND 100),
+  aggression INTEGER NOT NULL DEFAULT 20 CHECK(aggression BETWEEN 0 AND 100),
+  optimism INTEGER NOT NULL DEFAULT 60 CHECK(optimism BETWEEN 0 AND 100),
+  caution INTEGER NOT NULL DEFAULT 50 CHECK(caution BETWEEN 0 AND 100),
+  humor INTEGER NOT NULL DEFAULT 40 CHECK(humor BETWEEN 0 AND 100),
+  presetName TEXT,
+  targetFriendId INTEGER,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
 `;
 
 let schemaReady = false;
