@@ -133,6 +133,9 @@ const QualityMeter = lazy(() => import("./pages/QualityMeter"));
 const RehearsalMode = lazy(() => import("./pages/RehearsalMode"));
 const ConsensusTracker = lazy(() => import("./pages/ConsensusTracker"));
 const EmotionCalibration = lazy(() => import("./pages/EmotionCalibration"));
+const CrossCultureAdapter = lazy(() => import("./pages/CrossCultureAdapter"));
+const TwinKnowledgeGraphBuilder = lazy(() => import("./pages/TwinKnowledgeGraphBuilder"));
+const SecondOpinion = lazy(() => import("./pages/SecondOpinion"));
 
 function PageLoader() {
   return (
@@ -270,6 +273,9 @@ function Router() {
         <Route path="/rehearsal" component={RehearsalMode} />
         <Route path="/consensus" component={ConsensusTracker} />
         <Route path="/emotion-calibration" component={EmotionCalibration} />
+        <Route path="/cross-culture" component={CrossCultureAdapter} />
+        <Route path="/knowledge-graph-builder" component={TwinKnowledgeGraphBuilder} />
+        <Route path="/second-opinion" component={SecondOpinion} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

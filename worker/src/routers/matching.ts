@@ -7605,4 +7605,178 @@ JSON形式で返してください:
     return allTasks;
   }),
 
+  // === Phase 38: Cross-Culture Adapter ===
+  analyzeCrossCulture: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+      const settings = parseJson<any>(session.settings) || {};
+      const friendId = settings.friendId;
+
+      let friendProfile: any = null;
+      if (friendId) {
+        friendProfile = await ctx.env.DB.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(friendId).first<any>();
+      }
+
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(input.sessionId).all<any>();
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "cross_culture", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+      const turns = (dialogues.results ?? []).map((d: any) => `T${d.turnNumber}(${d.speakerRole}): ${d.message}`).join("\n");
+      const profileInfo = friendProfile ? `相手プロフィール: ${friendProfile.industry || ""} ${friendProfile.company || ""} ${friendProfile.position || ""}` : "相手プロフィール: 不明";
+
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "あなたは異文化ビジネスコミュニケーションの専門家です。対話と相手プロフィールから文化圏を推定し、文化的配慮ポイントとギャップを分析してください。JSON形式: { \"estimatedCulture\": \"日本/アメリカ/中国/韓国/欧州/その他\", \"culturePoints\": [{ \"category\": \"挨拶|敬語|直接性|交渉スタイル|時間感覚|意思決定\", \"advice\": \"具体的アドバイス\", \"importance\": \"high|medium|low\" }], \"gapAlerts\": [{ \"turnNumber\": 3, \"gap\": \"ギャップの内容\", \"suggestion\": \"改善提案\" }], \"crossCultureScore\": 0-100の異文化対応スコア }" },
+        { role: "user", content: `${profileInfo}\n\n対話:\n${turns}` }
+      ], { maxTokens: 2000 });
+
+      let parsed: any = { estimatedCulture: "不明", culturePoints: [], gapAlerts: [], crossCultureScore: 50 };
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch { parsed.culturePoints = [{ category: "全般", advice: result.content, importance: "medium" }]; }
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO cross_culture_analyses (sessionId, userId, friendCulture, culturePoints, gapAlerts, crossCultureScore) VALUES (?,?,?,?,?,?)`
+      ).bind(input.sessionId, ctx.userId, parsed.estimatedCulture || "不明", toJson(parsed.culturePoints || []), toJson(parsed.gapAlerts || []), parsed.crossCultureScore || 0).run();
+
+      return parsed;
+    }),
+
+  getCrossCulture: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM cross_culture_analyses WHERE sessionId=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!row) return null;
+      return { ...row, culturePoints: parseJson<any[]>(row.culturePoints) || [], gapAlerts: parseJson<any[]>(row.gapAlerts) || [] };
+    }),
+
+  getCrossCultureHistory: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(`
+      SELECT cca.sessionId, cca.friendCulture, cca.crossCultureScore, cca.createdAt, ms.theme
+      FROM cross_culture_analyses cca
+      JOIN matching_sessions ms ON ms.id = cca.sessionId
+      WHERE cca.userId=?
+      ORDER BY cca.createdAt DESC LIMIT 20
+    `).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
+  // === Phase 38: Second Opinion AI ===
+  getSecondOpinion: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const matchResult = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_results WHERE sessionId=?`
+      ).bind(input.sessionId).first<any>();
+      if (!matchResult) throw new TRPCError({ code: "NOT_FOUND", message: "マッチング結果がありません" });
+
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(input.sessionId).all<any>();
+      const turns = (dialogues.results ?? []).map((d: any) => `T${d.turnNumber}(${d.speakerRole}): ${d.message}`).join("\n");
+      const originalScore = matchResult.compatibilityScore;
+      const breakdown = parseJson<any>(matchResult.scoreBreakdown) || {};
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "second_opinion", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+      const perspectives = ["optimistic", "pessimistic", "practical"] as const;
+      const labels = { optimistic: "楽観的", pessimistic: "悲観的", practical: "実務的" };
+      const results: Record<string, any> = {};
+
+      for (const p of perspectives) {
+        const instruction = p === "optimistic"
+          ? "最も楽観的な視点で、ポジティブな可能性やシナジーを強調して分析"
+          : p === "pessimistic"
+          ? "最も悲観的な視点で、リスクや課題を厳しく指摘して分析"
+          : "実務的な視点で、実行可能性とROIを重視して分析";
+
+        const r = await invokeLLM(llmConfig, [
+          { role: "system", content: `あなたはビジネスマッチングの${labels[p]}アナリストです。${instruction}してください。JSON形式: { "score": 0-100, "summary": "要約", "keyPoints": ["ポイント1","ポイント2","ポイント3"], "risks": ["リスク"], "opportunities": ["チャンス"] }` },
+          { role: "user", content: `元のスコア: ${originalScore}\nスコア内訳: ${JSON.stringify(breakdown)}\n\n対話:\n${turns}` }
+        ], { maxTokens: 1000 });
+
+        let parsed: any = { score: originalScore, summary: r.content, keyPoints: [], risks: [], opportunities: [] };
+        try {
+          const jsonMatch = r.content.match(/\{[\s\S]*\}/);
+          if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+        } catch {}
+        results[p] = parsed;
+      }
+
+      const scores = perspectives.map(p => results[p]?.score || 0);
+      const avgScore = Math.round(scores.reduce((a: number, b: number) => a + b, 0) / 3);
+      const maxDiff = Math.max(...scores) - Math.min(...scores);
+      const divergenceScore = Math.round(maxDiff);
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO second_opinions (sessionId, userId, optimistic, pessimistic, practical, divergenceScore, consensusScore) VALUES (?,?,?,?,?,?,?)`
+      ).bind(input.sessionId, ctx.userId, toJson(results.optimistic), toJson(results.pessimistic), toJson(results.practical), divergenceScore, avgScore).run();
+
+      return { optimistic: results.optimistic, pessimistic: results.pessimistic, practical: results.practical, divergenceScore, consensusScore: avgScore, originalScore };
+    }),
+
+  getSecondOpinionData: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM second_opinions WHERE sessionId=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!row) return null;
+      return {
+        ...row,
+        optimistic: parseJson<any>(row.optimistic) || {},
+        pessimistic: parseJson<any>(row.pessimistic) || {},
+        practical: parseJson<any>(row.practical) || {},
+      };
+    }),
+
+  deepDiveSecondOpinion: protectedProcedure
+    .input(z.object({ sessionId: z.number(), perspective: z.enum(["optimistic", "pessimistic", "practical"]), question: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const opinion = await ctx.env.DB.prepare(
+        `SELECT * FROM second_opinions WHERE sessionId=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!opinion) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const perspectiveData = parseJson<any>(opinion[input.perspective]) || {};
+      const labels: Record<string, string> = { optimistic: "楽観的", pessimistic: "悲観的", practical: "実務的" };
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "second_opinion_dive", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: `あなたは${labels[input.perspective]}視点のビジネスアナリストです。以下の分析に基づいてユーザーの質問に答えてください。` },
+        { role: "user", content: `前回の分析: ${JSON.stringify(perspectiveData)}\n\n質問: ${input.question}` }
+      ], { maxTokens: 1000 });
+
+      return { answer: result.content, perspective: input.perspective };
+    }),
+
+  listSecondOpinions: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(`
+      SELECT so.sessionId, so.divergenceScore, so.consensusScore, so.createdAt, ms.theme
+      FROM second_opinions so
+      JOIN matching_sessions ms ON ms.id = so.sessionId
+      WHERE so.userId=?
+      ORDER BY so.createdAt DESC LIMIT 20
+    `).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
+
 });

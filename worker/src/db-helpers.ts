@@ -842,6 +842,45 @@ CREATE TABLE IF NOT EXISTS webhooks (
 );
 CREATE INDEX IF NOT EXISTS idx_webhooks_userId ON webhooks(userId);
 
+CREATE TABLE IF NOT EXISTS cross_culture_analyses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  friendCulture TEXT,
+  culturePoints TEXT NOT NULL DEFAULT '[]',
+  gapAlerts TEXT DEFAULT '[]',
+  crossCultureScore INTEGER DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, userId)
+);
+
+CREATE TABLE IF NOT EXISTS twin_knowledge_graphs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  nodes TEXT NOT NULL DEFAULT '[]',
+  edges TEXT NOT NULL DEFAULT '[]',
+  gaps TEXT DEFAULT '[]',
+  recommendations TEXT DEFAULT '[]',
+  stats TEXT DEFAULT '{}',
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(userId, twinId)
+);
+
+CREATE TABLE IF NOT EXISTS second_opinions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  optimistic TEXT,
+  pessimistic TEXT,
+  practical TEXT,
+  divergenceScore REAL DEFAULT 0,
+  consensusScore REAL DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, userId)
+);
+
 `;
 
 // Migrations to run after schema creation (ALTER TABLE etc.)

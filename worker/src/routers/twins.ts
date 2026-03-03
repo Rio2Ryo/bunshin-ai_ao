@@ -4549,4 +4549,98 @@ ${reportData.mbti ? `<div class="card"><h2>MBTI</h2><p>${typeof reportData.mbti 
 
       return { success: true, appliedTo: twin.name };
     }),
+  // === Phase 38: Knowledge Graph Builder ===
+  buildKnowledgeGraph: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+    if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+    // Collect data sources
+    const knowledge = await ctx.env.DB.prepare(`SELECT title, content, summary FROM knowledge_base WHERE twinId=? LIMIT 30`).bind(twin.id).all<any>();
+    const chats = await ctx.env.DB.prepare(`SELECT message FROM chat_messages WHERE sessionId IN (SELECT id FROM chat_sessions WHERE userId=?) ORDER BY createdAt DESC LIMIT 50`).bind(ctx.userId).all<any>();
+    const matchDialogues = await ctx.env.DB.prepare(`SELECT md.message FROM matching_dialogues md JOIN matching_sessions ms ON ms.id=md.sessionId WHERE ms.initiatorUserId=? ORDER BY md.createdAt DESC LIMIT 50`).bind(ctx.userId).all<any>();
+
+    const knowledgeText = (knowledge.results ?? []).map((k: any) => `${k.title}: ${k.summary || k.content?.substring(0, 200)}`).join("\n");
+    const chatText = (chats.results ?? []).map((c: any) => c.message?.substring(0, 100)).join("\n");
+    const matchText = (matchDialogues.results ?? []).map((m: any) => m.message?.substring(0, 100)).join("\n");
+
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "knowledge_graph", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+    const result = await invokeLLM(llmConfig, [
+      { role: "system", content: "あなたは知識構造化の専門家です。以下のデータからナレッジグラフを構築してください。JSON形式: { \"nodes\": [{ \"id\": \"node1\", \"label\": \"概念名\", \"type\": \"concept|person|skill|industry|topic\", \"weight\": 1-10 }], \"edges\": [{ \"source\": \"node1\", \"target\": \"node2\", \"relation\": \"関連|含む|必要|応用|類似\", \"strength\": 1-10 }], \"gaps\": [{ \"area\": \"知識の穴の領域\", \"severity\": \"high|medium|low\", \"recommendation\": \"学習推奨\" }], \"stats\": { \"totalNodes\": 0, \"totalEdges\": 0, \"densestArea\": \"最も密な領域\", \"sparsestArea\": \"最も疎な領域\" } }" },
+      { role: "user", content: `ナレッジベース:\n${knowledgeText || "なし"}\n\nチャット履歴:\n${chatText || "なし"}\n\nマッチング対話:\n${matchText || "なし"}` }
+    ], { maxTokens: 3000 });
+
+    let parsed: any = { nodes: [], edges: [], gaps: [], stats: {} };
+    try {
+      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+    } catch { parsed.gaps = [{ area: "解析エラー", severity: "low", recommendation: result.content }]; }
+
+    await ctx.env.DB.prepare(
+      `INSERT OR REPLACE INTO twin_knowledge_graphs (userId, twinId, nodes, edges, gaps, recommendations, stats, updatedAt) VALUES (?,?,?,?,?,?,?,datetime('now'))`
+    ).bind(ctx.userId, twin.id, toJson(parsed.nodes || []), toJson(parsed.edges || []), toJson(parsed.gaps || []), toJson(parsed.gaps?.map((g: any) => g.recommendation) || []), toJson(parsed.stats || {})).run();
+
+    return parsed;
+  }),
+
+  getKnowledgeGraphData: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await ctx.env.DB.prepare(`SELECT id FROM digital_twins WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+    if (!twin) return null;
+    const row = await ctx.env.DB.prepare(`SELECT * FROM twin_knowledge_graphs WHERE userId=? AND twinId=?`).bind(ctx.userId, twin.id).first<any>();
+    if (!row) return null;
+    return {
+      ...row,
+      nodes: parseJson<any[]>(row.nodes) || [],
+      edges: parseJson<any[]>(row.edges) || [],
+      gaps: parseJson<any[]>(row.gaps) || [],
+      recommendations: parseJson<any[]>(row.recommendations) || [],
+      stats: parseJson<any>(row.stats) || {},
+    };
+  }),
+
+  compareKnowledgeGraphs: protectedProcedure
+    .input(z.object({ friendId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const myGraph = await ctx.env.DB.prepare(`SELECT * FROM twin_knowledge_graphs WHERE userId=?`).bind(ctx.userId).first<any>();
+      const friendGraph = await ctx.env.DB.prepare(`SELECT * FROM twin_knowledge_graphs WHERE userId=?`).bind(input.friendId).first<any>();
+
+      if (!myGraph || !friendGraph) throw new TRPCError({ code: "NOT_FOUND", message: "両者のナレッジグラフが必要です。先にグラフを構築してください" });
+
+      const myNodes = parseJson<any[]>(myGraph.nodes) || [];
+      const friendNodes = parseJson<any[]>(friendGraph.nodes) || [];
+
+      const myLabels = new Set(myNodes.map((n: any) => n.label?.toLowerCase()));
+      const friendLabels = new Set(friendNodes.map((n: any) => n.label?.toLowerCase()));
+
+      const common = Array.from(myLabels).filter(l => friendLabels.has(l));
+      const myOnly = Array.from(myLabels).filter(l => !friendLabels.has(l));
+      const friendOnly = Array.from(friendLabels).filter(l => !myLabels.has(l));
+      const overlapRate = myLabels.size > 0 ? Math.round((common.length / myLabels.size) * 100) : 0;
+
+      return { common, myOnly, friendOnly, overlapRate, myNodeCount: myLabels.size, friendNodeCount: friendLabels.size };
+    }),
+
+  getKnowledgeGaps: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await ctx.env.DB.prepare(`SELECT id FROM digital_twins WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+    if (!twin) return [];
+    const row = await ctx.env.DB.prepare(`SELECT gaps FROM twin_knowledge_graphs WHERE userId=? AND twinId=?`).bind(ctx.userId, twin.id).first<any>();
+    if (!row) return [];
+    return parseJson<any[]>(row.gaps) || [];
+  }),
+
+  getKnowledgeGraphStats: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await ctx.env.DB.prepare(`SELECT id FROM digital_twins WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+    if (!twin) return null;
+    const row = await ctx.env.DB.prepare(`SELECT stats, updatedAt FROM twin_knowledge_graphs WHERE userId=? AND twinId=?`).bind(ctx.userId, twin.id).first<any>();
+    if (!row) return null;
+    return { ...parseJson<any>(row.stats) || {}, updatedAt: row.updatedAt };
+  }),
+
+
 });
