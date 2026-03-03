@@ -6138,4 +6138,114 @@ JSON形式で返してください:
     };
   }),
 
+
+  // ============ Session Tags & Filter ============
+
+  addSessionTag: protectedProcedure
+    .input(z.object({ sessionId: z.number(), tag: z.string(), category: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(
+        `INSERT OR IGNORE INTO session_tags (sessionId, userId, tag, category) VALUES (?, ?, ?, ?)`
+      ).bind(input.sessionId, ctx.userId, input.tag, input.category || null).run();
+      return { added: true };
+    }),
+
+  removeSessionTag: protectedProcedure
+    .input(z.object({ sessionId: z.number(), tag: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(
+        `DELETE FROM session_tags WHERE sessionId=? AND userId=? AND tag=?`
+      ).bind(input.sessionId, ctx.userId, input.tag).run();
+      return { removed: true };
+    }),
+
+  getSessionTags: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT * FROM session_tags WHERE sessionId=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).all<any>();
+      return rows.results ?? [];
+    }),
+
+  getAllTags: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT tag, category, COUNT(*) as count FROM session_tags WHERE userId=? GROUP BY tag ORDER BY count DESC`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
+  getTagAnalytics: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const analytics = await ctx.env.DB.prepare(
+      `SELECT st.tag, st.category,
+              COUNT(DISTINCT st.sessionId) as sessionCount,
+              AVG(mr.compatibilityScore) as avgScore,
+              MAX(mr.compatibilityScore) as maxScore,
+              MIN(mr.compatibilityScore) as minScore
+       FROM session_tags st
+       JOIN matching_results mr ON mr.sessionId = st.sessionId
+       WHERE st.userId=?
+       GROUP BY st.tag
+       ORDER BY avgScore DESC`
+    ).bind(ctx.userId).all<any>();
+    return analytics.results ?? [];
+  }),
+
+  filterSessionsByTags: protectedProcedure
+    .input(z.object({
+      tags: z.array(z.string()),
+      operator: z.enum(["AND", "OR"]).default("OR"),
+      minScore: z.number().optional(),
+      maxScore: z.number().optional(),
+    }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      let query: string;
+      let binds: any[];
+
+      if (input.operator === "AND") {
+        const placeholders = input.tags.map(() => '?').join(', ');
+        query = `SELECT ms.id, ms.theme, ms.status, ms.createdAt, mr.compatibilityScore,
+                        GROUP_CONCAT(st.tag) as tags
+                 FROM matching_sessions ms
+                 JOIN session_tags st ON st.sessionId = ms.id AND st.userId=?
+                 LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+                 WHERE st.tag IN (${placeholders})
+                 AND ms.initiatorUserId=?
+                 GROUP BY ms.id
+                 HAVING COUNT(DISTINCT st.tag) = ?
+                 ORDER BY ms.createdAt DESC`;
+        binds = [ctx.userId, ...input.tags, ctx.userId, input.tags.length];
+      } else {
+        const placeholders = input.tags.map(() => '?').join(', ');
+        query = `SELECT ms.id, ms.theme, ms.status, ms.createdAt, mr.compatibilityScore,
+                        GROUP_CONCAT(DISTINCT st.tag) as tags
+                 FROM matching_sessions ms
+                 JOIN session_tags st ON st.sessionId = ms.id AND st.userId=?
+                 LEFT JOIN matching_results mr ON mr.sessionId = ms.id
+                 WHERE st.tag IN (${placeholders})
+                 AND ms.initiatorUserId=?
+                 GROUP BY ms.id
+                 ORDER BY ms.createdAt DESC`;
+        binds = [ctx.userId, ...input.tags, ctx.userId];
+      }
+
+      const rows = await ctx.env.DB.prepare(query).bind(...binds).all<any>();
+      let results = rows.results ?? [];
+
+      if (input.minScore !== undefined) {
+        results = results.filter((r: any) => r.compatibilityScore >= input.minScore!);
+      }
+      if (input.maxScore !== undefined) {
+        results = results.filter((r: any) => r.compatibilityScore <= input.maxScore!);
+      }
+
+      return results.map((r: any) => ({ ...r, tags: r.tags ? r.tags.split(',') : [] }));
+    }),
+
 });

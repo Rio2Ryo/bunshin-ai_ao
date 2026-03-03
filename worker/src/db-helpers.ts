@@ -1600,6 +1600,42 @@ CREATE TABLE IF NOT EXISTS facilitator_interventions (
   effectScore REAL,
   createdAt TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS persona_ab_tests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  theme TEXT NOT NULL,
+  personaIds TEXT NOT NULL,
+  results TEXT,
+  bestPersonaId INTEGER,
+  status TEXT DEFAULT 'pending',
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS session_tags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  tag TEXT NOT NULL,
+  category TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, tag)
+);
+
+CREATE TABLE IF NOT EXISTS weekly_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  weekStart TEXT NOT NULL,
+  weekEnd TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  improvements TEXT,
+  deteriorations TEXT,
+  recommendations TEXT,
+  stats TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(userId, weekStart)
+);
 `;
 
 let schemaReady = false;

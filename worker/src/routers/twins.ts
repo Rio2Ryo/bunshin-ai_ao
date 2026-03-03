@@ -11,6 +11,7 @@ import {
   getOtherPerspectiveWaveform,
 } from "../db-helpers";
 import { invokeLLM, getUserLLMConfig } from "../llm";
+import { createNotification } from "../notifications";
 
 export const twinsRouter = router({
   get: protectedProcedure.query(async ({ ctx }) => {
@@ -2848,5 +2849,333 @@ JSON配列で返してください:
     ).bind(ctx.userId).all<any>();
     return trend.results ?? [];
   }),
+
+
+  // ============ Persona A/B Test Automation ============
+
+  runPersonaABTest: protectedProcedure
+    .input(z.object({ theme: z.string(), personaIds: z.array(z.number()).min(2).max(5) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      // Get personas
+      const personas = [];
+      for (const pid of input.personaIds) {
+        const p = await ctx.env.DB.prepare(`SELECT * FROM twin_personas WHERE id=? AND twinId=?`).bind(pid, twin.id).first<any>();
+        if (p) personas.push(p);
+      }
+      if (personas.length < 2) throw new TRPCError({ code: "BAD_REQUEST", message: "2つ以上のペルソナが必要です" });
+
+      // Get a random friend's twin for opponent
+      const friend = await ctx.env.DB.prepare(
+        `SELECT dt.* FROM digital_twins dt JOIN friendships f ON (f.userId=? AND f.friendId=dt.userId AND f.status='accepted')
+         OR (f.friendId=? AND f.userId=dt.userId AND f.status='accepted') LIMIT 1`
+      ).bind(ctx.userId, ctx.userId).first<any>();
+
+      const opponentPersonality = friend ? (friend.personality || "ビジネスプロフェッショナル") : "ビジネスプロフェッショナル";
+      const opponentName = friend ? (friend.name || "対話相手") : "NPC対話相手";
+
+      const results: any[] = [];
+      for (const persona of personas) {
+        const dialogueMessages: any[] = [];
+        const twinPersonality = persona.personality || twin.personality || "ビジネスパーソン";
+        const turns = 3;
+
+        for (let t = 0; t < turns; t++) {
+          // Twin's turn
+          const twinPrompt = `あなたは「${persona.name || twin.name}」（${twinPersonality}）です。テーマ「${input.theme}」について対話してください。${dialogueMessages.length > 0 ? '\n前の対話:\n' + dialogueMessages.map((m: any) => `${m.speaker}: ${m.content}`).join('\n') : '最初の発言をしてください。'}`;
+          const twinResp = await invokeLLM(llmConfig, [{ role: "user", content: twinPrompt }]);
+          dialogueMessages.push({ speaker: persona.name || twin.name, content: twinResp.content });
+
+          // Opponent's turn
+          const oppPrompt = `あなたは「${opponentName}」（${opponentPersonality}）です。テーマ「${input.theme}」について対話してください。\n前の対話:\n${dialogueMessages.map((m: any) => `${m.speaker}: ${m.content}`).join('\n')}`;
+          const oppResp = await invokeLLM(llmConfig, [{ role: "user", content: oppPrompt }]);
+          dialogueMessages.push({ speaker: opponentName, content: oppResp.content });
+        }
+
+        // Score
+        const scorePrompt = `以下のビジネス対話を100点満点で評価してください。テーマ: ${input.theme}\n\n対話:\n${dialogueMessages.map((m: any) => `${m.speaker}: ${m.content}`).join('\n')}\n\nJSON: {"score": 数値(0-100), "strengths": ["強み"], "weaknesses": ["弱み"]}`;
+        const scoreResp = await invokeLLM(llmConfig, [{ role: "user", content: scorePrompt }]);
+        let scored: any = { score: 50, strengths: [], weaknesses: [] };
+        try { scored = JSON.parse(scoreResp.content); } catch {}
+
+        results.push({
+          personaId: persona.id,
+          personaName: persona.name,
+          score: scored.score || 50,
+          strengths: scored.strengths || [],
+          weaknesses: scored.weaknesses || [],
+          dialogue: dialogueMessages,
+        });
+      }
+
+      // Statistics
+      const scores = results.map((r: any) => r.score);
+      const avg = scores.reduce((a: number, b: number) => a + b, 0) / scores.length;
+      const variance = scores.reduce((sum: number, s: number) => sum + Math.pow(s - avg, 2), 0) / scores.length;
+      const best = results.reduce((a: any, b: any) => a.score > b.score ? a : b);
+
+      const testResult = { results, stats: { avg: Math.round(avg * 10) / 10, variance: Math.round(variance * 10) / 10, max: Math.max(...scores), min: Math.min(...scores) } };
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO persona_ab_tests (userId, twinId, theme, personaIds, results, bestPersonaId, status)
+         VALUES (?, ?, ?, ?, ?, ?, 'completed')`
+      ).bind(ctx.userId, twin.id, input.theme, toJson(input.personaIds), toJson(testResult), best.personaId).run();
+
+      return { id: res.meta?.last_row_id, ...testResult, bestPersonaId: best.personaId, bestPersonaName: best.personaName };
+    }),
+
+  listPersonaABTests: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT * FROM persona_ab_tests WHERE userId=? ORDER BY createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({
+      ...r,
+      personaIds: parseJson<number[]>(r.personaIds),
+      results: parseJson<any>(r.results),
+    }));
+  }),
+
+  getPersonaABTest: protectedProcedure
+    .input(z.object({ testId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM persona_ab_tests WHERE id=? AND userId=?`
+      ).bind(input.testId, ctx.userId).first<any>();
+      if (!row) return null;
+      return { ...row, personaIds: parseJson<number[]>(row.personaIds), results: parseJson<any>(row.results) };
+    }),
+
+  switchToPersona: protectedProcedure
+    .input(z.object({ personaId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND" });
+      const persona = await ctx.env.DB.prepare(
+        `SELECT * FROM twin_personas WHERE id=? AND twinId=?`
+      ).bind(input.personaId, twin.id).first<any>();
+      if (!persona) throw new TRPCError({ code: "NOT_FOUND", message: "ペルソナが見つかりません" });
+
+      await ctx.env.DB.prepare(
+        `UPDATE digital_twins SET personality=?, description=?, systemPrompt=? WHERE id=?`
+      ).bind(
+        persona.personality || twin.personality,
+        persona.description || twin.description,
+        persona.systemPrompt || twin.systemPrompt,
+        twin.id
+      ).run();
+
+      // Increment use count
+      await ctx.env.DB.prepare(`UPDATE twin_personas SET useCount = useCount + 1 WHERE id=?`).bind(input.personaId).run();
+
+      return { switched: true, personaName: persona.name };
+    }),
+
+  // ============ Weekly Review Auto-Generation ============
+
+  generateWeeklyReview: protectedProcedure
+    .input(z.object({ weekOffset: z.number().default(0) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "chat", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      // Calculate week range
+      const nowDate = new Date();
+      nowDate.setDate(nowDate.getDate() - (input.weekOffset * 7));
+      const dayOfWeek = nowDate.getDay();
+      const weekStart = new Date(nowDate);
+      weekStart.setDate(nowDate.getDate() - dayOfWeek);
+      weekStart.setHours(0, 0, 0, 0);
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekStart.getDate() + 6);
+      weekEnd.setHours(23, 59, 59, 999);
+
+      const startStr = weekStart.toISOString().split('T')[0];
+      const endStr = weekEnd.toISOString().split('T')[0];
+
+      // Gather week's data
+      const matchings = await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as count, AVG(mr.compatibilityScore) as avgScore, MAX(mr.compatibilityScore) as maxScore
+         FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id
+         WHERE ms.initiatorUserId=? AND ms.createdAt >= ? AND ms.createdAt <= ?`
+      ).bind(ctx.userId, startStr, endStr + 'T23:59:59').first<any>();
+
+      const chats = await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as count FROM chat_messages cm JOIN chat_sessions cs ON cs.id=cm.sessionId
+         WHERE cs.userId=? AND cm.createdAt >= ? AND cm.createdAt <= ?`
+      ).bind(ctx.userId, startStr, endStr + 'T23:59:59').first<any>();
+
+      const goals = await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as total, SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) as completed
+         FROM twin_goals WHERE userId=? AND updatedAt >= ? AND updatedAt <= ?`
+      ).bind(ctx.userId, startStr, endStr + 'T23:59:59').first<any>();
+
+      const emotions = await ctx.env.DB.prepare(
+        `SELECT AVG(json_extract(emotions, '$.joy')) as avgJoy, AVG(json_extract(emotions, '$.confidence')) as avgConfidence,
+                AVG(json_extract(emotions, '$.anxiety')) as avgAnxiety
+         FROM emotion_journal_entries WHERE userId=? AND createdAt >= ? AND createdAt <= ?`
+      ).bind(ctx.userId, startStr, endStr + 'T23:59:59').first<any>();
+
+      // Previous week for comparison
+      const prevStart = new Date(weekStart);
+      prevStart.setDate(prevStart.getDate() - 7);
+      const prevEnd = new Date(weekEnd);
+      prevEnd.setDate(prevEnd.getDate() - 7);
+      const prevStartStr = prevStart.toISOString().split('T')[0];
+      const prevEndStr = prevEnd.toISOString().split('T')[0];
+
+      const prevMatchings = await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as count, AVG(mr.compatibilityScore) as avgScore
+         FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id
+         WHERE ms.initiatorUserId=? AND ms.createdAt >= ? AND ms.createdAt <= ?`
+      ).bind(ctx.userId, prevStartStr, prevEndStr + 'T23:59:59').first<any>();
+
+      const stats = {
+        matchingCount: matchings?.count || 0,
+        avgScore: Math.round(matchings?.avgScore || 0),
+        maxScore: matchings?.maxScore || 0,
+        chatMessages: chats?.count || 0,
+        goalsTotal: goals?.total || 0,
+        goalsCompleted: goals?.completed || 0,
+        avgJoy: Math.round((emotions?.avgJoy || 0) * 10) / 10,
+        avgConfidence: Math.round((emotions?.avgConfidence || 0) * 10) / 10,
+        avgAnxiety: Math.round((emotions?.avgAnxiety || 0) * 10) / 10,
+        prevMatchingCount: prevMatchings?.count || 0,
+        prevAvgScore: Math.round(prevMatchings?.avgScore || 0),
+      };
+
+      const prompt = `以下のユーザーの1週間の活動データからウィークリーレビューを生成してください。
+
+期間: ${startStr} 〜 ${endStr}
+
+今週の活動:
+- マッチング: ${stats.matchingCount}回 (平均スコア: ${stats.avgScore}, 最高: ${stats.maxScore})
+- チャットメッセージ: ${stats.chatMessages}件
+- 目標: ${stats.goalsTotal}件中${stats.goalsCompleted}件達成
+- 感情平均: 喜び${stats.avgJoy}, 自信${stats.avgConfidence}, 不安${stats.avgAnxiety}
+
+前週比較:
+- マッチング数: ${stats.prevMatchingCount}回 → ${stats.matchingCount}回
+- 平均スコア: ${stats.prevAvgScore} → ${stats.avgScore}
+
+JSON形式で返してください:
+{
+  "summary": "今週のサマリー（2-3文）",
+  "improvements": [{"area": "改善エリア", "detail": "詳細", "change": "+10%など"}],
+  "deteriorations": [{"area": "悪化エリア", "detail": "詳細", "change": "-5%など"}],
+  "recommendations": [{"title": "推奨アクション", "description": "詳細", "priority": "high|medium|low"}]
+}`;
+
+      const resp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+      let review: any = {};
+      try { review = JSON.parse(resp.content); } catch {
+        review = {
+          summary: `${startStr}〜${endStr}の活動レビュー: マッチング${stats.matchingCount}回、チャット${stats.chatMessages}件`,
+          improvements: [],
+          deteriorations: [],
+          recommendations: [{ title: "マッチング頻度を増やす", description: "より多くの対話で経験を積みましょう", priority: "medium" }],
+        };
+      }
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO weekly_reviews (userId, weekStart, weekEnd, summary, improvements, deteriorations, recommendations, stats)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        ctx.userId, startStr, endStr,
+        review.summary || "",
+        toJson(review.improvements || []),
+        toJson(review.deteriorations || []),
+        toJson(review.recommendations || []),
+        toJson(stats)
+      ).run();
+
+      return { weekStart: startStr, weekEnd: endStr, ...review, stats };
+    }),
+
+  listWeeklyReviews: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT * FROM weekly_reviews WHERE userId=? ORDER BY weekStart DESC LIMIT 12`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({
+      ...r,
+      improvements: parseJson<any[]>(r.improvements),
+      deteriorations: parseJson<any[]>(r.deteriorations),
+      recommendations: parseJson<any[]>(r.recommendations),
+      stats: parseJson<any>(r.stats),
+    }));
+  }),
+
+  getWeeklyReview: protectedProcedure
+    .input(z.object({ weekStart: z.string() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM weekly_reviews WHERE userId=? AND weekStart=?`
+      ).bind(ctx.userId, input.weekStart).first<any>();
+      if (!row) return null;
+      return {
+        ...row,
+        improvements: parseJson<any[]>(row.improvements),
+        deteriorations: parseJson<any[]>(row.deteriorations),
+        recommendations: parseJson<any[]>(row.recommendations),
+        stats: parseJson<any>(row.stats),
+      };
+    }),
+
+  sendWeeklyReviewEmail: protectedProcedure
+    .input(z.object({ weekStart: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const review = await ctx.env.DB.prepare(
+        `SELECT * FROM weekly_reviews WHERE userId=? AND weekStart=?`
+      ).bind(ctx.userId, input.weekStart).first<any>();
+      if (!review) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const user = await ctx.env.DB.prepare(`SELECT email, name FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      if (!user?.email) throw new TRPCError({ code: "BAD_REQUEST", message: "メールアドレスが設定されていません" });
+
+      const improvements = parseJson<any[]>(review.improvements) || [];
+      const deteriorations = parseJson<any[]>(review.deteriorations) || [];
+      const recommendations = parseJson<any[]>(review.recommendations) || [];
+      const reviewStats = parseJson<any>(review.stats) || {};
+
+      const html = `<h2>ウィークリーレビュー: ${review.weekStart} 〜 ${review.weekEnd}</h2>
+        <p>${review.summary}</p>
+        <h3>統計</h3>
+        <ul><li>マッチング: ${reviewStats.matchingCount || 0}回 (平均: ${reviewStats.avgScore || 0}点)</li>
+        <li>チャット: ${reviewStats.chatMessages || 0}件</li>
+        <li>目標: ${reviewStats.goalsCompleted || 0}/${reviewStats.goalsTotal || 0}達成</li></ul>
+        ${improvements.length ? '<h3>改善ポイント</h3><ul>' + improvements.map((i: any) => `<li>${i.area}: ${i.detail}</li>`).join('') + '</ul>' : ''}
+        ${deteriorations.length ? '<h3>注意ポイント</h3><ul>' + deteriorations.map((d: any) => `<li>${d.area}: ${d.detail}</li>`).join('') + '</ul>' : ''}
+        <h3>来週の推奨アクション</h3>
+        <ol>${recommendations.map((r: any) => `<li><strong>${r.title}</strong>: ${r.description}</li>`).join('')}</ol>`;
+
+      if ((ctx.env as any).RESEND_API_KEY) {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${(ctx.env as any).RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: (ctx.env as any).RESEND_FROM_EMAIL || 'noreply@bunshin-ai.com',
+            to: user.email,
+            subject: `【分身AI】ウィークリーレビュー ${review.weekStart}〜${review.weekEnd}`,
+            html,
+          }),
+        });
+      }
+
+      await createNotification(ctx.env.DB, ctx.userId, 'weekly_review', 'ウィークリーレビュー', `${review.weekStart}の週次レビューが生成されました`, { link: '/weekly-review' });
+
+      return { sent: true };
+    }),
 
 });
