@@ -115,6 +115,9 @@ const SuccessPatterns = lazy(() => import("./pages/SuccessPatterns"));
 const InteractiveScenario = lazy(() => import("./pages/InteractiveScenario"));
 const PersonalityReport = lazy(() => import("./pages/PersonalityReport"));
 const TranslationChat = lazy(() => import("./pages/TranslationChat"));
+const MatchingSummary = lazy(() => import("./pages/MatchingSummary"));
+const ContextSwitcher = lazy(() => import("./pages/ContextSwitcher"));
+const ComparisonTimeline = lazy(() => import("./pages/ComparisonTimeline"));
 
 function PageLoader() {
   return (
@@ -234,6 +237,9 @@ function Router() {
         <Route path="/interactive-scenario" component={InteractiveScenario} />
         <Route path="/personality-report" component={PersonalityReport} />
         <Route path="/translation-chat" component={TranslationChat} />
+        <Route path="/matching-summary" component={MatchingSummary} />
+        <Route path="/context-switcher" component={ContextSwitcher} />
+        <Route path="/comparison-timeline" component={ComparisonTimeline} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

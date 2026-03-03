@@ -6758,4 +6758,216 @@ JSON形式で返してください:
     ).bind(ctx.userId).all<any>();
     return rows.results ?? [];
   }),
+
+  // ============ AI Moderator Auto-Summary ============
+
+  generateMatchingSummary: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT speaker, content, turnNumber FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(input.sessionId).all<any>();
+
+      const result = await ctx.env.DB.prepare(
+        `SELECT compatibilityScore, scoreBreakdown FROM matching_results WHERE sessionId=?`
+      ).bind(input.sessionId).first<any>();
+
+      const prompt = `あなたは中立的な第三者モデレーターです。以下のビジネスマッチング対話を要約してください。
+
+テーマ: ${session.theme}
+スコア: ${result?.compatibilityScore || 'N/A'}
+
+対話:
+${(dialogues.results ?? []).map((d: any) => `${d.speaker}: ${d.content}`).join('\n')}
+
+JSON形式で返してください:
+{
+  "summary": "全体要約（3-5文）",
+  "agreements": [{"item": "合意事項", "detail": "詳細"}],
+  "openIssues": [{"item": "未解決課題", "detail": "詳細", "priority": "high|medium|low"}],
+  "nextSteps": [{"step": "次ステップ", "owner": "担当者", "deadline": "推奨期限"}],
+  "risks": [{"risk": "リスク", "impact": "影響", "mitigation": "軽減策"}]
+}`;
+
+      const resp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+      let parsed: any = {};
+      try { parsed = JSON.parse(resp.content); } catch {
+        parsed = { summary: "要約生成中にエラーが発生しました", agreements: [], openIssues: [], nextSteps: [], risks: [] };
+      }
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO matching_summaries (sessionId, userId, summary, agreements, openIssues, nextSteps, risks)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        input.sessionId, ctx.userId, parsed.summary || "",
+        toJson(parsed.agreements || []), toJson(parsed.openIssues || []),
+        toJson(parsed.nextSteps || []), toJson(parsed.risks || [])
+      ).run();
+
+      return parsed;
+    }),
+
+  getMatchingSummary: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_summaries WHERE sessionId=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!row) return null;
+      return {
+        ...row,
+        agreements: parseJson<any[]>(row.agreements),
+        openIssues: parseJson<any[]>(row.openIssues),
+        nextSteps: parseJson<any[]>(row.nextSteps),
+        risks: parseJson<any[]>(row.risks),
+        distributedTo: parseJson<string[]>(row.distributedTo),
+      };
+    }),
+
+  distributeSummary: protectedProcedure
+    .input(z.object({ sessionId: z.number(), channels: z.array(z.enum(["email", "slack", "line", "app"])) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const summary = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_summaries WHERE sessionId=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!summary) throw new TRPCError({ code: "NOT_FOUND", message: "要約がありません" });
+
+      const user = await ctx.env.DB.prepare(`SELECT email, name FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+
+      for (const ch of input.channels) {
+        if (ch === "email" && user?.email && (ctx.env as any).RESEND_API_KEY) {
+          const agreements = parseJson<any[]>(summary.agreements) || [];
+          const nextSteps = parseJson<any[]>(summary.nextSteps) || [];
+          const html = `<h2>マッチング要約</h2><p>${summary.summary}</p>
+            ${agreements.length ? '<h3>合意事項</h3><ul>' + agreements.map((a: any) => `<li><strong>${a.item}</strong>: ${a.detail}</li>`).join('') + '</ul>' : ''}
+            ${nextSteps.length ? '<h3>次ステップ</h3><ul>' + nextSteps.map((s: any) => `<li><strong>${s.step}</strong> (${s.owner || '未定'})</li>`).join('') + '</ul>' : ''}`;
+          await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${(ctx.env as any).RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: (ctx.env as any).RESEND_FROM_EMAIL || 'noreply@bunshin-ai.com', to: user.email, subject: '【分身AI】マッチング要約', html }),
+          });
+        }
+        if (ch === "app") {
+          await createNotification(ctx.env.DB, ctx.userId, 'matching_summary', 'マッチング要約', summary.summary?.slice(0, 100) || '', { link: `/matching/${input.sessionId}` });
+        }
+      }
+
+      await ctx.env.DB.prepare(
+        `UPDATE matching_summaries SET distributedTo=? WHERE sessionId=? AND userId=?`
+      ).bind(toJson(input.channels), input.sessionId, ctx.userId).run();
+
+      return { distributed: input.channels };
+    }),
+
+  rateSummary: protectedProcedure
+    .input(z.object({ sessionId: z.number(), rating: z.enum(["up", "down"]) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(
+        `UPDATE matching_summaries SET feedbackRating=? WHERE sessionId=? AND userId=?`
+      ).bind(input.rating, input.sessionId, ctx.userId).run();
+      return { rated: true };
+    }),
+
+  // ============ Comparison Timeline ============
+
+  createComparisonTimeline: protectedProcedure
+    .input(z.object({ sessionIdA: z.number(), sessionIdB: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      const sessionA = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionIdA).first<any>();
+      const sessionB = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionIdB).first<any>();
+      if (!sessionA || !sessionB) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const dialoguesA = await ctx.env.DB.prepare(
+        `SELECT speaker, content, turnNumber FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(input.sessionIdA).all<any>();
+      const dialoguesB = await ctx.env.DB.prepare(
+        `SELECT speaker, content, turnNumber FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(input.sessionIdB).all<any>();
+
+      const resultA = await ctx.env.DB.prepare(`SELECT compatibilityScore, scoreBreakdown FROM matching_results WHERE sessionId=?`).bind(input.sessionIdA).first<any>();
+      const resultB = await ctx.env.DB.prepare(`SELECT compatibilityScore, scoreBreakdown FROM matching_results WHERE sessionId=?`).bind(input.sessionIdB).first<any>();
+
+      const prompt = `2つのマッチング対話を比較分析してください。
+
+【セッションA】テーマ: ${sessionA.theme}, スコア: ${resultA?.compatibilityScore || 'N/A'}
+${(dialoguesA.results ?? []).map((d: any) => `${d.speaker}: ${d.content}`).join('\n')}
+
+【セッションB】テーマ: ${sessionB.theme}, スコア: ${resultB?.compatibilityScore || 'N/A'}
+${(dialoguesB.results ?? []).map((d: any) => `${d.speaker}: ${d.content}`).join('\n')}
+
+JSON形式で返してください:
+{
+  "turnAnalysis": [{"turnNumber": 1, "sessionANote": "Aの評価", "sessionBNote": "Bの評価", "winner": "A|B|tie", "reason": "理由"}],
+  "overallVerdict": {"winner": "A|B|tie", "reason": "総合判定理由", "scoreA": ${resultA?.compatibilityScore || 0}, "scoreB": ${resultB?.compatibilityScore || 0}},
+  "keyDifferences": [{"aspect": "観点", "sessionA": "Aの特徴", "sessionB": "Bの特徴"}],
+  "highlights": [{"turnNumber": 1, "session": "A|B", "description": "注目ポイント"}]
+}`;
+
+      const resp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+      let comparison: any = {};
+      try { comparison = JSON.parse(resp.content); } catch {
+        comparison = { turnAnalysis: [], overallVerdict: { winner: "tie", reason: "分析不能" }, keyDifferences: [], highlights: [] };
+      }
+
+      const comparisonData = {
+        sessionA: { id: input.sessionIdA, theme: sessionA.theme, score: resultA?.compatibilityScore, dialogues: dialoguesA.results ?? [] },
+        sessionB: { id: input.sessionIdB, theme: sessionB.theme, score: resultB?.compatibilityScore, dialogues: dialoguesB.results ?? [] },
+        ...comparison,
+      };
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO comparison_timelines (userId, sessionIdA, sessionIdB, comparison, turnAnalysis, overallVerdict)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(
+        ctx.userId, input.sessionIdA, input.sessionIdB,
+        toJson(comparisonData), toJson(comparison.turnAnalysis || []), toJson(comparison.overallVerdict || {})
+      ).run();
+
+      return { id: res.meta?.last_row_id, ...comparisonData };
+    }),
+
+  getComparisonTimeline: protectedProcedure
+    .input(z.object({ comparisonId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM comparison_timelines WHERE id=? AND userId=?`
+      ).bind(input.comparisonId, ctx.userId).first<any>();
+      if (!row) return null;
+      return {
+        ...row,
+        comparison: parseJson<any>(row.comparison),
+        turnAnalysis: parseJson<any[]>(row.turnAnalysis),
+        overallVerdict: parseJson<any>(row.overallVerdict),
+      };
+    }),
+
+  listComparisonTimelines: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT ct.id, ct.sessionIdA, ct.sessionIdB, ct.createdAt,
+              msA.theme as themeA, msB.theme as themeB,
+              json_extract(ct.overallVerdict, '$.winner') as winner
+       FROM comparison_timelines ct
+       LEFT JOIN matching_sessions msA ON msA.id = ct.sessionIdA
+       LEFT JOIN matching_sessions msB ON msB.id = ct.sessionIdB
+       WHERE ct.userId=?
+       ORDER BY ct.createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
 });

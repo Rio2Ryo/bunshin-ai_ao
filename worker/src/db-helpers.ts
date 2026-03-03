@@ -1728,6 +1728,56 @@ CREATE TABLE IF NOT EXISTS translation_chat_sessions (
   createdAt TEXT DEFAULT (datetime('now')),
   UNIQUE(userId, friendId)
 );
+
+CREATE TABLE IF NOT EXISTS matching_summaries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  summary TEXT NOT NULL,
+  agreements TEXT,
+  openIssues TEXT,
+  nextSteps TEXT,
+  risks TEXT,
+  feedbackRating TEXT,
+  distributedTo TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, userId)
+);
+
+CREATE TABLE IF NOT EXISTS context_switch_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  ruleName TEXT NOT NULL,
+  conditionType TEXT NOT NULL,
+  conditionValue TEXT NOT NULL,
+  actionType TEXT NOT NULL,
+  actionValue TEXT NOT NULL,
+  priority INTEGER DEFAULT 0,
+  isActive INTEGER DEFAULT 1,
+  applyCount INTEGER DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS context_switch_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ruleId INTEGER NOT NULL,
+  sessionId INTEGER,
+  matchedCondition TEXT,
+  appliedAction TEXT,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS comparison_timelines (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  sessionIdA INTEGER NOT NULL,
+  sessionIdB INTEGER NOT NULL,
+  comparison TEXT NOT NULL,
+  turnAnalysis TEXT,
+  overallVerdict TEXT,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
 `;
 
 let schemaReady = false;

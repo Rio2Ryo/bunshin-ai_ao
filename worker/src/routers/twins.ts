@@ -3503,4 +3503,137 @@ ${reportData.mbti ? `<div class="card"><h2>MBTI</h2><p>${typeof reportData.mbti 
 
     return { sent: true };
   }),
+
+  // ============ Context Switcher ============
+
+  createContextRule: protectedProcedure
+    .input(z.object({
+      ruleName: z.string(),
+      conditionType: z.enum(["industry", "theme_keyword", "friend_attribute", "score_range", "time_of_day"]),
+      conditionValue: z.string(),
+      actionType: z.enum(["persona", "knowledge_set", "style", "system_prompt_append"]),
+      actionValue: z.string(),
+      priority: z.number().default(0),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO context_switch_rules (userId, twinId, ruleName, conditionType, conditionValue, actionType, actionValue, priority)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(ctx.userId, twin.id, input.ruleName, input.conditionType, input.conditionValue, input.actionType, input.actionValue, input.priority).run();
+
+      return { id: res.meta?.last_row_id, created: true };
+    }),
+
+  listContextRules: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT * FROM context_switch_rules WHERE userId=? ORDER BY priority DESC, createdAt DESC`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
+
+  updateContextRule: protectedProcedure
+    .input(z.object({
+      ruleId: z.number(),
+      ruleName: z.string().optional(),
+      conditionValue: z.string().optional(),
+      actionValue: z.string().optional(),
+      priority: z.number().optional(),
+      isActive: z.boolean().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const rule = await ctx.env.DB.prepare(`SELECT * FROM context_switch_rules WHERE id=? AND userId=?`).bind(input.ruleId, ctx.userId).first<any>();
+      if (!rule) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const updates: string[] = [];
+      const values: any[] = [];
+      if (input.ruleName !== undefined) { updates.push('ruleName=?'); values.push(input.ruleName); }
+      if (input.conditionValue !== undefined) { updates.push('conditionValue=?'); values.push(input.conditionValue); }
+      if (input.actionValue !== undefined) { updates.push('actionValue=?'); values.push(input.actionValue); }
+      if (input.priority !== undefined) { updates.push('priority=?'); values.push(input.priority); }
+      if (input.isActive !== undefined) { updates.push('isActive=?'); values.push(input.isActive ? 1 : 0); }
+
+      if (updates.length > 0) {
+        values.push(input.ruleId);
+        await ctx.env.DB.prepare(`UPDATE context_switch_rules SET ${updates.join(', ')} WHERE id=?`).bind(...values).run();
+      }
+      return { updated: true };
+    }),
+
+  deleteContextRule: protectedProcedure
+    .input(z.object({ ruleId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM context_switch_rules WHERE id=? AND userId=?`).bind(input.ruleId, ctx.userId).run();
+      return { deleted: true };
+    }),
+
+  evaluateContextRules: protectedProcedure
+    .input(z.object({ theme: z.string(), friendId: z.number().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const rules = await ctx.env.DB.prepare(
+        `SELECT * FROM context_switch_rules WHERE userId=? AND isActive=1 ORDER BY priority DESC`
+      ).bind(ctx.userId).all<any>();
+
+      let friendProfile: any = null;
+      if (input.friendId) {
+        friendProfile = await ctx.env.DB.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(input.friendId).first<any>();
+      }
+
+      const appliedRules: any[] = [];
+      for (const rule of (rules.results ?? []) as any[]) {
+        let matched = false;
+
+        if (rule.conditionType === 'theme_keyword') {
+          matched = input.theme.includes(rule.conditionValue);
+        } else if (rule.conditionType === 'industry' && friendProfile) {
+          matched = (friendProfile.industry || '').includes(rule.conditionValue);
+        } else if (rule.conditionType === 'friend_attribute' && friendProfile) {
+          const attrs = JSON.stringify(friendProfile);
+          matched = attrs.includes(rule.conditionValue);
+        }
+
+        if (matched) {
+          appliedRules.push({
+            ruleId: rule.id,
+            ruleName: rule.ruleName,
+            conditionType: rule.conditionType,
+            conditionValue: rule.conditionValue,
+            actionType: rule.actionType,
+            actionValue: rule.actionValue,
+          });
+
+          // Log the application
+          await ctx.env.DB.prepare(
+            `INSERT INTO context_switch_logs (ruleId, sessionId, matchedCondition, appliedAction)
+             VALUES (?, NULL, ?, ?)`
+          ).bind(rule.id, `${rule.conditionType}:${rule.conditionValue}`, `${rule.actionType}:${rule.actionValue}`).run();
+
+          // Increment apply count
+          await ctx.env.DB.prepare(`UPDATE context_switch_rules SET applyCount = applyCount + 1 WHERE id=?`).bind(rule.id).run();
+        }
+      }
+
+      return { appliedRules, totalEvaluated: rules.results?.length || 0 };
+    }),
+
+  getContextSwitchLogs: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT csl.*, csr.ruleName FROM context_switch_logs csl
+       JOIN context_switch_rules csr ON csr.id = csl.ruleId
+       WHERE csr.userId=?
+       ORDER BY csl.createdAt DESC LIMIT 50`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
 });
