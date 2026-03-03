@@ -259,6 +259,7 @@ function DashboardLayoutContent({
         { icon: ListTodo, label: language === "en" ? "Action Plans" : "アクションプラン", path: "/action-plans" },
         { icon: FolderArchive, label: language === "en" ? "Archive" : "アーカイブ", path: "/session-archive" },
         { icon: Flame, label: language === "en" ? "Streaks" : "ストリーク", path: "/streaks" },
+        { icon: Activity, label: language === "en" ? "Friend Activity" : "友達タイムライン", path: "/friend-activity" },
       ],
     },
     {

@@ -2190,6 +2190,19 @@ CREATE TABLE IF NOT EXISTS matching_achievements (
   claimedAt TEXT,
   UNIQUE(userId, achievementKey)
 );
+
+CREATE TABLE IF NOT EXISTS friend_activities (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  activityType TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  metadata TEXT DEFAULT '{}',
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_friend_activities_userId ON friend_activities(userId);
+CREATE INDEX IF NOT EXISTS idx_friend_activities_createdAt ON friend_activities(createdAt);
 `;
 
 let schemaReady = false;

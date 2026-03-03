@@ -612,4 +612,194 @@ JSON形式で出力:
       selfWaveform: selfData,
     };
   }),
+
+  listFriendActivities: protectedProcedure
+    .input(z.object({
+      limit: z.number().min(1).max(100).default(30),
+      offset: z.number().min(0).default(0),
+      activityType: z.string().optional(),
+    }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      // Get all accepted friend IDs
+      const friendRows = await ctx.env.DB
+        .prepare(
+          `SELECT CASE WHEN userId=? THEN friendId ELSE userId END as fId
+           FROM friendships WHERE (userId=? OR friendId=?) AND status='accepted'`
+        )
+        .bind(ctx.userId, ctx.userId, ctx.userId)
+        .all<any>();
+      const friendIds = (friendRows.results ?? []).map((r: any) => r.fId as number);
+
+      if (friendIds.length === 0) {
+        return { activities: [], total: 0, hasMore: false };
+      }
+
+      const placeholders = friendIds.map(() => "?").join(",");
+
+      // Build WHERE clause
+      let whereClause = `fa.userId IN (${placeholders})`;
+      const bindParams: any[] = [...friendIds];
+      if (input.activityType) {
+        whereClause += ` AND fa.activityType = ?`;
+        bindParams.push(input.activityType);
+      }
+
+      // Get total count
+      const countRow = await ctx.env.DB
+        .prepare(`SELECT COUNT(*) as cnt FROM friend_activities fa WHERE ${whereClause}`)
+        .bind(...bindParams)
+        .first<any>();
+      const total = countRow?.cnt ?? 0;
+
+      // Get paginated activities with user info
+      const rows = await ctx.env.DB
+        .prepare(
+          `SELECT fa.id, fa.userId, fa.activityType, fa.title, fa.description, fa.metadata, fa.createdAt,
+                  u.name as userName,
+                  up.avatarUrl
+           FROM friend_activities fa
+           JOIN users u ON u.id = fa.userId
+           LEFT JOIN user_profiles up ON up.userId = fa.userId
+           WHERE ${whereClause}
+           ORDER BY fa.createdAt DESC
+           LIMIT ? OFFSET ?`
+        )
+        .bind(...bindParams, input.limit, input.offset)
+        .all<any>();
+
+      const activities = (rows.results ?? []).map((r: any) => ({
+        id: r.id,
+        userId: r.userId,
+        userName: r.userName,
+        avatarUrl: r.avatarUrl || null,
+        activityType: r.activityType,
+        title: r.title,
+        description: r.description || null,
+        metadata: parseJson<Record<string, any>>(r.metadata),
+        createdAt: r.createdAt,
+      }));
+
+      return {
+        activities,
+        total,
+        hasMore: input.offset + input.limit < total,
+      };
+    }),
+
+  recordActivity: protectedProcedure
+    .input(z.object({
+      activityType: z.enum([
+        "matching_complete",
+        "twin_update",
+        "template_publish",
+        "challenge_join",
+        "achievement_unlock",
+        "friend_add",
+        "scenario_publish",
+        "negotiation_complete",
+        "streak_milestone",
+      ]),
+      title: z.string(),
+      description: z.string().optional(),
+      metadata: z.record(z.string(), z.any()).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      const result = await ctx.env.DB
+        .prepare(
+          `INSERT INTO friend_activities (userId, activityType, title, description, metadata)
+           VALUES (?, ?, ?, ?, ?)`
+        )
+        .bind(
+          ctx.userId,
+          input.activityType,
+          input.title,
+          input.description || null,
+          input.metadata ? toJson(input.metadata) : "{}",
+        )
+        .run();
+
+      const id = result.meta?.last_row_id ?? 0;
+
+      return { id, created: true };
+    }),
+
+  getActivityStats: protectedProcedure
+    .query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+
+      // Get all accepted friend IDs
+      const friendRows = await ctx.env.DB
+        .prepare(
+          `SELECT CASE WHEN userId=? THEN friendId ELSE userId END as fId
+           FROM friendships WHERE (userId=? OR friendId=?) AND status='accepted'`
+        )
+        .bind(ctx.userId, ctx.userId, ctx.userId)
+        .all<any>();
+      const friendIds = (friendRows.results ?? []).map((r: any) => r.fId as number);
+
+      if (friendIds.length === 0) {
+        return {
+          totalThisWeek: 0,
+          byType: {} as Record<string, number>,
+          mostActiveFriend: null,
+        };
+      }
+
+      const placeholders = friendIds.map(() => "?").join(",");
+
+      // Total activities in last 7 days
+      const totalRow = await ctx.env.DB
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM friend_activities
+           WHERE userId IN (${placeholders})
+           AND createdAt >= datetime('now', '-7 days')`
+        )
+        .bind(...friendIds)
+        .first<any>();
+      const totalThisWeek = totalRow?.cnt ?? 0;
+
+      // Count by activityType in last 7 days
+      const typeRows = await ctx.env.DB
+        .prepare(
+          `SELECT activityType, COUNT(*) as cnt FROM friend_activities
+           WHERE userId IN (${placeholders})
+           AND createdAt >= datetime('now', '-7 days')
+           GROUP BY activityType`
+        )
+        .bind(...friendIds)
+        .all<any>();
+      const byType: Record<string, number> = {};
+      for (const r of (typeRows.results ?? [])) {
+        byType[r.activityType] = r.cnt;
+      }
+
+      // Most active friend in last 7 days
+      const activeRow = await ctx.env.DB
+        .prepare(
+          `SELECT fa.userId, u.name, COUNT(*) as cnt
+           FROM friend_activities fa
+           JOIN users u ON u.id = fa.userId
+           WHERE fa.userId IN (${placeholders})
+           AND fa.createdAt >= datetime('now', '-7 days')
+           GROUP BY fa.userId
+           ORDER BY cnt DESC
+           LIMIT 1`
+        )
+        .bind(...friendIds)
+        .first<any>();
+
+      const mostActiveFriend = activeRow
+        ? { id: activeRow.userId, name: activeRow.name, count: activeRow.cnt }
+        : null;
+
+      return {
+        totalThisWeek,
+        byType,
+        mostActiveFriend,
+      };
+    }),
 });
