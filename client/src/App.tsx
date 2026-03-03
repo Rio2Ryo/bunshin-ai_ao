@@ -139,6 +139,9 @@ const SecondOpinion = lazy(() => import("./pages/SecondOpinion"));
 const TrustProgress = lazy(() => import("./pages/TrustProgress"));
 const MultimodalInput = lazy(() => import("./pages/MultimodalInput"));
 const BrainstormMode = lazy(() => import("./pages/BrainstormMode"));
+const VoiceNotes = lazy(() => import("./pages/VoiceNotes"));
+const TwinFaq = lazy(() => import("./pages/TwinFaq"));
+const DailyBriefing = lazy(() => import("./pages/DailyBriefing"));
 
 function PageLoader() {
   return (
@@ -282,6 +285,9 @@ function Router() {
         <Route path="/trust-progress" component={TrustProgress} />
         <Route path="/multimodal-input" component={MultimodalInput} />
         <Route path="/brainstorm" component={BrainstormMode} />
+        <Route path="/voice-notes" component={VoiceNotes} />
+        <Route path="/twin-faq" component={TwinFaq} />
+        <Route path="/daily-briefing" component={DailyBriefing} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

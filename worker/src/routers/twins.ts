@@ -4736,4 +4736,98 @@ ${reportData.mbti ? `<div class="card"><h2>MBTI</h2><p>${typeof reportData.mbti 
     return rows.results ?? [];
   }),
 
+  // ============ FAQ Generation ============
+
+  generateFaq: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+    // Gather knowledge + matching dialogues
+    const knowledge = await ctx.env.DB.prepare(
+      `SELECT title, content, summary FROM knowledge_base WHERE twinId=? LIMIT 20`
+    ).bind(twin.id).all<any>();
+
+    const dialogues = await ctx.env.DB.prepare(
+      `SELECT md.content, md.speakerTwinId FROM matching_dialogues md
+       JOIN matching_sessions ms ON md.sessionId=ms.id
+       WHERE (ms.twin1Id=? OR ms.twin2Id=?) ORDER BY md.id DESC LIMIT 30`
+    ).bind(twin.id, twin.id).all<any>();
+
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "faq_generation", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+    const knowledgeText = (knowledge.results ?? []).map((k: any) => `[${k.title}] ${k.summary || k.content?.slice(0, 200)}`).join("\n");
+    const dialogueText = (dialogues.results ?? []).map((d: any) => d.content?.slice(0, 150)).join("\n");
+
+    const result = await invokeLLM(llmConfig, [
+      { role: "system", content: `あなたはFAQ生成の専門家です。ツインの知識ベースと対話パターンから、よく聞かれそうな質問と回答を10件生成してください。ビジネスマッチングの文脈で有用なFAQにしてください。JSON形式: { "faqs": [{ "question": "質問", "answer": "回答" }] }` },
+      { role: "user", content: `ツイン名: ${twin.name}\n説明: ${twin.description || ""}\n人格: ${twin.personality || ""}\n\nナレッジ:\n${knowledgeText}\n\n対話パターン:\n${dialogueText}` }
+    ], { maxTokens: 2000 });
+
+    let faqs: { question: string; answer: string }[] = [];
+    try {
+      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        faqs = (parsed.faqs || []).slice(0, 10);
+      }
+    } catch {}
+
+    if (!faqs.length) {
+      faqs = [{ question: "このツインは何ができますか？", answer: twin.description || "ビジネスマッチングのお手伝いをします。" }];
+    }
+
+    // Delete old FAQs and insert new ones
+    await ctx.env.DB.prepare(`DELETE FROM twin_faqs WHERE twinId=? AND userId=?`).bind(twin.id, ctx.userId).run();
+
+    for (let i = 0; i < faqs.length; i++) {
+      await ctx.env.DB.prepare(
+        `INSERT INTO twin_faqs (twinId, userId, question, answer, sortOrder) VALUES (?,?,?,?,?)`
+      ).bind(twin.id, ctx.userId, faqs[i].question, faqs[i].answer, i).run();
+    }
+
+    return { count: faqs.length, faqs };
+  }),
+
+  getFaqs: protectedProcedure
+    .input(z.object({ twinId: z.number().optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twinId = input?.twinId;
+      let rows;
+      if (twinId) {
+        rows = await ctx.env.DB.prepare(
+          `SELECT * FROM twin_faqs WHERE twinId=? AND isPublic=1 ORDER BY sortOrder ASC`
+        ).bind(twinId).all<any>();
+      } else {
+        const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+        if (!twin) return [];
+        rows = await ctx.env.DB.prepare(
+          `SELECT * FROM twin_faqs WHERE twinId=? AND userId=? ORDER BY sortOrder ASC`
+        ).bind(twin.id, ctx.userId).all<any>();
+      }
+      return rows.results ?? [];
+    }),
+
+  toggleFaqPublic: protectedProcedure
+    .input(z.object({ faqId: z.number(), isPublic: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(
+        `UPDATE twin_faqs SET isPublic=? WHERE id=? AND userId=?`
+      ).bind(input.isPublic ? 1 : 0, input.faqId, ctx.userId).run();
+      return { updated: true };
+    }),
+
+  deleteFaq: protectedProcedure
+    .input(z.object({ faqId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(
+        `DELETE FROM twin_faqs WHERE id=? AND userId=?`
+      ).bind(input.faqId, ctx.userId).run();
+      return { deleted: true };
+    }),
+
 });

@@ -2098,6 +2098,41 @@ CREATE TABLE IF NOT EXISTS brainstorm_sessions (
   createdAt TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS matching_voice_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  turnNumber INTEGER,
+  userId INTEGER NOT NULL,
+  transcript TEXT NOT NULL,
+  summary TEXT,
+  actionItems TEXT,
+  duration INTEGER DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS twin_faqs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  twinId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  isPublic INTEGER DEFAULT 1,
+  sortOrder INTEGER DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS daily_briefings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  briefingDate TEXT NOT NULL,
+  content TEXT NOT NULL,
+  recommendations TEXT,
+  followUps TEXT,
+  isDismissed INTEGER DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(userId, briefingDate)
+);
+
 `;
 
 let schemaReady = false;

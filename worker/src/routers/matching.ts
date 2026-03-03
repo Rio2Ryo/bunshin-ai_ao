@@ -7952,5 +7952,171 @@ JSON形式で返してください:
     ).bind(ctx.userId).all<any>();
     return rows.results ?? [];
   }),
+  // ============ Voice Notes ============
+
+  addVoiceNote: protectedProcedure
+    .input(z.object({
+      sessionId: z.number(),
+      turnNumber: z.number().optional(),
+      transcript: z.string().min(1),
+      duration: z.number().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO matching_voice_notes (sessionId, turnNumber, userId, transcript, duration) VALUES (?,?,?,?,?)`
+      ).bind(input.sessionId, input.turnNumber ?? null, ctx.userId, input.transcript, input.duration ?? 0).run();
+      return { id: res.meta?.last_row_id };
+    }),
+
+  getVoiceNotes: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_voice_notes WHERE sessionId=? AND userId=? ORDER BY createdAt ASC`
+      ).bind(input.sessionId, ctx.userId).all<any>();
+      return (rows.results ?? []).map((r: any) => ({
+        ...r,
+        actionItems: parseJson<string[]>(r.actionItems) || [],
+      }));
+    }),
+
+  summarizeVoiceNotes: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const notes = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_voice_notes WHERE sessionId=? AND userId=? ORDER BY createdAt ASC`
+      ).bind(input.sessionId, ctx.userId).all<any>();
+      if (!notes.results?.length) throw new TRPCError({ code: "NOT_FOUND", message: "音声ノートがありません" });
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "voice_note_summary", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+      const allTranscripts = (notes.results ?? []).map((n: any) => `[ターン${n.turnNumber || "全体"}] ${n.transcript}`).join("\n");
+
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "あなたはビジネスミーティングのノート分析専門家です。音声メモを分析し、要約とアクションアイテムを抽出してください。JSON形式: { \"summary\": \"全体要約\", \"actionItems\": [\"アクション1\", \"アクション2\"], \"keyInsights\": [\"洞察1\"] }" },
+        { role: "user", content: `以下の音声メモを分析してください:\n${allTranscripts}` }
+      ], { maxTokens: 1000 });
+
+      let parsed: any = { summary: result.content, actionItems: [], keyInsights: [] };
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch {}
+
+      // Update all notes with summary
+      for (const note of notes.results ?? []) {
+        await ctx.env.DB.prepare(
+          `UPDATE matching_voice_notes SET summary=?, actionItems=? WHERE id=?`
+        ).bind(parsed.summary, toJson(parsed.actionItems || []), (note as any).id).run();
+      }
+
+      return { summary: parsed.summary, actionItems: parsed.actionItems || [], keyInsights: parsed.keyInsights || [] };
+    }),
+
+  // ============ Daily Briefing ============
+
+  generateBriefing: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const today = new Date().toISOString().split("T")[0];
+
+    // Check if already generated today
+    const existing = await ctx.env.DB.prepare(
+      `SELECT * FROM daily_briefings WHERE userId=? AND briefingDate=?`
+    ).bind(ctx.userId, today).first<any>();
+    if (existing && !existing.isDismissed) {
+      return {
+        id: existing.id,
+        content: existing.content,
+        recommendations: parseJson<any[]>(existing.recommendations) || [],
+        followUps: parseJson<any[]>(existing.followUps) || [],
+        briefingDate: existing.briefingDate,
+      };
+    }
+
+    // Gather context data
+    const recentMatchings = await ctx.env.DB.prepare(
+      `SELECT ms.id, ms.theme, ms.status, mr.compatibilityScore, ms.createdAt
+       FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id
+       WHERE ms.initiatorUserId=? ORDER BY ms.createdAt DESC LIMIT 5`
+    ).bind(ctx.userId).all<any>();
+
+    const pendingActions = await ctx.env.DB.prepare(
+      `SELECT * FROM matching_action_items WHERE userId=? AND status IN ('pending','in_progress') ORDER BY dueDate ASC LIMIT 5`
+    ).bind(ctx.userId).all<any>();
+
+    const friendCount = await ctx.env.DB.prepare(
+      `SELECT COUNT(*) as cnt FROM friendships WHERE (userId1=? OR userId2=?) AND status='accepted'`
+    ).bind(ctx.userId, ctx.userId).first<any>();
+
+    const goals = await ctx.env.DB.prepare(
+      `SELECT * FROM twin_goals WHERE userId=? AND status='active' LIMIT 3`
+    ).bind(ctx.userId).all<any>();
+
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "daily_briefing", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が見つかりません" });
+
+    const contextText = [
+      `最近のマッチング: ${(recentMatchings.results ?? []).map((m: any) => `${m.theme}(${m.compatibilityScore || "未"}%)`).join(", ") || "なし"}`,
+      `未完了アクション: ${(pendingActions.results ?? []).length}件`,
+      `友達数: ${friendCount?.cnt || 0}`,
+      `アクティブ目標: ${(goals.results ?? []).map((g: any) => g.title || g.goalType).join(", ") || "なし"}`,
+    ].join("\n");
+
+    const result = await invokeLLM(llmConfig, [
+      { role: "system", content: "あなたはビジネスマッチングプラットフォームのAIアシスタントです。ユーザーの活動データから今日の推奨アクションをパーソナライズして提案してください。JSON形式: { \"greeting\": \"おはようございます...\", \"summary\": \"今日のサマリー\", \"recommendations\": [{ \"type\": \"matching|followup|goal|social\", \"title\": \"推奨タイトル\", \"description\": \"詳細\", \"priority\": \"high|medium|low\" }], \"followUps\": [{ \"friendName\": \"友達名\", \"reason\": \"フォローアップ理由\", \"suggestedAction\": \"提案アクション\" }] }" },
+      { role: "user", content: `今日は${today}です。以下のデータに基づいて今日のブリーフィングを生成してください:\n${contextText}` }
+    ], { maxTokens: 1500 });
+
+    let parsed: any = { greeting: "", summary: result.content, recommendations: [], followUps: [] };
+    try {
+      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+    } catch {}
+
+    const content = parsed.greeting ? `${parsed.greeting}\n\n${parsed.summary}` : parsed.summary;
+
+    const res = await ctx.env.DB.prepare(
+      `INSERT OR REPLACE INTO daily_briefings (userId, briefingDate, content, recommendations, followUps) VALUES (?,?,?,?,?)`
+    ).bind(ctx.userId, today, content, toJson(parsed.recommendations || []), toJson(parsed.followUps || [])).run();
+
+    return {
+      id: res.meta?.last_row_id,
+      content,
+      recommendations: parsed.recommendations || [],
+      followUps: parsed.followUps || [],
+      briefingDate: today,
+    };
+  }),
+
+  getBriefing: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const today = new Date().toISOString().split("T")[0];
+    const row = await ctx.env.DB.prepare(
+      `SELECT * FROM daily_briefings WHERE userId=? AND briefingDate=? AND isDismissed=0`
+    ).bind(ctx.userId, today).first<any>();
+    if (!row) return null;
+    return {
+      id: row.id,
+      content: row.content,
+      recommendations: parseJson<any[]>(row.recommendations) || [],
+      followUps: parseJson<any[]>(row.followUps) || [],
+      briefingDate: row.briefingDate,
+    };
+  }),
+
+  dismissBriefing: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(
+        `UPDATE daily_briefings SET isDismissed=1 WHERE id=? AND userId=?`
+      ).bind(input.id, ctx.userId).run();
+      return { dismissed: true };
+    }),
+
 
 });
