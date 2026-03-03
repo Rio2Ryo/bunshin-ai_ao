@@ -1507,6 +1507,42 @@ CREATE TABLE IF NOT EXISTS community_event_participants (
   createdAt TEXT DEFAULT (datetime('now')),
   UNIQUE(eventId, userId)
 );
+
+CREATE TABLE IF NOT EXISTS replay_commentaries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  commentaries TEXT NOT NULL,
+  shareCode TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, userId)
+);
+
+CREATE TABLE IF NOT EXISTS twin_goals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  goalType TEXT NOT NULL,
+  title TEXT NOT NULL,
+  targetValue REAL NOT NULL,
+  currentValue REAL DEFAULT 0,
+  unit TEXT,
+  deadline TEXT,
+  status TEXT DEFAULT 'active',
+  milestones TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS matching_heatmap_analyses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  heatmapData TEXT NOT NULL,
+  clusters TEXT,
+  weaknesses TEXT,
+  suggestions TEXT,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
 `;
 
 let schemaReady = false;

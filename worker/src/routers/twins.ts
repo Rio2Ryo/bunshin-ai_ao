@@ -2541,4 +2541,145 @@ JSON形式: {"overallMood":"全体的な気分","stressLevel":"low|medium|high",
     return advice;
   }),
 
+
+  // ============ Twin Goal Setting & Progress Tracker ============
+
+  createGoal: protectedProcedure
+    .input(z.object({
+      goalType: z.enum(["skill", "score", "matching_count", "knowledge", "feedback", "custom"]),
+      title: z.string().min(1),
+      targetValue: z.number().min(1),
+      unit: z.string().optional(),
+      deadline: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO twin_goals (userId, twinId, goalType, title, targetValue, unit, deadline) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(ctx.userId, twin.id, input.goalType, input.title, input.targetValue, input.unit || null, input.deadline || null).run();
+      return { id: Number(res.meta.last_row_id) };
+    }),
+
+  listGoals: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT * FROM twin_goals WHERE userId=? ORDER BY status ASC, createdAt DESC`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, milestones: parseJson<any[]>(r.milestones) || [] }));
+  }),
+
+  updateGoalProgress: protectedProcedure
+    .input(z.object({ goalId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const goal = await ctx.env.DB.prepare(`SELECT * FROM twin_goals WHERE id=? AND userId=?`).bind(input.goalId, ctx.userId).first<any>();
+      if (!goal) throw new TRPCError({ code: "NOT_FOUND" });
+
+      let currentValue = 0;
+
+      switch (goal.goalType) {
+        case "score": {
+          const avg = await ctx.env.DB.prepare(
+            `SELECT AVG(mr.compatibilityScore) as avg FROM matching_results mr JOIN matching_sessions ms ON ms.id = mr.sessionId WHERE ms.initiatorUserId = ? AND mr.compatibilityScore IS NOT NULL`
+          ).bind(ctx.userId).first<any>();
+          currentValue = Math.round(avg?.avg || 0);
+          break;
+        }
+        case "matching_count": {
+          const count = await ctx.env.DB.prepare(
+            `SELECT COUNT(*) as c FROM matching_sessions WHERE initiatorUserId = ?`
+          ).bind(ctx.userId).first<any>();
+          currentValue = count?.c || 0;
+          break;
+        }
+        case "knowledge": {
+          const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+          const kbCount = await ctx.env.DB.prepare(
+            `SELECT COUNT(*) as c FROM knowledge_base WHERE twinId = ?`
+          ).bind(twin?.id || 0).first<any>();
+          currentValue = kbCount?.c || 0;
+          break;
+        }
+        case "feedback": {
+          const fbCount = await ctx.env.DB.prepare(
+            `SELECT COUNT(*) as c FROM dialogue_feedback WHERE userId = ? AND rating = 'up'`
+          ).bind(ctx.userId).first<any>();
+          currentValue = fbCount?.c || 0;
+          break;
+        }
+        case "skill": {
+          const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+          const skillAvg = await ctx.env.DB.prepare(
+            `SELECT AVG(level) as avg FROM twin_skill_levels WHERE twinId = ?`
+          ).bind(twin?.id || 0).first<any>();
+          currentValue = Math.round(skillAvg?.avg || 0);
+          break;
+        }
+        default:
+          currentValue = goal.currentValue || 0;
+      }
+
+      const wasCompleted = goal.status === "completed";
+      const nowCompleted = currentValue >= goal.targetValue;
+
+      await ctx.env.DB.prepare(
+        `UPDATE twin_goals SET currentValue=?, status=?, updatedAt=datetime('now') WHERE id=?`
+      ).bind(currentValue, nowCompleted ? "completed" : "active", input.goalId).run();
+
+      // Award points on first completion
+      let pointsAwarded = 0;
+      if (nowCompleted && !wasCompleted) {
+        pointsAwarded = 50;
+        try {
+          await ctx.env.DB.prepare(
+            `UPDATE user_points SET balance = balance + ?, totalEarned = totalEarned + ? WHERE userId = ?`
+          ).bind(pointsAwarded, pointsAwarded, ctx.userId).run();
+          await ctx.env.DB.prepare(
+            `INSERT INTO point_transactions (userId, amount, type, description) VALUES (?, ?, 'earn', ?)`
+          ).bind(ctx.userId, pointsAwarded, `目標達成: ${goal.title}`).run();
+        } catch { /* points table may not exist for this user */ }
+      }
+
+      return { currentValue, completed: nowCompleted, pointsAwarded };
+    }),
+
+  deleteGoal: protectedProcedure
+    .input(z.object({ goalId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM twin_goals WHERE id=? AND userId=?`).bind(input.goalId, ctx.userId).run();
+      return { deleted: true };
+    }),
+
+  getGoalSuggestions: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "chat", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    const matchCount = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM matching_sessions WHERE initiatorUserId=?`).bind(ctx.userId).first<any>();
+    const avgScore = await ctx.env.DB.prepare(`SELECT AVG(mr.compatibilityScore) as avg FROM matching_results mr JOIN matching_sessions ms ON ms.id=mr.sessionId WHERE ms.initiatorUserId=?`).bind(ctx.userId).first<any>();
+    const existingGoals = await ctx.env.DB.prepare(`SELECT goalType, title, status FROM twin_goals WHERE userId=?`).bind(ctx.userId).all<any>();
+
+    const prompt = `ツインの成長目標を3件提案してください。
+
+ツイン情報:
+- 名前: ${twin?.name || '未設定'}
+- 人格: ${twin?.personality || '未設定'}
+- マッチング数: ${matchCount?.c || 0}
+- 平均スコア: ${Math.round(avgScore?.avg || 0)}
+- 既存目標: ${JSON.stringify(existingGoals.results ?? [])}
+
+JSON配列で返してください:
+[{"goalType":"skill|score|matching_count|knowledge|feedback","title":"目標タイトル","targetValue":数値,"unit":"単位","reason":"理由"}]`;
+
+    const result = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+    let suggestions: any[] = [];
+    try { const p = JSON.parse(result.content); suggestions = Array.isArray(p) ? p : p.suggestions || []; } catch { suggestions = [{ goalType: "matching_count", title: "マッチング10回達成", targetValue: 10, unit: "回", reason: "経験値を積む" }]; }
+    return { suggestions };
+  }),
+
 });

@@ -100,6 +100,9 @@ const TwinBenchmark = lazy(() => import("./pages/TwinBenchmark"));
 const DebateMode = lazy(() => import("./pages/DebateMode"));
 const EmotionJournal = lazy(() => import("./pages/EmotionJournal"));
 const CommunityEvents = lazy(() => import("./pages/CommunityEvents"));
+const ReplayCommentary = lazy(() => import("./pages/ReplayCommentary"));
+const TwinGoals = lazy(() => import("./pages/TwinGoals"));
+const MatchingHeatmap = lazy(() => import("./pages/MatchingHeatmap"));
 
 function PageLoader() {
   return (
@@ -204,6 +207,9 @@ function Router() {
         <Route path="/debate" component={DebateMode} />
         <Route path="/emotion-journal" component={EmotionJournal} />
         <Route path="/events" component={CommunityEvents} />
+        <Route path="/replay-commentary" component={ReplayCommentary} />
+        <Route path="/goals" component={TwinGoals} />
+        <Route path="/heatmap" component={MatchingHeatmap} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

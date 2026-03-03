@@ -5786,4 +5786,140 @@ JSON形式: {"summary":"要約","highlights":["ハイライト1"],"bestPair":{"n
       return { pairs: pairs.map(p => ({ user1: p.user1.twinName, user2: p.user2.twinName, score: p.score })), reportData };
     }),
 
+
+  // ============ Replay Commentary AI ============
+
+  generateCommentaryForReplay: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT turnNumber, speaker, content FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber ASC`
+      ).bind(input.sessionId).all<any>();
+      if (!dialogues.results?.length) throw new TRPCError({ code: "BAD_REQUEST", message: "対話データがありません" });
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+      const dialogueText = (dialogues.results ?? []).map((d: any) => `ターン${d.turnNumber} [${d.speaker}]: ${d.content}`).join('\n\n');
+
+      const prompt = `以下のビジネスマッチング対話の各ターンに対して、AIコメンタリー（解説）を生成してください。
+
+${dialogueText}
+
+各ターンについて以下を分析してJSON配列で返してください:
+[{"turn":1,"technique":"使用されている交渉テクニック名","pattern":"戦略パターン（例：協調型/競争型/探索型）","improvement":"改善ポイント","insight":"注目すべきポイント","score":0-10}]`;
+
+      const result = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+      let commentaries: any[] = [];
+      try { const p = JSON.parse(result.content); commentaries = Array.isArray(p) ? p : p.commentaries || []; } catch { commentaries = (dialogues.results ?? []).map((d: any) => ({ turn: d.turnNumber, technique: "分析中", pattern: "不明", improvement: "", insight: "", score: 5 })); }
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO replay_commentaries (sessionId, userId, commentaries) VALUES (?, ?, ?)`
+      ).bind(input.sessionId, ctx.userId, toJson(commentaries)).run();
+
+      return { commentaries };
+    }),
+
+  getReplayCommentary: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM replay_commentaries WHERE sessionId=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!row) return null;
+      return { ...row, commentaries: parseJson<any[]>(row.commentaries) };
+    }),
+
+  shareReplayCommentary: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const code = [...Array(16)].map(() => Math.random().toString(16).charAt(2)).join('');
+      await ctx.env.DB.prepare(
+        `UPDATE replay_commentaries SET shareCode=? WHERE sessionId=? AND userId=?`
+      ).bind(code, input.sessionId, ctx.userId).run();
+      return { shareCode: code };
+    }),
+
+  // ============ Matching Heatmap Analysis ============
+
+  generateHeatmap: protectedProcedure.mutation(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+
+    const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
+    if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
+
+    // Gather all matching results with score breakdowns
+    const results = await ctx.env.DB.prepare(
+      `SELECT mr.sessionId, mr.compatibilityScore, mr.scoreBreakdown, ms.theme,
+              COALESCE(u.name, 'Unknown') as friendName,
+              CASE WHEN ms.initiatorUserId = ? THEN json_extract(ms.settings, '$.friendId') ELSE ms.initiatorUserId END as friendId
+       FROM matching_results mr
+       JOIN matching_sessions ms ON ms.id = mr.sessionId
+       LEFT JOIN users u ON u.id = CASE WHEN ms.initiatorUserId = ? THEN json_extract(ms.settings, '$.friendId') ELSE ms.initiatorUserId END
+       WHERE (ms.initiatorUserId = ? OR json_extract(ms.settings, '$.friendId') = ?)
+       AND mr.scoreBreakdown IS NOT NULL
+       ORDER BY mr.id DESC LIMIT 50`
+    ).bind(ctx.userId, ctx.userId, ctx.userId, ctx.userId).all<any>();
+
+    const heatmapData: any[] = [];
+    const dimensions = ["skillMatch", "valueAlignment", "communicationStyle", "innovationPotential", "trustFactor", "personalityCompatibility"];
+
+    for (const r of results.results ?? []) {
+      const breakdown = parseJson<any>(r.scoreBreakdown) || {};
+      const row: any = {
+        sessionId: r.sessionId,
+        friendName: r.friendName,
+        friendId: r.friendId,
+        theme: r.theme,
+        overallScore: r.compatibilityScore,
+      };
+      for (const dim of dimensions) {
+        row[dim] = breakdown[dim] || 0;
+      }
+      heatmapData.push(row);
+    }
+
+    // LLM clustering + weakness analysis
+    const prompt = `以下のマッチングヒートマップデータを分析してください。
+
+データ (友達×6次元スコア):
+${JSON.stringify(heatmapData.slice(0, 20))}
+
+6次元: skillMatch(スキル), valueAlignment(価値観), communicationStyle(コミュニケーション), innovationPotential(革新性), trustFactor(信頼), personalityCompatibility(人格互換性)
+
+JSON形式で返してください:
+{"clusters":[{"name":"クラスタ名","members":["友達名"],"characteristic":"特徴"}],"weaknesses":[{"dimension":"弱い次元","avgScore":数値,"affectedFriends":["友達名"],"reason":"原因"}],"suggestions":[{"title":"改善提案","description":"詳細","targetDimension":"対象次元","priority":"high|medium|low"}],"summary":"総合分析"}`;
+
+    const analysisResp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+    let analysis: any = {};
+    try { analysis = JSON.parse(analysisResp.content); } catch { analysis = { clusters: [], weaknesses: [], suggestions: [], summary: "分析中" }; }
+
+    await ctx.env.DB.prepare(
+      `INSERT INTO matching_heatmap_analyses (userId, heatmapData, clusters, weaknesses, suggestions) VALUES (?, ?, ?, ?, ?)`
+    ).bind(ctx.userId, toJson(heatmapData), toJson(analysis.clusters), toJson(analysis.weaknesses), toJson(analysis.suggestions)).run();
+
+    return { heatmapData, ...analysis };
+  }),
+
+  getHeatmap: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const row = await ctx.env.DB.prepare(
+      `SELECT * FROM matching_heatmap_analyses WHERE userId=? ORDER BY createdAt DESC LIMIT 1`
+    ).bind(ctx.userId).first<any>();
+    if (!row) return null;
+    return {
+      ...row,
+      heatmapData: parseJson<any[]>(row.heatmapData),
+      clusters: parseJson<any[]>(row.clusters),
+      weaknesses: parseJson<any[]>(row.weaknesses),
+      suggestions: parseJson<any[]>(row.suggestions),
+    };
+  }),
+
 });
