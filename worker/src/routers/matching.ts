@@ -6970,4 +6970,74 @@ JSON形式で返してください:
     ).bind(ctx.userId).all<any>();
     return rows.results ?? [];
   }),
+
+  // ============ Emotion Flow Analysis ============
+
+  analyzeEmotionFlow: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
+      const dialogues = await ctx.env.DB.prepare(
+        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+      ).bind(input.sessionId).all<any>();
+      if (!dialogues.results?.length) throw new TRPCError({ code: "BAD_REQUEST", message: "対話データがありません" });
+
+      const dialogueText = dialogues.results.map((d: any) =>
+        `ターン${d.turnNumber} [${d.speaker}]: ${d.content}`
+      ).join("\n");
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "emotion_flow", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM APIキーが未設定です" });
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "あなたは対話感情分析の専門家です。マッチング対話の各ターンについて、2人の話者それぞれの感情を6次元（喜び/怒り/悲しみ/楽しさ/不安/自信）で0-100スコアで分析してください。また感情の転換ポイント（大きな変化があったターン）を検出し、話者間の感情同期度を算出してください。" },
+        { role: "user", content: `以下の対話を分析してください:\n\n${dialogueText}\n\nJSON形式で回答:\n{\n  "turns": [{"turnNumber":1,"speaker":"...","emotions":{"joy":0,"anger":0,"sadness":0,"fun":0,"anxiety":0,"confidence":0}},...],"transitionPoints":[{"turnNumber":3,"description":"...","fromEmotion":"...","toEmotion":"...","trigger":"..."}],"syncScore":75,"summary":"..."}` }
+      ], { maxTokens: 3000, temperature: 0.3 });
+
+      let parsed: any = {};
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch { parsed = { turns: [], transitionPoints: [], syncScore: 50, summary: result.content }; }
+
+      await ctx.env.DB.prepare(
+        `INSERT OR REPLACE INTO emotion_flow_analyses (sessionId, userId, emotionData, transitionPoints, syncScore, summary) VALUES (?,?,?,?,?,?)`
+      ).bind(
+        input.sessionId, ctx.userId,
+        toJson(parsed.turns || []),
+        toJson(parsed.transitionPoints || []),
+        parsed.syncScore ?? 50,
+        parsed.summary || ""
+      ).run();
+
+      return { emotionData: parsed.turns || [], transitionPoints: parsed.transitionPoints || [], syncScore: parsed.syncScore ?? 50, summary: parsed.summary || "" };
+    }),
+
+  getEmotionFlow: protectedProcedure
+    .input(z.object({ sessionId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM emotion_flow_analyses WHERE sessionId=? AND userId=?`
+      ).bind(input.sessionId, ctx.userId).first<any>();
+      if (!row) return null;
+      return {
+        ...row,
+        emotionData: parseJson<any[]>(row.emotionData) || [],
+        transitionPoints: parseJson<any[]>(row.transitionPoints) || [],
+      };
+    }),
+
+  getEmotionFlowHistory: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT efa.id, efa.sessionId, efa.syncScore, efa.createdAt, ms.theme
+       FROM emotion_flow_analyses efa
+       JOIN matching_sessions ms ON ms.id = efa.sessionId
+       WHERE efa.userId=?
+       ORDER BY efa.createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+    return rows.results ?? [];
+  }),
 });

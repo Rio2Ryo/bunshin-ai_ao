@@ -1778,6 +1778,68 @@ CREATE TABLE IF NOT EXISTS comparison_timelines (
   overallVerdict TEXT,
   createdAt TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS learning_curricula (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  twinId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  diagnosis TEXT,
+  lessons TEXT NOT NULL,
+  currentLessonIndex INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'active' CHECK(status IN ('active','completed','paused')),
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS curriculum_progress (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  curriculumId INTEGER NOT NULL,
+  lessonIndex INTEGER NOT NULL,
+  status TEXT DEFAULT 'pending' CHECK(status IN ('pending','in_progress','completed')),
+  score INTEGER,
+  feedback TEXT,
+  completedAt TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(curriculumId, lessonIndex)
+);
+
+CREATE TABLE IF NOT EXISTS emotion_flow_analyses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sessionId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  emotionData TEXT NOT NULL,
+  transitionPoints TEXT,
+  syncScore REAL,
+  summary TEXT,
+  createdAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(sessionId, userId)
+);
+
+CREATE TABLE IF NOT EXISTS external_connectors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  twinId INTEGER NOT NULL,
+  serviceType TEXT NOT NULL CHECK(serviceType IN ('google_calendar','notion','slack','github','custom')),
+  serviceName TEXT NOT NULL,
+  config TEXT,
+  syncSchedule TEXT DEFAULT 'manual' CHECK(syncSchedule IN ('manual','daily','weekly')),
+  lastSyncAt TEXT,
+  status TEXT DEFAULT 'active' CHECK(status IN ('active','paused','error')),
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS connector_sync_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  connectorId INTEGER NOT NULL,
+  userId INTEGER NOT NULL,
+  itemsSynced INTEGER DEFAULT 0,
+  itemsAdded INTEGER DEFAULT 0,
+  itemsUpdated INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'success' CHECK(status IN ('success','partial','error')),
+  errorMessage TEXT,
+  syncedAt TEXT DEFAULT (datetime('now'))
+);
 `;
 
 let schemaReady = false;

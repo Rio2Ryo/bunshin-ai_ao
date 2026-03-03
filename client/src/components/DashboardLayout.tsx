@@ -23,7 +23,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useRealtimeNotifications } from "@/hooks/useRealtimeNotifications";
 import { useWebPush } from "@/hooks/useWebPush";
 import { toast } from "sonner";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare, FileCheck, History, Mic, TrendingUp, MessageCircleHeart, CalendarDays, FlaskRound, Star, Gauge, Scale, BookHeart, Calendar, Captions, Goal, Grid3x3, BookText, HelpCircle, MessageSquarePlus, TestTubes, Tags, CalendarRange, Wand2, PenLine, Library, Gamepad2, FileBarChart, ScrollText, Repeat2, ArrowLeftRight } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare, FileCheck, History, Mic, TrendingUp, MessageCircleHeart, CalendarDays, FlaskRound, Star, Gauge, Scale, BookHeart, Calendar, Captions, Goal, Grid3x3, BookText, HelpCircle, MessageSquarePlus, TestTubes, Tags, CalendarRange, Wand2, PenLine, Library, Gamepad2, FileBarChart, ScrollText, Repeat2, ArrowLeftRight, GraduationCap, Waves, Plug } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -240,6 +240,7 @@ function DashboardLayoutContent({
         { icon: Languages, label: language === "en" ? "Translate Chat" : "翻訳チャット", path: "/translation-chat" },
         { icon: ScrollText, label: language === "en" ? "Summary" : "AI要約", path: "/matching-summary" },
         { icon: ArrowLeftRight, label: language === "en" ? "Compare" : "比較タイムライン", path: "/comparison-timeline" },
+        { icon: Waves, label: language === "en" ? "Emotion Flow" : "感情フロー", path: "/emotion-flow" },
       ],
     },
     {
@@ -280,6 +281,8 @@ function DashboardLayoutContent({
         { icon: PenLine, label: language === "en" ? "Style Learning" : "対話スタイル", path: "/dialogue-style" },
         { icon: FileBarChart, label: language === "en" ? "Report" : "人格レポート", path: "/personality-report" },
         { icon: Repeat2, label: language === "en" ? "Context Rules" : "コンテキスト切替", path: "/context-switcher" },
+        { icon: GraduationCap, label: language === "en" ? "Curriculum" : "学習カリキュラム", path: "/learning-curriculum" },
+        { icon: Plug, label: language === "en" ? "Connectors" : "外部コネクター", path: "/external-connectors" },
       ],
     },
   ], [t, language]);

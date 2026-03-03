@@ -3636,4 +3636,295 @@ ${reportData.mbti ? `<div class="card"><h2>MBTI</h2><p>${typeof reportData.mbti 
     ).bind(ctx.userId).all<any>();
     return rows.results ?? [];
   }),
+
+  // ============ Learning Curriculum ============
+
+  generateCurriculum: protectedProcedure
+    .input(z.object({ twinId: z.number().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      // Collect weakness data
+      const matchResults = await ctx.env.DB.prepare(
+        `SELECT mr.scoreBreakdown, mr.recommendations FROM matching_results mr
+         JOIN matching_sessions ms ON ms.id = mr.sessionId
+         WHERE ms.initiatorUserId=? ORDER BY mr.createdAt DESC LIMIT 10`
+      ).bind(ctx.userId).all<any>();
+
+      const feedbacks = await ctx.env.DB.prepare(
+        `SELECT df.rating, df.comment FROM dialogue_feedback df
+         JOIN matching_sessions ms ON ms.id = df.sessionId
+         WHERE ms.initiatorUserId=? AND df.rating='down' ORDER BY df.createdAt DESC LIMIT 20`
+      ).bind(ctx.userId).all<any>();
+
+      const weakKnowledge = await ctx.env.DB.prepare(
+        `SELECT title, summary FROM knowledge_base WHERE userId=? ORDER BY createdAt DESC LIMIT 10`
+      ).bind(ctx.userId).all<any>();
+
+      const breakdowns = (matchResults.results || []).map((r: any) => parseJson<any>(r.scoreBreakdown)).filter(Boolean);
+      const negFeedback = (feedbacks.results || []).map((f: any) => `${f.rating}: ${f.comment || "コメントなし"}`).join("\n");
+      const knowledgeList = (weakKnowledge.results || []).map((k: any) => k.title).join(", ");
+
+      const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "curriculum_generation", ctx.env);
+      if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM APIキーが未設定です" });
+      const result = await invokeLLM(llmConfig, [
+        { role: "system", content: "あなたはAIツイン学習コーチです。ツインのマッチングスコア分析、ネガティブフィードバック、ナレッジベースを統合的に診断し、弱点を克服するための段階的な学習カリキュラムを生成してください。レッスンは5-10件で、各レッスンに目標・演習テーマ・評価基準を含めてください。" },
+        { role: "user", content: `ツイン「${twin.name}」の診断データ:\n\nスコア内訳（直近10件）: ${JSON.stringify(breakdowns)}\n\nネガティブフィードバック:\n${negFeedback || "なし"}\n\nナレッジ: ${knowledgeList || "なし"}\n\nJSON形式で回答:\n{"title":"カリキュラムタイトル","diagnosis":"弱点診断の要約","lessons":[{"index":0,"title":"レッスンタイトル","goal":"目標","exerciseTheme":"演習テーマ","evaluationCriteria":"評価基準","difficulty":"easy|normal|hard"}]}` }
+      ], { maxTokens: 3000, temperature: 0.5 });
+
+      let parsed: any = {};
+      try {
+        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch {
+        parsed = {
+          title: "基礎力強化カリキュラム",
+          diagnosis: "データに基づく自動診断",
+          lessons: [
+            { index: 0, title: "コミュニケーション基礎", goal: "相手の意図を正確に理解する", exerciseTheme: "傾聴力向上", evaluationCriteria: "質問の的確さ", difficulty: "easy" },
+            { index: 1, title: "論理的思考", goal: "主張を論理的に構成する", exerciseTheme: "論点整理", evaluationCriteria: "論理の一貫性", difficulty: "normal" },
+            { index: 2, title: "提案力強化", goal: "具体的な提案ができる", exerciseTheme: "ソリューション提示", evaluationCriteria: "提案の実現可能性", difficulty: "normal" },
+            { index: 3, title: "交渉テクニック", goal: "Win-Winの合意形成", exerciseTheme: "妥協点の発見", evaluationCriteria: "合意率", difficulty: "hard" },
+            { index: 4, title: "総合演習", goal: "全スキルの統合", exerciseTheme: "実践マッチング", evaluationCriteria: "総合スコア80点以上", difficulty: "hard" },
+          ]
+        };
+      }
+
+      const lessons = (parsed.lessons || []).map((l: any, i: number) => ({ ...l, index: i }));
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO learning_curricula (twinId, userId, title, diagnosis, lessons, currentLessonIndex, status) VALUES (?,?,?,?,?,0,'active')`
+      ).bind(twin.id, ctx.userId, parsed.title || "学習カリキュラム", parsed.diagnosis || "", toJson(lessons)).run();
+
+      const curriculumId = res.meta?.last_row_id;
+      // Create progress entries for each lesson
+      if (curriculumId && lessons.length > 0) {
+        const stmts = lessons.map((_: any, i: number) =>
+          ctx.env.DB.prepare(`INSERT OR IGNORE INTO curriculum_progress (curriculumId, lessonIndex, status) VALUES (?,?,?)`)
+            .bind(curriculumId, i, i === 0 ? "in_progress" : "pending")
+        );
+        await ctx.env.DB.batch(stmts);
+      }
+
+      return { id: curriculumId, title: parsed.title, diagnosis: parsed.diagnosis, lessons, currentLessonIndex: 0 };
+    }),
+
+  getCurriculum: protectedProcedure
+    .input(z.object({ curriculumId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const row = await ctx.env.DB.prepare(
+        `SELECT * FROM learning_curricula WHERE id=? AND userId=?`
+      ).bind(input.curriculumId, ctx.userId).first<any>();
+      if (!row) return null;
+      const progress = await ctx.env.DB.prepare(
+        `SELECT * FROM curriculum_progress WHERE curriculumId=? ORDER BY lessonIndex`
+      ).bind(input.curriculumId).all<any>();
+      return {
+        ...row,
+        lessons: parseJson<any[]>(row.lessons) || [],
+        progress: progress.results ?? [],
+      };
+    }),
+
+  listCurricula: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT lc.*, dt.name as twinName FROM learning_curricula lc
+       JOIN digital_twins dt ON dt.id = lc.twinId
+       WHERE lc.userId=? ORDER BY lc.createdAt DESC LIMIT 20`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({
+      ...r,
+      lessons: parseJson<any[]>(r.lessons) || [],
+    }));
+  }),
+
+  completeLesson: protectedProcedure
+    .input(z.object({ curriculumId: z.number(), lessonIndex: z.number(), score: z.number().min(0).max(100).optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const curriculum = await ctx.env.DB.prepare(
+        `SELECT * FROM learning_curricula WHERE id=? AND userId=?`
+      ).bind(input.curriculumId, ctx.userId).first<any>();
+      if (!curriculum) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const lessons = parseJson<any[]>(curriculum.lessons) || [];
+
+      // Mark current lesson as completed
+      await ctx.env.DB.prepare(
+        `UPDATE curriculum_progress SET status='completed', score=?, completedAt=datetime('now') WHERE curriculumId=? AND lessonIndex=?`
+      ).bind(input.score ?? 0, input.curriculumId, input.lessonIndex).run();
+
+      // Unlock next lesson
+      const nextIndex = input.lessonIndex + 1;
+      if (nextIndex < lessons.length) {
+        await ctx.env.DB.prepare(
+          `UPDATE curriculum_progress SET status='in_progress' WHERE curriculumId=? AND lessonIndex=?`
+        ).bind(input.curriculumId, nextIndex).run();
+        await ctx.env.DB.prepare(
+          `UPDATE learning_curricula SET currentLessonIndex=?, updatedAt=datetime('now') WHERE id=?`
+        ).bind(nextIndex, input.curriculumId).run();
+      } else {
+        // All lessons completed
+        await ctx.env.DB.prepare(
+          `UPDATE learning_curricula SET status='completed', updatedAt=datetime('now') WHERE id=?`
+        ).bind(input.curriculumId).run();
+      }
+
+      // Update twin skill levels
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (twin) {
+        const lesson = lessons[input.lessonIndex];
+        if (lesson) {
+          await ctx.env.DB.prepare(
+            `INSERT OR REPLACE INTO twin_skill_levels (twinId, skillName, level, xp) VALUES (?,?, COALESCE((SELECT level FROM twin_skill_levels WHERE twinId=? AND skillName=?), 0) + 1, COALESCE((SELECT xp FROM twin_skill_levels WHERE twinId=? AND skillName=?), 0) + ?)`
+          ).bind(twin.id, lesson.exerciseTheme || "general", twin.id, lesson.exerciseTheme || "general", twin.id, lesson.exerciseTheme || "general", input.score ?? 50).run();
+        }
+      }
+
+      return { completed: true, nextLessonIndex: nextIndex < lessons.length ? nextIndex : null, allComplete: nextIndex >= lessons.length };
+    }),
+
+  deleteCurriculum: protectedProcedure
+    .input(z.object({ curriculumId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM curriculum_progress WHERE curriculumId=?`).bind(input.curriculumId).run();
+      await ctx.env.DB.prepare(`DELETE FROM learning_curricula WHERE id=? AND userId=?`).bind(input.curriculumId, ctx.userId).run();
+      return { deleted: true };
+    }),
+
+  // ============ External Data Connectors ============
+
+  createConnector: protectedProcedure
+    .input(z.object({
+      serviceType: z.enum(["google_calendar", "notion", "slack", "github", "custom"]),
+      serviceName: z.string().min(1),
+      config: z.record(z.string(), z.string()).optional(),
+      syncSchedule: z.enum(["manual", "daily", "weekly"]).default("manual"),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      const res = await ctx.env.DB.prepare(
+        `INSERT INTO external_connectors (userId, twinId, serviceType, serviceName, config, syncSchedule) VALUES (?,?,?,?,?,?)`
+      ).bind(ctx.userId, twin.id, input.serviceType, input.serviceName, toJson(input.config || {}), input.syncSchedule).run();
+
+      return { id: res.meta?.last_row_id, serviceType: input.serviceType, serviceName: input.serviceName };
+    }),
+
+  listConnectors: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT * FROM external_connectors WHERE userId=? ORDER BY createdAt DESC`
+    ).bind(ctx.userId).all<any>();
+    return (rows.results ?? []).map((r: any) => ({ ...r, config: parseJson<any>(r.config) || {} }));
+  }),
+
+  updateConnector: protectedProcedure
+    .input(z.object({
+      connectorId: z.number(),
+      serviceName: z.string().optional(),
+      config: z.record(z.string(), z.string()).optional(),
+      syncSchedule: z.enum(["manual", "daily", "weekly"]).optional(),
+      status: z.enum(["active", "paused"]).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const connector = await ctx.env.DB.prepare(`SELECT * FROM external_connectors WHERE id=? AND userId=?`).bind(input.connectorId, ctx.userId).first<any>();
+      if (!connector) throw new TRPCError({ code: "NOT_FOUND" });
+      await ctx.env.DB.prepare(
+        `UPDATE external_connectors SET serviceName=COALESCE(?,serviceName), config=COALESCE(?,config), syncSchedule=COALESCE(?,syncSchedule), status=COALESCE(?,status) WHERE id=?`
+      ).bind(input.serviceName ?? null, input.config ? toJson(input.config) : null, input.syncSchedule ?? null, input.status ?? null, input.connectorId).run();
+      return { updated: true };
+    }),
+
+  deleteConnector: protectedProcedure
+    .input(z.object({ connectorId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM connector_sync_logs WHERE connectorId=?`).bind(input.connectorId).run();
+      await ctx.env.DB.prepare(`DELETE FROM external_connectors WHERE id=? AND userId=?`).bind(input.connectorId, ctx.userId).run();
+      return { deleted: true };
+    }),
+
+  syncConnector: protectedProcedure
+    .input(z.object({ connectorId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const connector = await ctx.env.DB.prepare(`SELECT * FROM external_connectors WHERE id=? AND userId=?`).bind(input.connectorId, ctx.userId).first<any>();
+      if (!connector) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const config = parseJson<any>(connector.config) || {};
+      const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+      // Simulate sync based on service type - in production this would call actual APIs
+      let itemsSynced = 0;
+      let itemsAdded = 0;
+      let syncStatus: string = "success";
+      let errorMsg: string | null = null;
+
+      try {
+        // Generate sample knowledge entries based on connector type
+        const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "connector_sync", ctx.env);
+        if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM APIキーが未設定です" });
+        const serviceDescriptions: Record<string, string> = {
+          google_calendar: "Googleカレンダーの予定やイベント情報",
+          notion: "Notionのページやデータベースの内容",
+          slack: "Slackチャンネルの重要なメッセージや決定事項",
+          github: "GitHubリポジトリのREADME、Issue、PR情報",
+          custom: "カスタムデータソースの情報",
+        };
+
+        const result = await invokeLLM(llmConfig, [
+          { role: "system", content: "あなたは外部サービスデータの同期エージェントです。指定されたサービスからのデータを整理し、ナレッジベースエントリとして構造化してください。" },
+          { role: "user", content: `サービス: ${connector.serviceName} (${connector.serviceType})\n設定: ${JSON.stringify(config)}\n\n${serviceDescriptions[connector.serviceType] || "外部データ"}から3件のナレッジエントリを生成してください。\n\nJSON形式:\n{"entries":[{"title":"タイトル","summary":"要約(200字以内)","tags":["tag1","tag2"]}]}` }
+        ], { maxTokens: 1500, temperature: 0.5 });
+
+        let entries: any[] = [];
+        try {
+          const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+          if (jsonMatch) entries = JSON.parse(jsonMatch[0]).entries || [];
+        } catch { entries = [{ title: `${connector.serviceName}同期データ`, summary: "同期されたデータ", tags: [connector.serviceType] }]; }
+
+        for (const entry of entries) {
+          await ctx.env.DB.prepare(
+            `INSERT INTO knowledge_base (userId, twinId, title, content, summary, source, tags, createdAt) VALUES (?,?,?,?,?,?,?,datetime('now'))`
+          ).bind(ctx.userId, twin.id, entry.title, entry.summary, entry.summary, `connector:${connector.serviceType}`, toJson(entry.tags || [connector.serviceType])).run();
+          itemsAdded++;
+        }
+        itemsSynced = entries.length;
+      } catch (e: any) {
+        syncStatus = "error";
+        errorMsg = e.message || "同期中にエラーが発生しました";
+      }
+
+      // Record sync log
+      await ctx.env.DB.prepare(
+        `INSERT INTO connector_sync_logs (connectorId, userId, itemsSynced, itemsAdded, itemsUpdated, status, errorMessage) VALUES (?,?,?,?,0,?,?)`
+      ).bind(input.connectorId, ctx.userId, itemsSynced, itemsAdded, syncStatus, errorMsg).run();
+
+      // Update connector last sync time
+      await ctx.env.DB.prepare(
+        `UPDATE external_connectors SET lastSyncAt=datetime('now'), status=? WHERE id=?`
+      ).bind(syncStatus === "error" ? "error" : "active", input.connectorId).run();
+
+      return { itemsSynced, itemsAdded, status: syncStatus, error: errorMsg };
+    }),
+
+  getConnectorSyncLogs: protectedProcedure
+    .input(z.object({ connectorId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT * FROM connector_sync_logs WHERE connectorId=? AND userId=? ORDER BY syncedAt DESC LIMIT 30`
+      ).bind(input.connectorId, ctx.userId).all<any>();
+      return rows.results ?? [];
+    }),
 });

@@ -118,6 +118,9 @@ const TranslationChat = lazy(() => import("./pages/TranslationChat"));
 const MatchingSummary = lazy(() => import("./pages/MatchingSummary"));
 const ContextSwitcher = lazy(() => import("./pages/ContextSwitcher"));
 const ComparisonTimeline = lazy(() => import("./pages/ComparisonTimeline"));
+const LearningCurriculum = lazy(() => import("./pages/LearningCurriculum"));
+const EmotionFlow = lazy(() => import("./pages/EmotionFlow"));
+const ExternalConnectors = lazy(() => import("./pages/ExternalConnectors"));
 
 function PageLoader() {
   return (
@@ -240,6 +243,9 @@ function Router() {
         <Route path="/matching-summary" component={MatchingSummary} />
         <Route path="/context-switcher" component={ContextSwitcher} />
         <Route path="/comparison-timeline" component={ComparisonTimeline} />
+        <Route path="/learning-curriculum" component={LearningCurriculum} />
+        <Route path="/emotion-flow" component={EmotionFlow} />
+        <Route path="/external-connectors" component={ExternalConnectors} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>
