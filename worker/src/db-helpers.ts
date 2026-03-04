@@ -2203,6 +2203,18 @@ CREATE TABLE IF NOT EXISTS friend_activities (
 
 CREATE INDEX IF NOT EXISTS idx_friend_activities_userId ON friend_activities(userId);
 CREATE INDEX IF NOT EXISTS idx_friend_activities_createdAt ON friend_activities(createdAt);
+
+CREATE TABLE IF NOT EXISTS error_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  level TEXT NOT NULL DEFAULT 'error',
+  path TEXT,
+  message TEXT,
+  context TEXT,
+  userId INTEGER,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_error_logs_created ON error_logs(createdAt);
 `;
 
 let schemaReady = false;

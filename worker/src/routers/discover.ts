@@ -6,11 +6,15 @@ import { cachedQuery } from "../cache";
 export const discoverRouter = router({
   search: protectedProcedure
     .input(z.object({ query: z.string().optional(), limit: z.number().optional() }).optional())
-    .query(async ({ ctx }) => {
+    .query(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      return cachedQuery(`discover:search:${ctx.userId}`, 60, async () => {
-        const rows = await ctx.env.DB.prepare(
-          `SELECT dt.*, u.id as ownerId, u.name as ownerName FROM digital_twins dt
+      const query = input?.query?.trim() || '';
+      const limit = input?.limit ?? 20;
+      return cachedQuery(`discover:search:${ctx.userId}:${query}:${limit}`, 60, async () => {
+        const searchClause = query
+          ? `AND (dt.name LIKE ? OR dt.description LIKE ? OR dt.tags LIKE ? OR u.name LIKE ?)`
+          : '';
+        const sql = `SELECT dt.*, u.id as ownerId, u.name as ownerName FROM digital_twins dt
            JOIN users u ON u.id = dt.userId
            WHERE dt.userId != ? AND (
              dt.visibility = 'public'
@@ -25,8 +29,13 @@ export const discoverRouter = router({
            )
            AND dt.userId NOT IN (SELECT blockedUserId FROM user_blocks WHERE userId=?)
            AND dt.userId NOT IN (SELECT userId FROM user_blocks WHERE blockedUserId=?)
-           LIMIT 20`
-        ).bind(ctx.userId, ctx.userId, ctx.userId, ctx.userId, ctx.userId, ctx.userId).all<any>();
+           ${searchClause}
+           LIMIT ?`;
+        const wildcard = `%${query}%`;
+        const params: any[] = [ctx.userId, ctx.userId, ctx.userId, ctx.userId, ctx.userId, ctx.userId];
+        if (query) params.push(wildcard, wildcard, wildcard, wildcard);
+        params.push(limit);
+        const rows = await ctx.env.DB.prepare(sql).bind(...params).all<any>();
         return (rows.results ?? []).map((r: any) => ({
           ...normalizeTwin(r),
           ownerId: r.ownerId,

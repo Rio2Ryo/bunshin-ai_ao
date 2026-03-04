@@ -17,6 +17,19 @@ export const questsRouter = router({
     const existing = await ctx.env.DB.prepare(
       `SELECT id FROM point_transactions WHERE userId=? AND actionType='daily_login' AND createdAt LIKE ?`
     ).bind(ctx.userId, `${today}%`).first<any>();
+    if (!existing) {
+      await ctx.env.DB.batch([
+        ctx.env.DB.prepare(
+          `INSERT INTO point_transactions (userId, actionType, points, createdAt) VALUES (?, 'daily_login', 10, datetime('now'))`
+        ).bind(ctx.userId),
+        ctx.env.DB.prepare(
+          `INSERT OR IGNORE INTO user_points (userId, balance, totalEarned, updatedAt) VALUES (?, 0, 0, datetime('now'))`
+        ).bind(ctx.userId),
+        ctx.env.DB.prepare(
+          `UPDATE user_points SET balance = balance + 10, totalEarned = totalEarned + 10, updatedAt = datetime('now') WHERE userId = ?`
+        ).bind(ctx.userId),
+      ]);
+    }
     return { points: existing ? 0 : 10, isFirstLogin: !existing };
   }),
 });
