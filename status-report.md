@@ -1,6 +1,6 @@
-# bunshin-ai ステータスレポート (2026-03-03)
-生成日: 2026-03-03 (更新: Phase 43 — Dashboard Widget Integration + Bulk Export/Archive + Embed Card)
-| 最新コミット | 7a5c3a5 feat: Phase 43 — Dashboard Widget Integration + Bulk Export/Archive + Embed Card |
+# bunshin-ai ステータスレポート (2026-03-04)
+生成日: 2026-03-04 (最終更新: Phase 98 — React key修正235箇所・Clipboard安全化・日付標準化・APIリカバリUI・共有UX統一 #227〜#266)
+| 最新コミット | 346a669 docs: update status-report.md for Phase 46 |
 
 ## 完成済み機能一覧
 
