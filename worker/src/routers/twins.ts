@@ -4953,4 +4953,161 @@ ${reportData.mbti ? `<div class="card"><h2>MBTI</h2><p>${typeof reportData.mbti 
       };
     }),
 
+  healthCheck: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const twin = await getMyTwin(ctx.env.DB, ctx.userId);
+    if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
+
+    // 1. Personality completeness (personality text length, bigFiveTraits, mbtiType, systemPrompt)
+    const personalityLength = (twin.personality || "").length;
+    const bigFive = parseJson<any>(twin.bigFiveTraits);
+    const hasBigFive = bigFive && Object.keys(bigFive).length >= 5;
+    const hasMbti = !!(twin.mbtiType && twin.mbtiType.length === 4);
+    const hasSystemPrompt = (twin.systemPrompt || "").length > 50;
+    const hasDescription = (twin.description || "").length > 20;
+    const hasTags = (twin.tags || "").split(",").filter(Boolean).length >= 3;
+
+    let personalityScore = 1;
+    if (personalityLength > 30) personalityScore = 2;
+    if (personalityLength > 100 && hasDescription) personalityScore = 3;
+    if (personalityScore === 3 && (hasBigFive || hasMbti)) personalityScore = 4;
+    if (hasBigFive && hasMbti && hasSystemPrompt && hasTags) personalityScore = 5;
+
+    // 2. Knowledge count
+    const knowledgeCount = await ctx.env.DB.prepare(
+      `SELECT COUNT(*) as cnt FROM knowledge_base WHERE userId=?`
+    ).bind(ctx.userId).first<any>();
+    const kCount = knowledgeCount?.cnt || 0;
+    let knowledgeScore = 1;
+    if (kCount >= 1) knowledgeScore = 2;
+    if (kCount >= 3) knowledgeScore = 3;
+    if (kCount >= 7) knowledgeScore = 4;
+    if (kCount >= 15) knowledgeScore = 5;
+
+    // 3. FAQ count (twin_faqs table)
+    let faqCount = 0;
+    try {
+      const faqResult = await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as cnt FROM twin_faqs WHERE twinId=?`
+      ).bind(twin.id).first<any>();
+      faqCount = faqResult?.cnt || 0;
+    } catch {}
+    let faqScore = 1;
+    if (faqCount >= 1) faqScore = 2;
+    if (faqCount >= 3) faqScore = 3;
+    if (faqCount >= 5) faqScore = 4;
+    if (faqCount >= 10) faqScore = 5;
+
+    // 4. Matching experience count
+    const matchResult = await ctx.env.DB.prepare(
+      `SELECT COUNT(*) as cnt FROM matching_sessions WHERE initiatorUserId=?`
+    ).bind(ctx.userId).first<any>();
+    const matchCount = matchResult?.cnt || 0;
+    let matchingScore = 1;
+    if (matchCount >= 1) matchingScore = 2;
+    if (matchCount >= 5) matchingScore = 3;
+    if (matchCount >= 15) matchingScore = 4;
+    if (matchCount >= 30) matchingScore = 5;
+
+    // 5. Feedback integration rate (dialogue_feedback where userId=ctx.userId)
+    let feedbackTotal = 0;
+    let feedbackApplied = 0;
+    try {
+      const fbResult = await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as cnt FROM dialogue_feedback WHERE userId=?`
+      ).bind(ctx.userId).first<any>();
+      feedbackTotal = fbResult?.cnt || 0;
+    } catch {}
+    // Check if applyFeedback has been used (twin personality updated after feedback)
+    // Use growth events as proxy
+    try {
+      const appliedResult = await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as cnt FROM twin_evolution_events WHERE twinId=? AND eventType='feedback_applied'`
+      ).bind(twin.id).first<any>();
+      feedbackApplied = appliedResult?.cnt || 0;
+    } catch {}
+    const feedbackRate = feedbackTotal > 0 ? Math.round((feedbackApplied / Math.max(feedbackTotal, 1)) * 100) : 0;
+    let feedbackScore = 1;
+    if (feedbackTotal >= 1) feedbackScore = 2;
+    if (feedbackTotal >= 5 && feedbackRate >= 20) feedbackScore = 3;
+    if (feedbackTotal >= 10 && feedbackRate >= 40) feedbackScore = 4;
+    if (feedbackTotal >= 20 && feedbackRate >= 60) feedbackScore = 5;
+
+    // Overall score (average)
+    const dimensions = [
+      { key: "personality", label: "人格設定", score: personalityScore, max: 5 },
+      { key: "knowledge", label: "ナレッジ", score: knowledgeScore, max: 5 },
+      { key: "faq", label: "FAQ", score: faqScore, max: 5 },
+      { key: "matching", label: "マッチング経験", score: matchingScore, max: 5 },
+      { key: "feedback", label: "フィードバック反映", score: feedbackScore, max: 5 },
+    ];
+    const overallScore = Math.round((dimensions.reduce((sum, d) => sum + d.score, 0) / dimensions.length) * 10) / 10;
+
+    // Generate improvement actions
+    const actions: Array<{ key: string; label: string; description: string; priority: "high" | "medium" | "low"; actionPath: string; completed: boolean }> = [];
+
+    if (personalityScore < 3) {
+      actions.push({ key: "add_personality", label: "人格設定を充実させる", description: "ツインの性格・説明文・タグを追加してください（100文字以上推奨）", priority: "high", actionPath: "/twins", completed: false });
+    }
+    if (!hasBigFive) {
+      actions.push({ key: "run_bigfive", label: "Big Five診断を受ける", description: "人格診断を実行してBig Five特性をツインに反映", priority: personalityScore >= 3 ? "medium" : "high", actionPath: "/personality", completed: false });
+    }
+    if (!hasMbti) {
+      actions.push({ key: "run_mbti", label: "MBTI診断を受ける", description: "MBTI診断でツインの行動パターンを明確化", priority: "medium", actionPath: "/personality", completed: false });
+    }
+    if (knowledgeScore < 3) {
+      actions.push({ key: "add_knowledge", label: "ナレッジを追加する", description: `現在${kCount}件。3件以上でツインの回答品質が向上します`, priority: "high", actionPath: "/twins", completed: false });
+    }
+    if (faqScore < 3) {
+      actions.push({ key: "add_faq", label: "FAQを追加する", description: `現在${faqCount}件。よくある質問を登録してツインの応答精度を向上`, priority: "medium", actionPath: "/twin-faq", completed: false });
+    }
+    if (matchingScore < 2) {
+      actions.push({ key: "first_matching", label: "初回マッチングを実行", description: "友達とのマッチングでツインの実力を試しましょう", priority: "high", actionPath: "/matching", completed: false });
+    } else if (matchingScore < 4) {
+      actions.push({ key: "more_matching", label: "マッチングを増やす", description: `現在${matchCount}回。経験を積むことでツインが成長します`, priority: "low", actionPath: "/matching", completed: false });
+    }
+    if (feedbackScore < 3 && matchCount >= 1) {
+      actions.push({ key: "give_feedback", label: "対話にフィードバックする", description: "マッチング対話のターンに👍/👎評価をつけてツインを改善", priority: "medium", actionPath: "/matching", completed: false });
+    }
+    if (feedbackTotal >= 5 && feedbackApplied === 0) {
+      actions.push({ key: "apply_feedback", label: "フィードバックを反映する", description: `${feedbackTotal}件のフィードバックが未反映。ツインページで「フィードバック反映」を実行`, priority: "high", actionPath: "/twins", completed: false });
+    }
+    if (!hasTags && personalityScore >= 2) {
+      actions.push({ key: "add_tags", label: "タグを3つ以上追加", description: "スキルや専門分野のタグを追加して発見されやすくする", priority: "low", actionPath: "/twins", completed: false });
+    }
+
+    // Health grade
+    let grade = "D";
+    if (overallScore >= 2) grade = "C";
+    if (overallScore >= 3) grade = "B";
+    if (overallScore >= 4) grade = "A";
+    if (overallScore >= 4.5) grade = "S";
+
+    return {
+      twinId: twin.id,
+      twinName: twin.name || "ツイン",
+      overallScore,
+      grade,
+      dimensions,
+      actions: actions.sort((a, b) => {
+        const p = { high: 0, medium: 1, low: 2 };
+        return p[a.priority] - p[b.priority];
+      }),
+      stats: {
+        personalityLength,
+        hasBigFive: !!hasBigFive,
+        hasMbti: !!hasMbti,
+        hasSystemPrompt,
+        hasDescription,
+        hasTags: (twin.tags || "").split(",").filter(Boolean).length >= 3,
+        knowledgeCount: kCount,
+        faqCount,
+        matchingCount: matchCount,
+        feedbackTotal,
+        feedbackApplied,
+        feedbackRate,
+      },
+    };
+  }),
+
 });

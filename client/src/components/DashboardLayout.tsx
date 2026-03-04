@@ -23,7 +23,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useRealtimeNotifications } from "@/hooks/useRealtimeNotifications";
 import { useWebPush } from "@/hooks/useWebPush";
 import { toast } from "sonner";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare, FileCheck, History, Mic, TrendingUp, MessageCircleHeart, CalendarDays, FlaskRound, Star, Gauge, Scale, BookHeart, Calendar, Captions, Goal, Grid3x3, BookText, HelpCircle, MessageSquarePlus, TestTubes, Tags, CalendarRange, Wand2, PenLine, Library, Gamepad2, FileBarChart, ScrollText, Repeat2, ArrowLeftRight, GraduationCap, Waves, Plug, Binoculars, BookMarked, Drama, MapPin, Handshake, SlidersHorizontal, GitFork, Eye, Sun, Bookmark, ListTodo, LayoutTemplate, Flame, FolderArchive, Code2 } from "lucide-react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare, FileCheck, History, Mic, TrendingUp, MessageCircleHeart, CalendarDays, FlaskRound, Star, Gauge, Scale, BookHeart, Calendar, Captions, Goal, Grid3x3, BookText, HelpCircle, MessageSquarePlus, TestTubes, Tags, CalendarRange, Wand2, PenLine, Library, Gamepad2, FileBarChart, ScrollText, Repeat2, ArrowLeftRight, GraduationCap, Waves, Plug, Binoculars, BookMarked, Drama, MapPin, Handshake, SlidersHorizontal, GitFork, Eye, Sun, Bookmark, ListTodo, LayoutTemplate, Flame, FolderArchive, Code2, HeartPulse } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -312,6 +312,7 @@ function DashboardLayoutContent({
         { icon: HelpCircle, label: language === "en" ? "Twin FAQ" : "ツインFAQ", path: "/twin-faq" },
         { icon: LayoutTemplate, label: language === "en" ? "Gallery" : "テンプレート", path: "/twin-gallery" },
         { icon: Code2, label: language === "en" ? "Embed Card" : "埋め込みカード", path: "/twin-embed" },
+        { icon: HeartPulse, label: language === "en" ? "Twin Health" : "ヘルスチェック", path: "/twin-health" },
       ],
     },
   ], [t, language]);

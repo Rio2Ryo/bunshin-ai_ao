@@ -150,6 +150,7 @@ const SessionArchive = lazy(() => import("./pages/SessionArchive"));
 const TwinEmbedCard = lazy(() => import("./pages/TwinEmbedCard"));
 const MatchingStreaks = lazy(() => import("./pages/MatchingStreaks"));
 const FriendActivity = lazy(() => import("./pages/FriendActivity"));
+const TwinHealth = lazy(() => import("./pages/TwinHealth"));
 
 function PageLoader() {
   return (
@@ -304,6 +305,7 @@ function Router() {
         <Route path="/twin-embed" component={TwinEmbedCard} />
         <Route path="/streaks" component={MatchingStreaks} />
         <Route path="/friend-activity" component={FriendActivity} />
+        <Route path="/twin-health" component={TwinHealth} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>
