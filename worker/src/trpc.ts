@@ -11,7 +11,7 @@ export type Env = {
   CHAT_ROOMS: DurableObjectNamespace;
   MATCHING_ROOMS: DurableObjectNamespace;
   WORKSPACE_ROOMS: DurableObjectNamespace;
-  JWT_SECRET?: string;
+  JWT_SECRET: string;
   AZURE_FOUNDRY_API_KEY?: string;
   AZURE_FOUNDRY_RESOURCE?: string;
   STRIPE_SECRET_KEY?: string;
@@ -41,10 +41,13 @@ export type Context = {
 
 export const COOKIE_NAME = "app_session_id";
 export const ONE_YEAR_MS = 1000 * 60 * 60 * 24 * 365;
+export const THIRTY_DAYS_MS = 1000 * 60 * 60 * 24 * 30;
 
 export function getJwtSecret(env: Env): Uint8Array {
-  const secret = env.JWT_SECRET || "bunshin-ai-dev-secret-change-in-production";
-  return new TextEncoder().encode(secret);
+  if (!env.JWT_SECRET) {
+    throw new Error("JWT_SECRET environment variable is required but not set");
+  }
+  return new TextEncoder().encode(env.JWT_SECRET);
 }
 
 export async function hashPassword(password: string): Promise<string> {
@@ -73,7 +76,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
 export async function createSessionToken(userId: number, env: Env): Promise<string> {
   return new SignJWT({ userId })
     .setProtectedHeader({ alg: "HS256" })
-    .setExpirationTime(Math.floor((Date.now() + ONE_YEAR_MS) / 1000))
+    .setExpirationTime(Math.floor((Date.now() + THIRTY_DAYS_MS) / 1000))
     .setIssuedAt()
     .sign(getJwtSecret(env));
 }
@@ -112,11 +115,9 @@ export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
 // ============ Helper: generate random code ============
 export function generateCode(length = 6): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "";
-  for (let i = 0; i < length; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return code;
+  const randomBytes = new Uint8Array(length);
+  crypto.getRandomValues(randomBytes);
+  return Array.from(randomBytes, b => chars[b % chars.length]).join("");
 }
 
 // ============ Helper: escape HTML ============

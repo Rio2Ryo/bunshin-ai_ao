@@ -6,7 +6,7 @@
  */
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure, type Env } from "../trpc";
+import { router, protectedProcedure, generateCode, type Env } from "../trpc";
 import { ensureSchema, parseJson, toJson, now, getMyTwin } from "../db-helpers";
 import { invokeLLM, getUserLLMConfig } from "../llm";
 
@@ -302,7 +302,7 @@ async function handleFollowEvent(
   const profile = await getLineUserProfile(lineUserId, accessToken);
 
   // Generate link code
-  const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const code = generateCode(8);
   const codeExpiry = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
   const existing = await db
@@ -452,7 +452,7 @@ async function handleMessageEvent(
 
   if (!conn) {
     // Not linked yet — generate a new link code
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const code = generateCode(8);
     const codeExpiry = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const existing = await db
       .prepare(`SELECT id FROM line_connections WHERE lineUserId=?`)

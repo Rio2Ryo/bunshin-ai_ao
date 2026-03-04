@@ -656,7 +656,7 @@ ${isLastQuestion ? `
         .all<any>();
       const results = [];
       for (const row of rows.results ?? []) {
-        const user = await ctx.env.DB.prepare(`SELECT * FROM users WHERE id=?`).bind(row.userId).first<any>();
+        const user = await ctx.env.DB.prepare(`SELECT id, openId, name, email, loginMethod, role, plan, friendCode, createdAt, updatedAt, lastSignedIn, onboardingCompleted, isNpc, onboardingStep, tutorialCompleted, tosAcceptedAt, tosVersion, emailVerified FROM users WHERE id=?`).bind(row.userId).first<any>();
         results.push({ twin: normalizeTwin(row), user });
       }
       return results;
@@ -670,7 +670,7 @@ ${isLastQuestion ? `
         .bind(input.twinId)
         .first<any>();
       if (!row) return null;
-      const user = await ctx.env.DB.prepare(`SELECT * FROM users WHERE id=?`).bind(row.userId).first<any>();
+      const user = await ctx.env.DB.prepare(`SELECT id, openId, name, email, loginMethod, role, plan, friendCode, createdAt, updatedAt, lastSignedIn, onboardingCompleted, isNpc, onboardingStep, tutorialCompleted, tosAcceptedAt, tosVersion, emailVerified FROM users WHERE id=?`).bind(row.userId).first<any>();
       return { twin: normalizeTwin(row), user };
     }),
 
@@ -3468,7 +3468,9 @@ ${reportData.mbti ? `<div class="card"><h2>MBTI</h2><p>${typeof reportData.mbti 
     await ensureSchema(ctx.env.DB);
     const twin = await getMyTwin(ctx.env.DB, ctx.userId);
     if (!twin) throw new TRPCError({ code: "NOT_FOUND" });
-    const code = [...Array(16)].map(() => Math.random().toString(16).charAt(2)).join('');
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    const code = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
     await ctx.env.DB.prepare(
       `UPDATE personality_reports SET shareCode=? WHERE userId=? AND twinId=?`
     ).bind(code, ctx.userId, twin.id).run();

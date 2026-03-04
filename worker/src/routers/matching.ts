@@ -442,7 +442,9 @@ export const matchingRouter = router({
             ],
           };
           const twinKey = speakerIdx === 0 ? "twin1" : "twin2";
-          const variantIdx = Math.floor(Math.random() * fallbackDialogues[twinKey].length);
+          const _idx = new Uint32Array(1);
+          crypto.getRandomValues(_idx);
+          const variantIdx = _idx[0] % fallbackDialogues[twinKey].length;
           const turnIdx = Math.min(turn, fallbackDialogues[twinKey][variantIdx].length - 1);
           content = fallbackDialogues[twinKey][variantIdx][turnIdx];
           provider = "scripted-fallback";
@@ -4953,7 +4955,7 @@ ${historyContext ? `\nユーザーの過去マッチング傾向:\n${historyCont
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       if (!ctx.env.RESEND_API_KEY) return { sent: false, reason: "メール未設定" };
-      const user = await ctx.env.DB.prepare(`SELECT * FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      const user = await ctx.env.DB.prepare(`SELECT id, name, email, role, plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
       if (!user?.email) return { sent: false, reason: "メールアドレス未設定" };
       const minutes = await ctx.env.DB.prepare(`SELECT * FROM matching_minutes WHERE sessionId=? AND userId=?`).bind(input.sessionId, ctx.userId).first<any>();
       if (!minutes) throw new TRPCError({ code: "NOT_FOUND" });
@@ -5737,7 +5739,13 @@ JSON形式で返してください:
       if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
 
       // Random pairing
-      const shuffled = [...pList].sort(() => Math.random() - 0.5);
+      const shuffled = [...pList];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const randBuf = new Uint32Array(1);
+        crypto.getRandomValues(randBuf);
+        const j = randBuf[0] % (i + 1);
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
       const pairs: { user1: any; user2: any; score: number }[] = [];
       for (let i = 0; i < shuffled.length - 1; i += 2) {
         const u1 = shuffled[i];
@@ -5839,7 +5847,9 @@ ${dialogueText}
     .input(z.object({ sessionId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const code = [...Array(16)].map(() => Math.random().toString(16).charAt(2)).join('');
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      const code = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
       await ctx.env.DB.prepare(
         `UPDATE replay_commentaries SET shareCode=? WHERE sessionId=? AND userId=?`
       ).bind(code, input.sessionId, ctx.userId).run();
@@ -6015,7 +6025,9 @@ JSON形式で返してください:
     .input(z.object({ sessionId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const code = [...Array(16)].map(() => Math.random().toString(16).charAt(2)).join('');
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      const code = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
       await ctx.env.DB.prepare(
         `UPDATE matching_storyboards SET shareCode=? WHERE sessionId=? AND userId=?`
       ).bind(code, input.sessionId, ctx.userId).run();

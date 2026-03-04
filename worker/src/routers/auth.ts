@@ -16,7 +16,7 @@ export const authRouter = router({
         await ctx.env.DB.prepare(
           `INSERT INTO users (openId, name, email, passwordHash, loginMethod, role, plan) VALUES (?,?,?,?,?,?,?)`
         ).bind(openId, input.name, input.email, passwordHash, "email", "user", "free").run();
-        const user = await ctx.env.DB.prepare(`SELECT * FROM users WHERE email=?`).bind(input.email).first<any>();
+        const user = await ctx.env.DB.prepare(`SELECT id, openId, name, email, loginMethod, role, plan, friendCode, createdAt, updatedAt, lastSignedIn, onboardingCompleted, isNpc, onboardingStep, tutorialCompleted, tosAcceptedAt, tosVersion, emailVerified FROM users WHERE email=?`).bind(input.email).first<any>();
         if (!user) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "ユーザー作成に失敗しました" });
 
         // Auto-create default Twin
@@ -118,7 +118,7 @@ Step 5完了時に以下を出力:
       .input(z.object({ email: z.string().email(), password: z.string().min(1).max(100) }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
-        const user = await ctx.env.DB.prepare(`SELECT * FROM users WHERE email=?`).bind(input.email).first<any>();
+        const user = await ctx.env.DB.prepare(`SELECT id, openId, name, email, passwordHash, loginMethod, role, plan, friendCode, createdAt, updatedAt, lastSignedIn, onboardingCompleted, isNpc, onboardingStep, tutorialCompleted, tosAcceptedAt, tosVersion, emailVerified FROM users WHERE email=?`).bind(input.email).first<any>();
         if (!user || !user.passwordHash) throw new TRPCError({ code: "UNAUTHORIZED", message: "メールアドレスまたはパスワードが正しくありません" });
         const valid = await verifyPassword(input.password, user.passwordHash);
         if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "メールアドレスまたはパスワードが正しくありません" });
@@ -428,7 +428,7 @@ Step 5完了時に以下を出力:
         await ctx.env.DB.prepare(`UPDATE email_verification_tokens SET usedAt=datetime('now') WHERE id=?`).bind(tokenRow.id).run();
 
         // Auto-login: create session token
-        const user = await ctx.env.DB.prepare(`SELECT * FROM users WHERE id=?`).bind(tokenRow.userId).first<any>();
+        const user = await ctx.env.DB.prepare(`SELECT id, openId, name, email, loginMethod, role, plan, friendCode, createdAt, updatedAt, lastSignedIn, onboardingCompleted, isNpc, onboardingStep, tutorialCompleted, tosAcceptedAt, tosVersion, emailVerified FROM users WHERE id=?`).bind(tokenRow.userId).first<any>();
         if (!user) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "ユーザーが見つかりません" });
         await ctx.env.DB.prepare(`UPDATE users SET lastSignedIn=datetime('now') WHERE id=?`).bind(user.id).run();
         const token = await createSessionToken(user.id, ctx.env);
