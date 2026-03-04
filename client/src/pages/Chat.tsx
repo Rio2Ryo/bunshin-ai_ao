@@ -59,7 +59,7 @@ export default function Chat() {
 
   const { data: myTwin } = trpc.myTwin.get.useQuery();
   const { data: sessions, refetch: refetchSessions } = trpc.chat.sessions.useQuery();
-  const { data: sessionData } = trpc.chat.getSession.useQuery(
+  const { data: sessionData, refetch: refetchSession } = trpc.chat.getSession.useQuery(
     { id: parseInt(sessionId || "0") },
     { enabled: !!sessionId }
   );
@@ -85,11 +85,14 @@ export default function Chat() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   // WebSocket streaming chat
-  const { connected: wsConnected, isStreaming, sendMessage: wsSendMessage } = useWebSocketChat({
+  const { connected: wsConnected, isStreaming, reconnecting: wsReconnecting, sendMessage: wsSendMessage } = useWebSocketChat({
     sessionId: currentSessionId,
     enabled: isOnline && !!currentSessionId,
     onUserSaved: () => {
       // User message confirmed saved on server
+    },
+    onReconnected: () => {
+      refetchSession();
     },
     onTypingStart: () => {
       setStreamingContent("");

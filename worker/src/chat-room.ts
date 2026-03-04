@@ -61,6 +61,11 @@ export class ChatRoom implements DurableObject {
       return;
     }
 
+    if (data.type === "ping") {
+      this.sendJson(ws, { type: "pong" });
+      return;
+    }
+
     if (data.type === "send" && typeof data.content === "string") {
       await this.handleSendMessage(ws, data.content);
     }

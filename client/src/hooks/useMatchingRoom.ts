@@ -30,6 +30,11 @@ type Options = {
   onViewerCount?: (count: number) => void;
 };
 
+const HEARTBEAT_INTERVAL = 30_000;
+const PONG_TIMEOUT = 10_000;
+const BASE_RECONNECT_DELAY = 1000;
+const MAX_RECONNECT_DELAY = 30_000;
+
 export function useMatchingRoom(opts: Options): {
   connected: boolean;
   phase: "idle" | "dialogue" | "analysis" | "complete";
@@ -45,6 +50,34 @@ export function useMatchingRoom(opts: Options): {
   const callbackRef = useRef(opts);
   callbackRef.current = opts;
   const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  const attemptRef = useRef(0);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pongTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearHeartbeat = useCallback(() => {
+    if (heartbeatRef.current) {
+      clearInterval(heartbeatRef.current);
+      heartbeatRef.current = null;
+    }
+    if (pongTimerRef.current) {
+      clearTimeout(pongTimerRef.current);
+      pongTimerRef.current = null;
+    }
+  }, []);
+
+  const startHeartbeat = useCallback((ws: WebSocket) => {
+    clearHeartbeat();
+    heartbeatRef.current = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "ping" }));
+        pongTimerRef.current = setTimeout(() => {
+          ws.close();
+        }, PONG_TIMEOUT);
+      }
+    }, HEARTBEAT_INTERVAL);
+  }, [clearHeartbeat]);
 
   const connect = useCallback(() => {
     if (!opts.enabled || !opts.sessionId) return;
@@ -56,11 +89,21 @@ export function useMatchingRoom(opts: Options): {
 
     ws.onopen = () => {
       setConnected(true);
+      attemptRef.current = 0;
+      startHeartbeat(ws);
     };
 
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+
+        if (data.type === "pong") {
+          if (pongTimerRef.current) {
+            clearTimeout(pongTimerRef.current);
+            pongTimerRef.current = null;
+          }
+          return;
+        }
 
         switch (data.type) {
           case "turn":
@@ -96,24 +139,27 @@ export function useMatchingRoom(opts: Options): {
     };
 
     ws.onclose = () => {
+      clearHeartbeat();
       setConnected(false);
       wsRef.current = null;
-      // Auto-reconnect if not completed
-      if (callbackRef.current.enabled && phase !== "complete") {
-        reconnectTimeout.current = setTimeout(connect, 3000);
+      if (callbackRef.current.enabled && phaseRef.current !== "complete") {
+        const attempt = attemptRef.current;
+        attemptRef.current = attempt + 1;
+        const base = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
+        const delay = base * (0.5 + Math.random() * 0.5);
+        reconnectTimeout.current = setTimeout(connect, delay);
       }
     };
 
-    ws.onerror = () => {
-      // Will trigger onclose
-    };
-  }, [opts.sessionId, opts.enabled, phase]);
+    ws.onerror = () => {};
+  }, [opts.sessionId, opts.enabled, startHeartbeat, clearHeartbeat]);
 
   useEffect(() => {
     connect();
 
     return () => {
       if (reconnectTimeout.current) clearTimeout(reconnectTimeout.current);
+      clearHeartbeat();
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;

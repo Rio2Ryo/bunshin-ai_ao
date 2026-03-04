@@ -807,6 +807,69 @@ describe("Quests", () => {
   });
 });
 
+describe("WebSocket endpoint auth and validation", () => {
+  it("chat WS endpoint requires authentication", async () => {
+    const res = await fetch(`${BASE}/api/chat/ws/1`);
+    expect(res.status).toBe(401);
+    const body = await res.json() as any;
+    expect(body.error).toBe("Unauthorized");
+  });
+
+  it("matching WS endpoint requires authentication", async () => {
+    const res = await fetch(`${BASE}/api/matching/ws/1`);
+    expect(res.status).toBe(401);
+    const body = await res.json() as any;
+    expect(body.error).toBe("Unauthorized");
+  });
+
+  it("workspace WS endpoint requires authentication", async () => {
+    const res = await fetch(`${BASE}/api/workspace/ws/1`);
+    expect(res.status).toBe(401);
+    const body = await res.json() as any;
+    expect(body.error).toBe("Unauthorized");
+  });
+
+  it("chat WS endpoint rejects invalid session ID", async () => {
+    if (!sessionCookie) return;
+    const res = await fetch(`${BASE}/api/chat/ws/0`, {
+      headers: { Cookie: sessionCookie },
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toBe("Invalid session ID");
+  });
+
+  it("chat WS endpoint rejects non-owned session", async () => {
+    if (!sessionCookie) return;
+    const res = await fetch(`${BASE}/api/chat/ws/999999`, {
+      headers: { Cookie: sessionCookie },
+    });
+    expect(res.status).toBe(404);
+    const body = await res.json() as any;
+    expect(body.error).toBe("Session not found");
+  });
+
+  it("matching WS endpoint rejects invalid session ID", async () => {
+    if (!sessionCookie) return;
+    const res = await fetch(`${BASE}/api/matching/ws/0`, {
+      headers: { Cookie: sessionCookie },
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toBe("Invalid session ID");
+  });
+
+  it("workspace WS endpoint rejects invalid workspace ID", async () => {
+    if (!sessionCookie) return;
+    const res = await fetch(`${BASE}/api/workspace/ws/0`, {
+      headers: { Cookie: sessionCookie },
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toBe("Invalid workspace ID");
+  });
+});
+
 describe("Twin Reset (end of test)", () => {
   it("myTwin.reset deletes the twin", async () => {
     const data = unwrap(await trpcMutate("myTwin.reset"));

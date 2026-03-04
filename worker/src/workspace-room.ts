@@ -72,6 +72,11 @@ export class WorkspaceRoom implements DurableObject {
       return;
     }
 
+    if (data.type === "ping") {
+      this.sendJson(ws, { type: "pong" });
+      return;
+    }
+
     switch (data.type) {
       case "cursor":
         this.broadcastExcept(ws, {
