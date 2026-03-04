@@ -11,9 +11,6 @@ import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { usePageMeta } from "@/hooks/usePageMeta";
 
-// Cast trpc to bypass TypeScript for not-yet-implemented backend procedures
-const t = trpc as any;
-
 export default function MatchingSummary() {
   usePageMeta({ title: "AI要約", description: "マッチング要約の生成と配信", path: "/matching-summary" });
 
@@ -22,12 +19,12 @@ export default function MatchingSummary() {
   const [rated, setRated] = useState<"up" | "down" | null>(null);
 
   const { data: sessions } = trpc.matching.sessions.useQuery();
-  const { data: summaryData, isLoading: summaryLoading, refetch: refetchSummary } = t.matching.getMatchingSummary.useQuery(
+  const { data: summaryData, isLoading: summaryLoading, refetch: refetchSummary } = trpc.matching.getMatchingSummary.useQuery(
     { sessionId: Number(selectedSession) },
     { enabled: !!selectedSession }
   );
 
-  const generateMut = t.matching.generateMatchingSummary.useMutation({
+  const generateMut = trpc.matching.generateMatchingSummary.useMutation({
     onSuccess: () => {
       toast.success("要約を生成しました");
       refetchSummary();
@@ -35,12 +32,12 @@ export default function MatchingSummary() {
     onError: (e: any) => toast.error(e.message || "要約生成に失敗しました"),
   });
 
-  const distributeMut = t.matching.distributeSummary.useMutation({
+  const distributeMut = trpc.matching.distributeSummary.useMutation({
     onSuccess: () => toast.success("要約を配信しました"),
     onError: (e: any) => toast.error(e.message || "配信に失敗しました"),
   });
 
-  const rateMut = t.matching.rateSummary.useMutation({
+  const rateMut = trpc.matching.rateSummary.useMutation({
     onSuccess: () => toast.success("フィードバックを送信しました"),
     onError: (e: any) => toast.error(e.message || "フィードバック送信に失敗しました"),
   });

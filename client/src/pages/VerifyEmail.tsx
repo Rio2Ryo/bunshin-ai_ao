@@ -1,13 +1,11 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { usePageMeta } from "@/hooks/usePageMeta";
-import { trpc } from "@/lib/trpc";
+import { trpc, API_BASE } from "@/lib/trpc";
 import { Bot, Loader2, Mail, CheckCircle, AlertCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { toast } from "sonner";
-
-const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
 
 export default function VerifyEmail() {
   usePageMeta({ title: "メール確認", description: "メールアドレスを確認してアカウントを有効化してください。", path: "/verify-email" });

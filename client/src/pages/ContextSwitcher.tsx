@@ -13,9 +13,6 @@ import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { usePageMeta } from "@/hooks/usePageMeta";
 
-// Cast trpc to bypass TypeScript for not-yet-implemented backend procedures
-const t = trpc as any;
-
 const CONDITION_TYPES = [
   { value: "industry", label: "業種" },
   { value: "theme_keyword", label: "テーマキーワード" },
@@ -58,12 +55,12 @@ export default function ContextSwitcher() {
   const [testFriendId, setTestFriendId] = useState<string>("");
 
   // Queries
-  const { data: rules, isLoading: rulesLoading, refetch: refetchRules } = t.myTwin.listContextRules.useQuery();
-  const { data: logs, isLoading: logsLoading } = t.myTwin.getContextSwitchLogs.useQuery();
+  const { data: rules, isLoading: rulesLoading, refetch: refetchRules } = trpc.myTwin.listContextRules.useQuery();
+  const { data: logs, isLoading: logsLoading } = trpc.myTwin.getContextSwitchLogs.useQuery();
   const { data: friends } = trpc.friends.list.useQuery();
 
   // Mutations
-  const createMut = t.myTwin.createContextRule.useMutation({
+  const createMut = trpc.myTwin.createContextRule.useMutation({
     onSuccess: () => {
       toast.success("ルールを作成しました");
       setForm({ ...emptyForm });
@@ -72,7 +69,7 @@ export default function ContextSwitcher() {
     onError: (e: any) => toast.error(e.message || "作成に失敗しました"),
   });
 
-  const updateMut = t.myTwin.updateContextRule.useMutation({
+  const updateMut = trpc.myTwin.updateContextRule.useMutation({
     onSuccess: () => {
       toast.success("ルールを更新しました");
       setEditingId(null);
@@ -82,7 +79,7 @@ export default function ContextSwitcher() {
     onError: (e: any) => toast.error(e.message || "更新に失敗しました"),
   });
 
-  const deleteMut = t.myTwin.deleteContextRule.useMutation({
+  const deleteMut = trpc.myTwin.deleteContextRule.useMutation({
     onSuccess: () => {
       toast.success("ルールを削除しました");
       refetchRules();
@@ -90,7 +87,7 @@ export default function ContextSwitcher() {
     onError: (e: any) => toast.error(e.message || "削除に失敗しました"),
   });
 
-  const evaluateMut = t.myTwin.evaluateContextRules.useMutation({
+  const evaluateMut = trpc.myTwin.evaluateContextRules.useMutation({
     onError: (e: any) => toast.error(e.message || "評価に失敗しました"),
   });
 

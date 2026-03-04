@@ -9,9 +9,6 @@ import { toast } from "sonner";
 import { Network, RefreshCw, Loader2, Search, Zap, Circle, X, ArrowRight, ChevronRight } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
-// Cast trpc to bypass TypeScript for not-yet-implemented backend procedures
-const t = trpc as any;
-
 const CATEGORY_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   skill: { bg: "bg-blue-100 dark:bg-blue-900/30", text: "text-blue-700 dark:text-blue-300", border: "border-blue-300 dark:border-blue-700" },
   experience: { bg: "bg-green-100 dark:bg-green-900/30", text: "text-green-700 dark:text-green-300", border: "border-green-300 dark:border-green-700" },
@@ -55,10 +52,10 @@ export default function KnowledgeGraph() {
   const [searchQuery, setSearchQuery] = useState("");
 
   // Fetch existing graph
-  const { data: graphData, isLoading: graphLoading, refetch: refetchGraph } = t.myTwin.getKnowledgeGraph.useQuery();
+  const { data: graphData, isLoading: graphLoading, refetch: refetchGraph } = trpc.myTwin.getKnowledgeGraph.useQuery();
 
   // Generate graph mutation
-  const generateMut = t.myTwin.generateKnowledgeGraph.useMutation({
+  const generateMut = trpc.myTwin.generateKnowledgeGraph.useMutation({
     onSuccess: () => {
       toast.success("ナレッジグラフを生成しました");
       refetchGraph();
@@ -69,7 +66,7 @@ export default function KnowledgeGraph() {
   });
 
   // Fetch related knowledge for selected node
-  const { data: relatedData, isLoading: relatedLoading } = t.myTwin.getRelatedKnowledge.useQuery(
+  const { data: relatedData, isLoading: relatedLoading } = trpc.myTwin.getRelatedKnowledge.useQuery(
     { entryId: selectedNodeId! },
     { enabled: !!selectedNodeId }
   );

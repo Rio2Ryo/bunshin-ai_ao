@@ -3,14 +3,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { usePageMeta } from "@/hooks/usePageMeta";
-import { trpc } from "@/lib/trpc";
+import { trpc, API_BASE } from "@/lib/trpc";
 import { Bot, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { toast } from "sonner";
 import { useTranslation } from "@/contexts/LanguageContext";
-
-const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
 
 export default function Register() {
   const { t } = useTranslation();

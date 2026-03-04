@@ -13,8 +13,6 @@ import { toast } from "sonner";
 import { Plug, Plus, RefreshCw, Trash2, Loader2, Calendar, BookOpen, MessageSquare, GitBranch, Settings, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-const t = trpc as any;
-
 const SERVICE_ICONS: Record<string, LucideIcon> = {
   google_calendar: Calendar, notion: BookOpen, slack: MessageSquare, github: GitBranch, custom: Settings,
 };
@@ -30,15 +28,15 @@ export default function ExternalConnectors() {
   const [newSchedule, setNewSchedule] = useState<string>("manual");
   const [selectedConnectorId, setSelectedConnectorId] = useState<number | null>(null);
 
-  const connectors = t.myTwin.listConnectors.useQuery();
-  const syncLogs = t.myTwin.getConnectorSyncLogs.useQuery(
+  const connectors = trpc.myTwin.listConnectors.useQuery();
+  const syncLogs = trpc.myTwin.getConnectorSyncLogs.useQuery(
     { connectorId: selectedConnectorId! },
     { enabled: !!selectedConnectorId }
   );
-  const createMutation = t.myTwin.createConnector.useMutation();
-  const syncMutation = t.myTwin.syncConnector.useMutation();
-  const deleteMutation = t.myTwin.deleteConnector.useMutation();
-  const updateMutation = t.myTwin.updateConnector.useMutation();
+  const createMutation = trpc.myTwin.createConnector.useMutation();
+  const syncMutation = trpc.myTwin.syncConnector.useMutation();
+  const deleteMutation = trpc.myTwin.deleteConnector.useMutation();
+  const updateMutation = trpc.myTwin.updateConnector.useMutation();
 
   const handleCreate = async () => {
     if (!newServiceName.trim()) { toast.error("サービス名を入力してください"); return; }

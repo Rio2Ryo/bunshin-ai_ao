@@ -971,7 +971,7 @@ api.all("/api/trpc/*", async (c) => {
       const row = await db.prepare(`SELECT id, openId, name, email, role, plan FROM users WHERE id=?`).bind(session.userId).first<any>();
       if (row) {
         userId = row.id;
-        user = { id: row.id, openId: row.openId, name: row.name, email: row.email, role: row.role };
+        user = { id: row.id, openId: row.openId, name: row.name, email: row.email, role: row.role, plan: row.plan ?? "free" };
       }
     }
   }

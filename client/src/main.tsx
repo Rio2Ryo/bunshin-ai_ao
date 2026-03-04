@@ -1,5 +1,5 @@
 import { initSentry } from "@/lib/sentry";
-import { trpc, reportTrpcError } from "@/lib/trpc";
+import { trpc, reportTrpcError, API_BASE } from "@/lib/trpc";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink } from "@trpc/client";
 import { createRoot } from "react-dom/client";
@@ -28,7 +28,7 @@ queryClient.getMutationCache().subscribe(event => {
 const trpcClient = trpc.createClient({
   links: [
     httpBatchLink({
-      url: `${(import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '')}/api/trpc`,
+      url: `${API_BASE}/api/trpc`,
       transformer: superjson,
       fetch(input, init) {
         return globalThis.fetch(input, {

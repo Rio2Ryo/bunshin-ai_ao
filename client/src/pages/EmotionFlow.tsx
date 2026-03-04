@@ -10,8 +10,6 @@ import { toast } from "sonner";
 import { Activity, Loader2, TrendingUp, AlertTriangle, Heart } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
-const t = trpc as any;
-
 const EMOTION_COLORS: Record<string, string> = {
   joy: "#fbbf24", anger: "#ef4444", sadness: "#3b82f6", fun: "#22c55e", anxiety: "#a855f7", confidence: "#f97316"
 };
@@ -22,12 +20,12 @@ const EMOTION_LABELS: Record<string, string> = {
 export default function EmotionFlow() {
   const [selectedSessionId, setSelectedSessionId] = useState<string>("");
   const sessions = trpc.matching.sessions.useQuery();
-  const analyzeMutation = t.matching.analyzeEmotionFlow.useMutation();
-  const emotionData = t.matching.getEmotionFlow.useQuery(
+  const analyzeMutation = trpc.matching.analyzeEmotionFlow.useMutation();
+  const emotionData = trpc.matching.getEmotionFlow.useQuery(
     { sessionId: Number(selectedSessionId) },
     { enabled: !!selectedSessionId }
   );
-  const history = t.matching.getEmotionFlowHistory.useQuery();
+  const history = trpc.matching.getEmotionFlowHistory.useQuery();
 
   const handleAnalyze = async () => {
     if (!selectedSessionId) return;

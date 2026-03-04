@@ -1,9 +1,7 @@
-import { trpc } from "@/lib/trpc";
+import { trpc, API_BASE } from "@/lib/trpc";
 import { TRPCClientError } from "@trpc/client";
 import { useCallback, useEffect, useMemo } from "react";
 import { useLocation } from "wouter";
-
-const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
 
 type UseAuthOptions = {
   redirectOnUnauthenticated?: boolean;

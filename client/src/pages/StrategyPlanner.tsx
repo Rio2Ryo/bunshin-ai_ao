@@ -13,9 +13,6 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Map, Target, AlertTriangle, CheckCircle, Lightbulb, Loader2, Save, MessageSquare, Star, ArrowRight } from "lucide-react";
 
-// Cast trpc to bypass TypeScript for not-yet-implemented backend procedures
-const t = trpc as any;
-
 export default function StrategyPlanner() {
   usePageMeta({ title: "戦略プランナー", description: "AIがマッチング前の戦略を立案", path: "/strategy" });
 
@@ -34,15 +31,15 @@ export default function StrategyPlanner() {
   // Queries
   const { data: friendsData, isLoading: friendsLoading } = trpc.friends.list.useQuery();
   const { data: sessionsData } = trpc.matching.sessions.useQuery();
-  const { data: savedStrategy, isLoading: strategyLoading } = t.matching.getStrategy.useQuery(
+  const { data: savedStrategy, isLoading: strategyLoading } = trpc.matching.getStrategy.useQuery(
     { friendId: parseInt(selectedFriendId) },
     { enabled: !!selectedFriendId }
   );
 
   // Mutations
-  const generateMut = t.matching.generateStrategy.useMutation();
-  const saveNoteMut = t.matching.saveStrategyNote.useMutation();
-  const reviewMut = t.matching.reviewStrategy.useMutation();
+  const generateMut = trpc.matching.generateStrategy.useMutation();
+  const saveNoteMut = trpc.matching.saveStrategyNote.useMutation();
+  const reviewMut = trpc.matching.reviewStrategy.useMutation();
 
   const friends = (friendsData as any)?.friends ?? friendsData ?? [];
   const sessions = (sessionsData as any) ?? [];

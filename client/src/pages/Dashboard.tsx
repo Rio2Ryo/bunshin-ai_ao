@@ -45,8 +45,7 @@ export default function Dashboard() {
   const { data: trustData, isLoading: trustLoading } = trpc.trust.getScore.useQuery(undefined, { staleTime: 60_000 });
   const { data: matchingSessions } = trpc.matching.sessions.useQuery(undefined, { staleTime: 30_000 });
   const pendingRequestCount = receivedRequests?.length ?? 0;
-  const me = user as any;
-  const tutorialDone = me?.tutorialCompleted === 1;
+  const tutorialDone = user?.tutorialCompleted === 1;
   const hasNpcSessions = matchingSessions?.some((s: any) => s.isNpcSession);
 
   const { layout, isEditing, setIsEditing, toggleWidget, resetLayout, swapWidgets } = useDashboardLayout();
@@ -306,11 +305,11 @@ export default function Dashboard() {
         </Suspense>
 
         {/* Login Streak */}
-        {(me?.loginStreak ?? 0) > 1 && (
+        {(user?.loginStreak ?? 0) > 1 && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/30 rounded-lg px-4 py-2">
             <Sparkles className="h-4 w-4 text-amber-500" />
-            <span>{me.loginStreak}日連続ログイン中</span>
-            {me.loginStreak >= 7 && <Badge variant="default" className="text-[10px]">ストリーク</Badge>}
+            <span>{user?.loginStreak}日連続ログイン中</span>
+            {(user?.loginStreak ?? 0) >= 7 && <Badge variant="default" className="text-[10px]">ストリーク</Badge>}
           </div>
         )}
       </div>

@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { usePageMeta } from "@/hooks/usePageMeta";
-import { trpc } from "@/lib/trpc";
+import { trpc, API_BASE } from "@/lib/trpc";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Progress } from "@/components/ui/progress";
@@ -187,7 +187,7 @@ export default function Profile() {
               <div className="space-y-2">
                 <div className="flex items-center gap-3">
                   {profile?.avatarUrl ? (
-                    <img src={`${(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "")}${profile.avatarUrl}`} alt="" className="h-10 w-10 rounded-full object-cover border" />
+                    <img src={`${API_BASE}${profile.avatarUrl}`} alt="" className="h-10 w-10 rounded-full object-cover border" />
                   ) : (
                     <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center border text-sm font-medium text-muted-foreground">
                       {formData.displayName?.charAt(0) || user?.name?.charAt(0) || "?"}
@@ -219,7 +219,7 @@ export default function Profile() {
                 <div className="h-20 w-20 rounded-full bg-muted border-2 border-border overflow-hidden flex items-center justify-center">
                   {profile?.avatarUrl ? (
                     <img
-                      src={`${(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "")}${profile.avatarUrl}`}
+                      src={`${API_BASE}${profile.avatarUrl}`}
                       alt="Avatar"
                       className="h-full w-full object-cover"
                     />
@@ -485,7 +485,7 @@ export default function Profile() {
                   setIsExporting(true);
                   try {
                     const res = await fetch(
-                      `${(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "")}/trpc/auth.exportMyData`,
+                      `${API_BASE}/trpc/auth.exportMyData`,
                       { credentials: "include" }
                     );
                     if (!res.ok) throw new Error("Export failed");
@@ -599,7 +599,7 @@ export default function Profile() {
                           // Clear session cookie
                           try {
                             await fetch(
-                              `${(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "")}/api/auth/logout`,
+                              `${API_BASE}/api/auth/logout`,
                               { method: "POST", credentials: "include" }
                             );
                           } catch { /* ignore */ }

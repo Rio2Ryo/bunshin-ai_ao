@@ -15,9 +15,6 @@ import { toast } from "sonner";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { ClipboardList, Target, DollarSign, TrendingUp, Plus, CheckCircle, Clock, Loader2, Trash2, Edit, Calendar } from "lucide-react";
 
-// Cast trpc to bypass TypeScript for not-yet-implemented backend procedures
-const t = trpc as any;
-
 const PIE_COLORS = ["#3b82f6", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444", "#6366f1"];
 
 const PRIORITY_CONFIG: Record<string, { label: string; color: string; bgColor: string }> = {
@@ -63,18 +60,18 @@ export default function OutcomeTracker() {
 
   // Queries
   const { data: sessionsData } = trpc.matching.sessions.useQuery();
-  const { data: actionItemsData, isLoading: actionsLoading, refetch: refetchActions } = t.matching.listActionItems.useQuery(
+  const { data: actionItemsData, isLoading: actionsLoading, refetch: refetchActions } = trpc.matching.listActionItems.useQuery(
     { status: statusFilter === "all" ? undefined : statusFilter }
   );
-  const { data: summaryData, isLoading: summaryLoading } = t.matching.getOutcomeSummary.useQuery(
+  const { data: summaryData, isLoading: summaryLoading } = trpc.matching.getOutcomeSummary.useQuery(
     undefined,
     { enabled: activeTab === "roi" }
   );
 
   // Mutations
-  const createActionMut = t.matching.createActionItem.useMutation();
-  const updateActionMut = t.matching.updateActionItem.useMutation();
-  const recordOutcomeMut = t.matching.recordOutcome.useMutation();
+  const createActionMut = trpc.matching.createActionItem.useMutation();
+  const updateActionMut = trpc.matching.updateActionItem.useMutation();
+  const recordOutcomeMut = trpc.matching.recordOutcome.useMutation();
 
   const sessions = (sessionsData as any) ?? [];
   const completedSessions = sessions.filter((s: any) => s.status === "completed");

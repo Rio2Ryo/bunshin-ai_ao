@@ -52,7 +52,7 @@ import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { trpc } from "@/lib/trpc";
+import { trpc, API_BASE } from "@/lib/trpc";
 import { useTranslation } from "@/contexts/LanguageContext";
 import { CommandPalette } from "@/components/CommandPalette";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -95,7 +95,7 @@ export default function DashboardLayout({
 
   // Check TOS acceptance - show TOS gate if not accepted
   const TosGate = () => {
-    const [tosAccepted, setTosAccepted] = useState(() => !!(user as any)?.tosAcceptedAt);
+    const [tosAccepted, setTosAccepted] = useState(() => !!user?.tosAcceptedAt);
     const acceptTosMutation = trpc.auth.acceptTos.useMutation({
       onSuccess: () => setTosAccepted(true),
     });
@@ -131,7 +131,7 @@ export default function DashboardLayout({
     );
   };
 
-  if (!(user as any)?.tosAcceptedAt) {
+  if (!user?.tosAcceptedAt) {
     return <TosGate />;
   }
 
@@ -538,7 +538,7 @@ function DashboardLayoutContent({
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-3 rounded-lg px-1 py-1 hover:bg-accent/50 transition-colors w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="ユーザーメニュー">
                   <Avatar className="h-9 w-9 border shrink-0">
-                    {(user as any)?.avatarUrl && <AvatarImage src={`${(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "")}${(user as any).avatarUrl}`} />}
+                    {user?.avatarUrl && <AvatarImage src={`${API_BASE}${user.avatarUrl}`} />}
                     <AvatarFallback className="text-xs font-medium">
                       {user?.name?.charAt(0).toUpperCase()}
                     </AvatarFallback>
@@ -622,7 +622,7 @@ function DashboardLayoutContent({
                 <DropdownMenuTrigger asChild>
                   <button className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-accent" aria-label="ユーザーメニュー">
                     <Avatar className="h-7 w-7 border">
-                      {(user as any)?.avatarUrl && <AvatarImage src={`${(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "")}${(user as any).avatarUrl}`} />}
+                      {user?.avatarUrl && <AvatarImage src={`${API_BASE}${user.avatarUrl}`} />}
                       <AvatarFallback className="text-[10px] font-medium">
                         {user?.name?.charAt(0).toUpperCase()}
                       </AvatarFallback>

@@ -96,7 +96,7 @@ export default function Onboarding() {
       navigate("/login");
       return;
     }
-    if ((me as any).onboardingCompleted === 1) {
+    if (me?.onboardingCompleted === 1) {
       navigate("/dashboard");
     }
   }, [me, meLoading, navigate, showingCandidates]);

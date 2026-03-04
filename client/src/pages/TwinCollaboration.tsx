@@ -12,9 +12,6 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Users, Bot, MessageSquare, Loader2, Plus, BarChart3, CheckCircle, XCircle, Lightbulb, Scale, ArrowLeft } from "lucide-react";
 
-// Cast trpc to bypass TypeScript for not-yet-implemented backend procedures
-const t = trpc as any;
-
 const TWIN_COLORS = [
   { bg: "bg-blue-100 dark:bg-blue-900/30", border: "border-blue-300 dark:border-blue-700", text: "text-blue-700 dark:text-blue-300", dot: "bg-blue-500" },
   { bg: "bg-purple-100 dark:bg-purple-900/30", border: "border-purple-300 dark:border-purple-700", text: "text-purple-700 dark:text-purple-300", dot: "bg-purple-500" },
@@ -38,15 +35,15 @@ export default function TwinCollaboration() {
   // Queries
   const { data: myTwin } = trpc.myTwin.get.useQuery();
   const { data: friendsData } = trpc.friends.list.useQuery();
-  const { data: collaborations, isLoading: historyLoading, refetch: refetchHistory } = t.myTwin.listCollaborations.useQuery();
-  const { data: historyDetail } = t.myTwin.getCollaboration.useQuery(
+  const { data: collaborations, isLoading: historyLoading, refetch: refetchHistory } = trpc.myTwin.listCollaborations.useQuery();
+  const { data: historyDetail } = trpc.myTwin.getCollaboration.useQuery(
     { collaborationId: selectedHistoryId! },
     { enabled: !!selectedHistoryId }
   );
 
   // Mutations
-  const startMut = t.myTwin.startCollaboration.useMutation();
-  const analyzeMut = t.myTwin.analyzeCollaboration.useMutation();
+  const startMut = trpc.myTwin.startCollaboration.useMutation();
+  const analyzeMut = trpc.myTwin.analyzeCollaboration.useMutation();
 
   const friends = (friendsData as any)?.friends ?? friendsData ?? [];
   const twin = myTwin as any;

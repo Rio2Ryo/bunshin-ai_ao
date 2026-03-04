@@ -13,9 +13,6 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 
-// Cast trpc to bypass TypeScript for not-yet-implemented backend procedures
-const t = trpc as any;
-
 export default function ComparisonTimeline() {
   usePageMeta({ title: "比較タイムライン", description: "マッチングセッション間の比較分析", path: "/comparison-timeline" });
 
@@ -24,13 +21,13 @@ export default function ComparisonTimeline() {
   const [selectedComparison, setSelectedComparison] = useState<number | null>(null);
 
   const { data: sessions } = trpc.matching.sessions.useQuery();
-  const { data: comparisons, isLoading: listLoading, refetch: refetchComparisons } = t.matching.listComparisonTimelines.useQuery();
-  const { data: comparisonDetail, isLoading: detailLoading } = t.matching.getComparisonTimeline.useQuery(
+  const { data: comparisons, isLoading: listLoading, refetch: refetchComparisons } = trpc.matching.listComparisonTimelines.useQuery();
+  const { data: comparisonDetail, isLoading: detailLoading } = trpc.matching.getComparisonTimeline.useQuery(
     { comparisonId: selectedComparison! },
     { enabled: !!selectedComparison }
   );
 
-  const createMut = t.matching.createComparisonTimeline.useMutation({
+  const createMut = trpc.matching.createComparisonTimeline.useMutation({
     onSuccess: (data: any) => {
       toast.success("比較を作成しました");
       if (data?.comparisonId) setSelectedComparison(data.comparisonId);

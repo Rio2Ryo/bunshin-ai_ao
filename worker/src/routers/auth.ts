@@ -3,6 +3,33 @@ import { TRPCError } from "@trpc/server";
 import { router, publicProcedure, protectedProcedure, hashPassword, verifyPassword, createSessionToken, type Env, type Context } from "../trpc";
 import { ensureSchema, parseJson, normalizeTwin, ensureNpcFriends, addTrustAction } from "../db-helpers";
 
+/** Typed return shape for auth.me — used by tRPC to propagate types to frontend */
+export type AuthMeUser = {
+  id: number;
+  openId: string;
+  name: string | null;
+  email: string | null;
+  role: string;
+  plan: string;
+  onboardingCompleted: number;
+  tutorialCompleted: number;
+  tosAcceptedAt: string | null;
+  trustScore: number;
+  trustRank: string;
+  loginStreak: number;
+  avatarUrl: string | null;
+};
+
+/** Typed return shape for auth.login / auth.register / auth.verifyEmail user field */
+export type AuthLoginUser = {
+  id: number;
+  name: string | null;
+  email: string | null;
+  role: string;
+  plan: string;
+  onboardingCompleted: number;
+};
+
 export const authRouter = router({
     register: publicProcedure
       .input(z.object({ email: z.string().email().max(255), password: z.string().min(8).max(100), name: z.string().min(1).max(100), tosAccepted: z.boolean().optional() }))
@@ -110,7 +137,14 @@ Step 5完了時に以下を出力:
           await ctx.env.DB.prepare(`UPDATE users SET emailVerified=1 WHERE id=?`).bind(user.id).run();
           const token = await createSessionToken(user.id, ctx.env);
           return {
-            user: { id: user.id, name: user.name, email: user.email, role: user.role, plan: user.plan, onboardingCompleted: user.onboardingCompleted ?? 0 },
+            user: {
+              id: user.id,
+              name: user.name,
+              email: user.email,
+              role: user.role,
+              plan: user.plan ?? "free",
+              onboardingCompleted: user.onboardingCompleted ?? 0,
+            } satisfies AuthLoginUser,
             token,
             success: true,
             requiresVerification: false,
@@ -131,7 +165,17 @@ Step 5完了時に以下を出力:
         }
         await ctx.env.DB.prepare(`UPDATE users SET lastSignedIn=datetime('now') WHERE id=?`).bind(user.id).run();
         const token = await createSessionToken(user.id, ctx.env);
-        return { user: { id: user.id, name: user.name, email: user.email, role: user.role, plan: user.plan, onboardingCompleted: user.onboardingCompleted ?? 0 }, token };
+        return {
+          user: {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            plan: user.plan ?? "free",
+            onboardingCompleted: user.onboardingCompleted ?? 0,
+          } satisfies AuthLoginUser,
+          token,
+        };
       }),
     me: publicProcedure.query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
@@ -183,7 +227,21 @@ Step 5完了時に以下を出力:
           }
         }
 
-        return { ...ctx.user, onboardingCompleted: row?.onboardingCompleted ?? 0, tutorialCompleted: row?.tutorialCompleted ?? 0, tosAcceptedAt: row?.tosAcceptedAt ?? null, trustScore, trustRank, loginStreak, avatarUrl: profileRow?.avatarUrl ?? null };
+        return {
+          id: ctx.user.id,
+          openId: ctx.user.openId,
+          name: ctx.user.name,
+          email: ctx.user.email,
+          role: ctx.user.role,
+          plan: ctx.user.plan,
+          onboardingCompleted: row?.onboardingCompleted ?? 0,
+          tutorialCompleted: row?.tutorialCompleted ?? 0,
+          tosAcceptedAt: row?.tosAcceptedAt ?? null,
+          trustScore,
+          trustRank,
+          loginStreak,
+          avatarUrl: profileRow?.avatarUrl ?? null,
+        } satisfies AuthMeUser;
       }
       // Not logged in
       return null;
@@ -630,7 +688,14 @@ Step 5完了時に以下を出力:
         await ctx.env.DB.prepare(`UPDATE users SET lastSignedIn=datetime('now') WHERE id=?`).bind(user.id).run();
         const token = await createSessionToken(user.id, ctx.env);
         return {
-          user: { id: user.id, name: user.name, email: user.email, role: user.role, plan: user.plan, onboardingCompleted: user.onboardingCompleted ?? 0 },
+          user: {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            plan: user.plan ?? "free",
+            onboardingCompleted: user.onboardingCompleted ?? 0,
+          } satisfies AuthLoginUser,
           token,
         };
       }),

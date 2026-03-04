@@ -10,9 +10,6 @@ import { toast } from "sonner";
 import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 import { Award, TrendingUp, Loader2, RefreshCw, CheckCircle, AlertTriangle, Lightbulb } from "lucide-react";
 
-// Cast trpc to bypass TypeScript for not-yet-implemented backend procedures
-const t = trpc as any;
-
 function getScoreColor(score: number): string {
   if (score >= 80) return "text-green-600 dark:text-green-400";
   if (score >= 60) return "text-yellow-600 dark:text-yellow-400";
@@ -44,16 +41,16 @@ export default function QualityScorecard() {
   const completedSessions = sessions.filter((s: any) => s.status === "completed");
 
   // Fetch quality score for selected session
-  const { data: qualityData, isLoading: qualityLoading } = t.matching.getQualityScore.useQuery(
+  const { data: qualityData, isLoading: qualityLoading } = trpc.matching.getQualityScore.useQuery(
     { sessionId: selectedSessionId },
     { enabled: !!selectedSessionId }
   );
 
   // Fetch quality trend
-  const { data: trendData, isLoading: trendLoading } = t.matching.getQualityTrend.useQuery();
+  const { data: trendData, isLoading: trendLoading } = trpc.matching.getQualityTrend.useQuery();
 
   // Evaluate quality mutation
-  const evaluateMut = t.matching.evaluateQuality.useMutation({
+  const evaluateMut = trpc.matching.evaluateQuality.useMutation({
     onSuccess: () => {
       toast.success("品質評価が完了しました");
     },

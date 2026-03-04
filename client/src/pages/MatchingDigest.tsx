@@ -9,9 +9,6 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { FileText, Mail, Calendar, TrendingUp, Trophy, Target, Loader2, RefreshCw, BarChart3, CheckCircle, Sparkles, ArrowUpRight } from "lucide-react";
 
-// Cast trpc to bypass TypeScript for not-yet-implemented backend procedures
-const t = trpc as any;
-
 type DigestPeriod = "weekly" | "monthly";
 
 function formatCurrency(value: number): string {
@@ -24,13 +21,13 @@ export default function MatchingDigest() {
   const [period, setPeriod] = useState<DigestPeriod>("weekly");
 
   // Fetch existing digest
-  const { data: digestData, isLoading: digestLoading, refetch: refetchDigest } = t.matching.getDigest.useQuery(
+  const { data: digestData, isLoading: digestLoading, refetch: refetchDigest } = trpc.matching.getDigest.useQuery(
     { period },
     { enabled: true }
   );
 
   // Generate digest mutation
-  const generateMut = t.matching.generateDigest.useMutation({
+  const generateMut = trpc.matching.generateDigest.useMutation({
     onSuccess: () => {
       toast.success("ダイジェストを生成しました");
       refetchDigest();
@@ -41,7 +38,7 @@ export default function MatchingDigest() {
   });
 
   // Send digest email mutation
-  const sendEmailMut = t.matching.sendDigestEmail.useMutation({
+  const sendEmailMut = trpc.matching.sendDigestEmail.useMutation({
     onSuccess: () => {
       toast.success("ダイジェストメールを送信しました");
     },

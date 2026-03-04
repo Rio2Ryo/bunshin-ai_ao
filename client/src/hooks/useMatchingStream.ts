@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-
-const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
+import { API_BASE } from "@/lib/trpc";
 
 export type MatchingTurn = {
   turnNumber: number;

@@ -34,7 +34,7 @@ export type Env = {
 export type Context = {
   env: Env;
   userId: number;
-  user: { id: number; openId: string; name: string | null; email: string | null; role: string } | null;
+  user: { id: number; openId: string; name: string | null; email: string | null; role: string; plan: string } | null;
 };
 
 // ============ Auth Helpers ============

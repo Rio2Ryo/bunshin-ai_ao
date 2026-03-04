@@ -9,18 +9,16 @@ import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { GraduationCap, BookOpen, CheckCircle2, Lock, Play, Trash2, Loader2, Target, Brain } from "lucide-react";
 
-const t = trpc as any;
-
 export default function LearningCurriculum() {
   const [selectedCurriculumId, setSelectedCurriculumId] = useState<number | null>(null);
-  const curricula = t.myTwin.listCurricula.useQuery();
-  const curriculumDetail = t.myTwin.getCurriculum.useQuery(
+  const curricula = trpc.myTwin.listCurricula.useQuery();
+  const curriculumDetail = trpc.myTwin.getCurriculum.useQuery(
     { curriculumId: selectedCurriculumId! },
     { enabled: !!selectedCurriculumId }
   );
-  const generateMutation = t.myTwin.generateCurriculum.useMutation();
-  const completeLessonMutation = t.myTwin.completeLesson.useMutation();
-  const deleteMutation = t.myTwin.deleteCurriculum.useMutation();
+  const generateMutation = trpc.myTwin.generateCurriculum.useMutation();
+  const completeLessonMutation = trpc.myTwin.completeLesson.useMutation();
+  const deleteMutation = trpc.myTwin.deleteCurriculum.useMutation();
 
   const handleGenerate = async () => {
     try {
