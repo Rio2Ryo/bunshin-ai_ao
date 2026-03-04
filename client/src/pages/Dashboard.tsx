@@ -97,10 +97,10 @@ export default function Dashboard() {
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-2xl font-bold">
-              おかえりなさい、<span className="text-gradient">{user?.name || "ユーザー"}</span>さん
+              {!tutorialDone ? "はじめまして" : "おかえりなさい"}、<span className="text-gradient">{user?.name || "ユーザー"}</span>さん
             </h1>
             <p className="text-muted-foreground mt-1 text-sm">
-              分身AIの管理とビジネスマッチングを始めましょう
+              {!tutorialDone ? "分身AIの世界へようこそ！まずは練習マッチングから始めましょう" : "分身AIの管理とビジネスマッチングを始めましょう"}
             </p>
           </div>
           <div className="flex items-center gap-2">

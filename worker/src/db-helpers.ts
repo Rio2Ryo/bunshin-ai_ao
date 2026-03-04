@@ -2339,6 +2339,21 @@ const NPC_DEFINITIONS = [
 オンボーディングでは僕が質問しますので、お名前・年齢・お仕事・趣味など気軽に教えてくださいね。あなたの情報をもとに「デジタル分身AI」を自動で作成します。
 
 プロフィールが完成したら、僕や案内花子との練習マッチングを試せますよ！`,
+    profile: {
+      displayName: "ガイド太郎",
+      company: "分身AIラボ",
+      position: "ビジネスコンサルタント",
+      industry: "IT・テクノロジー",
+      bio: "10年以上のビジネスコンサルティング経験を持ち、AIとビジネスの融合を推進。スタートアップから大企業まで幅広いクライアントを支援。",
+      skills: '["ビジネス戦略","AI活用","プロジェクト管理","チームビルディング"]',
+      expertise: '["デジタルトランスフォーメーション","新規事業開発"]',
+      experience: "大手コンサルティングファームにて10年勤務後、AI活用を専門とするビジネスコンサルタントとして独立。",
+    },
+    knowledge: [
+      { title: "AI活用によるビジネス変革", content: "AIをビジネスに活用する際は、まず業務フローの可視化が重要です。自動化可能な反復タスクを特定し、段階的にAIを導入することで、効率化とコスト削減を同時に達成できます。特にカスタマーサポート、データ分析、マーケティング施策の最適化は即効性の高い領域です。", summary: "AI活用のビジネス戦略とステップ" },
+      { title: "スタートアップの成長戦略", content: "スタートアップが持続的に成長するには、PMF（プロダクト・マーケット・フィット）の検証が最優先です。顧客の課題を深く理解し、MVPでの仮説検証を高速で回すことが成功の鍵。資金調達よりも顧客獲得と維持に注力すべきフェーズを見極めることが重要です。", summary: "スタートアップ成長のフレームワーク" },
+      { title: "チームビルディングの原則", content: "効果的なチームビルディングには、心理的安全性の確保が不可欠です。メンバーが自由に意見を述べ、失敗を恐れない環境を作ることで、イノベーションが生まれます。1on1ミーティングの定期開催、OKRによる目標管理、振り返りの習慣化が効果的です。", summary: "心理的安全性とチーム運営" },
+    ],
   },
   {
     openId: "npc_guide_hanako",
@@ -2356,6 +2371,21 @@ const NPC_DEFINITIONS = [
 プロフィールが完成すると、オンボーディングの最後でマッチング候補が表示されます。私やガイド太郎との練習マッチングをぜひ試してみてくださいね！
 
 マッチングでは、お互いの分身AI同士がビジネスの可能性について自動で対話します。信頼度スコアが上がると、実際のユーザーとのマッチングも始められますよ！`,
+    profile: {
+      displayName: "案内花子",
+      company: "分身AIラボ",
+      position: "マーケティングディレクター",
+      industry: "マーケティング・広告",
+      bio: "デジタルマーケティングのエキスパート。SNS運用からブランド戦略まで幅広く手がけ、データドリブンなアプローチでクライアントの成長を支援。",
+      skills: '["デジタルマーケティング","ブランド戦略","SNS運用","データ分析"]',
+      expertise: '["コンテンツマーケティング","グロースハック"]',
+      experience: "外資系広告代理店にて7年勤務、その後デジタルマーケティング専門のコンサルタントとして活動。",
+    },
+    knowledge: [
+      { title: "SNSマーケティング戦略", content: "効果的なSNSマーケティングの基本は、ターゲットオーディエンスの明確化です。プラットフォームごとの特性を理解し、Instagram、X、TikTok、LinkedInそれぞれに最適化したコンテンツを配信。エンゲージメント率を重視し、フォロワー数よりもコミュニティの質を追求することが重要です。", summary: "プラットフォーム別SNS戦略" },
+      { title: "コンテンツマーケティングの実践", content: "コンテンツマーケティングの成功には、SEOを意識した記事設計、ユーザーの検索意図に応える情報提供、定期的な更新が重要です。ブログ、動画、ポッドキャストなど複数チャネルを組み合わせ、リードナーチャリングの仕組みを構築しましょう。", summary: "コンテンツ戦略とSEO" },
+      { title: "ブランディングの基礎", content: "強いブランドは一貫したメッセージングから生まれます。ミッション、ビジョン、バリューを明確にし、すべてのタッチポイントで統一した体験を提供。ストーリーテリングを活用して、感情的なつながりを顧客と構築することが長期的なブランド価値を高めます。", summary: "ブランド構築とストーリーテリング" },
+    ],
   },
 ] as const;
 
@@ -2374,6 +2404,26 @@ export async function ensureNpcFriends(db: D1Database, userId: number) {
         `INSERT INTO users (openId, name, email, loginMethod, role, plan, friendCode, isNpc, onboardingCompleted) VALUES (?,?,?,'npc','npc','free',?,1,1)`
       ).bind(npc.openId, npc.name, npc.email, code).run();
       npcUser = await db.prepare(`SELECT id FROM users WHERE openId=?`).bind(npc.openId).first<any>();
+      // Create NPC user_profile
+      if (npcUser) {
+        const existingProfile = await db.prepare(`SELECT id FROM user_profiles WHERE userId=?`).bind(npcUser.id).first<any>();
+        if (!existingProfile && npc.profile) {
+          await db.prepare(
+            `INSERT INTO user_profiles (userId, displayName, company, position, industry, bio, skills, expertise, experience) VALUES (?,?,?,?,?,?,?,?,?)`
+          ).bind(npcUser.id, npc.profile.displayName, npc.profile.company, npc.profile.position, npc.profile.industry, npc.profile.bio, npc.profile.skills, npc.profile.expertise, npc.profile.experience).run();
+        }
+      }
+      // Create NPC knowledge_base entries
+      if (npcUser && npc.knowledge) {
+        for (const kb of npc.knowledge) {
+          const existing = await db.prepare(`SELECT id FROM knowledge_base WHERE userId=? AND title=?`).bind(npcUser.id, kb.title).first<any>();
+          if (!existing) {
+            await db.prepare(
+              `INSERT INTO knowledge_base (userId, title, content, summary, sourceType) VALUES (?,?,?,?,?)`
+            ).bind(npcUser.id, kb.title, kb.content, kb.summary, "manual").run();
+          }
+        }
+      }
     }
     if (!npcUser) continue;
 

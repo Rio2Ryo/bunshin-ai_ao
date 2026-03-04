@@ -24,7 +24,15 @@ export function RecentMatchingsWidget() {
       </CardHeader>
       <CardContent className="pt-0">
         {recentMatchings.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-4">マッチングがありません</p>
+          <div className="flex flex-col items-center py-4 gap-2">
+            <p className="text-sm text-muted-foreground text-center">マッチングがありません</p>
+            <Link href="/matching">
+              <Button size="sm" variant="outline" className="gap-1 text-xs">
+                <ArrowRight className="h-3 w-3" />
+                マッチングを始める
+              </Button>
+            </Link>
+          </div>
         ) : (
           <div className="space-y-2">
             {recentMatchings.map((session: any) => {

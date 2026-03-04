@@ -246,9 +246,16 @@ export const onboardingRouter = router({
   getStatus: publicProcedure.query(async ({ ctx }) => {
     await ensureSchema(ctx.env.DB);
     if (!ctx.userId) return { onboardingCompleted: 0, tutorialCompleted: 0 };
-    const row = await ctx.env.DB.prepare(`SELECT onboardingCompleted, tutorialCompleted FROM users WHERE id=?`).bind(ctx.userId).first<any>();
-    return { onboardingCompleted: row?.onboardingCompleted ?? 0, tutorialCompleted: row?.tutorialCompleted ?? 0 };
+    const row = await ctx.env.DB.prepare(`SELECT onboardingCompleted, tutorialCompleted, onboardingStep FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+    return { onboardingCompleted: row?.onboardingCompleted ?? 0, tutorialCompleted: row?.tutorialCompleted ?? 0, onboardingStep: row?.onboardingStep ?? 0 };
   }),
+  saveStep: protectedProcedure
+    .input(z.object({ step: z.number().min(0).max(5) }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`UPDATE users SET onboardingStep=? WHERE id=?`).bind(input.step, ctx.userId).run();
+      return { success: true };
+    }),
   getSession: protectedProcedure.query(async ({ ctx }) => {
     await ensureSchema(ctx.env.DB);
     if (!ctx.userId) return null;
@@ -274,7 +281,12 @@ export const onboardingRouter = router({
         // Dynamic SET clause: column names are hardcoded below, not from user input (safe from SQL injection)
         const sets: string[] = [];
         const binds: any[] = [];
-        if (input.description) { sets.push("description=?"); binds.push(input.description); }
+        if (input.description && input.description !== "プロフィール設定中") { sets.push("description=?"); binds.push(input.description); }
+        // If description is the dummy placeholder, try to generate one from rawInput
+        if (input.description === "プロフィール設定中" && input.rawInput) {
+          const summary = input.rawInput.split("\n").filter(l => l.trim()).slice(0, 3).join("。").slice(0, 200);
+          if (summary) { sets.push("description=?"); binds.push(summary); }
+        }
         if (input.personality) { sets.push("personality=?"); binds.push(input.personality); }
         if (input.rawInput) { sets.push("rawInput=?"); binds.push(input.rawInput); }
         // Clear onboarding system prompt and set a normal one

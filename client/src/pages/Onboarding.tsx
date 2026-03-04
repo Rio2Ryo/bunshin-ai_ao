@@ -73,6 +73,8 @@ export default function Onboarding() {
       setStep(nextStep);
       setFadeIn(true);
     }, 150);
+    // Persist to backend (fire-and-forget)
+    saveStepMutation.mutate({ step: nextStep });
   };
 
   const { data: me, isLoading: meLoading } = trpc.auth.me.useQuery();
@@ -88,6 +90,7 @@ export default function Onboarding() {
   const sendMessage = trpc.chat.sendMessage.useMutation();
   const completeMutation = trpc.onboarding.complete.useMutation();
   const createMatching = trpc.matching.create.useMutation();
+  const saveStepMutation = trpc.onboarding.saveStep.useMutation();
   const utils = trpc.useUtils();
 
   useEffect(() => {
@@ -98,6 +101,12 @@ export default function Onboarding() {
     }
     if ((me as any).onboardingCompleted === 1) {
       navigate("/dashboard");
+      return;
+    }
+    // Restore step from backend if user refreshed
+    const savedStep = (me as any).onboardingStep;
+    if (savedStep > 0 && savedStep <= 5 && step === 0) {
+      goToStep(savedStep);
     }
   }, [me, meLoading, navigate, showingCandidates]);
 
@@ -175,10 +184,12 @@ export default function Onboarding() {
   const handleManualComplete = async () => {
     setCompleting(true);
     try {
+      const userMessages = messages.filter(m => m.role === "user").map(m => m.content);
+      const rawInput = userMessages.join("\n");
       await completeMutation.mutateAsync({
-        description: "プロフィール設定中",
+        description: userMessages.slice(0, 3).join("。").slice(0, 200) || "プロフィール設定中",
         personality: "",
-        rawInput: messages.filter(m => m.role === "user").map(m => m.content).join("\n"),
+        rawInput,
       });
       sessionStorage.removeItem("onboardingSessionId");
       toast.success("分身AIのプロフィールが完成しました！");
