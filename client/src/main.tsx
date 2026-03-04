@@ -7,7 +7,23 @@ import superjson from "superjson";
 import App from "./App";
 import "./index.css";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000, // 30 seconds — reduces redundant API calls
+      retry: (failureCount, error) => {
+        // Never retry 4xx errors (auth, forbidden, not found, validation)
+        const status = (error as any)?.data?.httpStatus ?? (error as any)?.status;
+        if (status && status >= 400 && status < 500) return false;
+        return failureCount < 1; // Retry server errors once
+      },
+      refetchOnWindowFocus: false, // Disable auto-refetch on tab switch
+    },
+    mutations: {
+      retry: false, // Never retry mutations
+    },
+  },
+});
 
 queryClient.getQueryCache().subscribe(event => {
   if (event.type === "updated" && event.action.type === "error") {

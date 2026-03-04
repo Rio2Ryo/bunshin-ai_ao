@@ -11,6 +11,7 @@ import { Crown, ArrowRight, Sparkles, Bell, Loader2, Pencil, RotateCcw, Eye, Eye
 import { useDashboardLayout, type WidgetId } from "@/hooks/useDashboardLayout";
 import { KpiWidget, RecentMatchingsWidget, FriendsListWidget, TwinStatusWidget, NotificationsWidget, QuickActionsWidget, AnalyticsWidget, BriefingWidget, QualityTrendWidget, BookmarksWidget } from "@/components/widgets";
 import { useCallback, useRef, useState } from "react";
+import { WidgetErrorBoundary } from "@/components/WidgetErrorBoundary";
 
 const WIDGET_COMPONENTS: Record<WidgetId, { component: React.FC; label: string }> = {
   kpi: { component: KpiWidget, label: "KPI" },
@@ -287,7 +288,9 @@ export default function Dashboard() {
                     <GripVertical className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                   </div>
                 )}
-                <WidgetComponent />
+                <WidgetErrorBoundary widgetName={config.label}>
+                  <WidgetComponent />
+                </WidgetErrorBoundary>
               </div>
             );
           })}

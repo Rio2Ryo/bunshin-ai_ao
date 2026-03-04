@@ -77,6 +77,7 @@ export default function Chat() {
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
   const [mobileSessionOpen, setMobileSessionOpen] = useState(false);
+  const [sessionSearch, setSessionSearch] = useState("");
   const [isFlushingQueue, setIsFlushingQueue] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
 
@@ -374,7 +375,10 @@ export default function Chat() {
     setRenameTitle("");
   };
 
-  const displaySessions = sessions || (offlineSessions.length > 0 ? offlineSessions : undefined);
+  const allSessions = sessions || (offlineSessions.length > 0 ? offlineSessions : undefined);
+  const displaySessions = sessionSearch.trim()
+    ? allSessions?.filter((s: any) => (s.title || "チャット").toLowerCase().includes(sessionSearch.toLowerCase()))
+    : allSessions;
 
   const renderSessionItem = (session: { id: number; title?: string | null; messageCount?: number }) => {
     const isRenaming = renamingId === session.id;
@@ -470,7 +474,15 @@ export default function Chat() {
               <CardTitle className="text-sm">チャット履歴</CardTitle>
             </CardHeader>
             <CardContent className="p-2">
-              <ScrollArea className="h-[calc(100vh-14rem)]">
+              <div className="mb-2">
+                <Input
+                  placeholder="チャットを検索..."
+                  value={sessionSearch}
+                  onChange={(e) => setSessionSearch(e.target.value)}
+                  className="h-7 text-sm"
+                />
+              </div>
+              <ScrollArea className="h-[calc(100vh-17rem)]">
                 <div className="space-y-1">
                   {displaySessions?.map((session) => renderSessionItem(session as any))}
                 </div>

@@ -109,6 +109,8 @@ export default function Matching() {
   const createMultilingualMut = trpc.matching.createMultilingual.useMutation();
   const predictMut = trpc.matching.predictScore.useMutation();
   const [prediction, setPrediction] = useState<any>(null);
+  const [historySearch, setHistorySearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
   const handleCreate = async () => {
     if (!selectedFriendId || !theme.trim()) { toast.error("友達とテーマを選択してください"); return; }
@@ -212,7 +214,19 @@ export default function Matching() {
   const npcSessions = sessions?.filter((s: any) => s.isNpcSession) || [];
   const trustScore = trustData?.score ?? 0;
 
-  const sortedSessions = [...(displayedSessions || [])].sort((a: any, b: any) => {
+  const filteredSessions = (displayedSessions || []).filter((s: any) => {
+    if (statusFilter !== "all" && s.status !== statusFilter) return false;
+    if (historySearch.trim()) {
+      const q = historySearch.toLowerCase();
+      const theme = (s.theme || "").toLowerCase();
+      const t1 = (s.twin1?.name || "").toLowerCase();
+      const t2 = (s.twin2?.name || "").toLowerCase();
+      if (!theme.includes(q) && !t1.includes(q) && !t2.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const sortedSessions = [...filteredSessions].sort((a: any, b: any) => {
     if (a.status === "completed" && b.status !== "completed") return -1;
     if (a.status !== "completed" && b.status === "completed") return 1;
     if (a.compatibilityScore != null && b.compatibilityScore != null) return b.compatibilityScore - a.compatibilityScore;
@@ -713,6 +727,32 @@ export default function Matching() {
                   <TrendingUp className="h-4 w-4 text-muted-foreground" />
                   <h3 className="text-sm font-medium">マッチング履歴</h3>
                   {sortedSessions.length > 0 && <Badge variant="secondary" className="text-xs">{sortedSessions.length}件</Badge>}
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <Input
+                    placeholder="テーマ・ツイン名で検索..."
+                    value={historySearch}
+                    onChange={(e) => setHistorySearch(e.target.value)}
+                    className="h-8 text-sm sm:max-w-[240px]"
+                  />
+                  <div className="flex gap-1">
+                    {[
+                      { value: "all", label: "全て" },
+                      { value: "completed", label: "完了" },
+                      { value: "running", label: "実行中" },
+                      { value: "pending", label: "待機中" },
+                    ].map((opt) => (
+                      <Button
+                        key={opt.value}
+                        variant={statusFilter === opt.value ? "default" : "outline"}
+                        size="sm"
+                        className="h-8 text-xs px-2.5"
+                        onClick={() => setStatusFilter(opt.value)}
+                      >
+                        {opt.label}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
                 {sessionsLoading ? (
                   <div className="flex items-center justify-center h-32"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
