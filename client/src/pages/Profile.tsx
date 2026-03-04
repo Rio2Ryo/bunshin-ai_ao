@@ -289,6 +289,8 @@ export default function Profile() {
                   value={formData.displayName}
                   onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
                   placeholder="山田 太郎"
+                  required
+                  maxLength={100}
                 />
               </div>
 
@@ -300,6 +302,7 @@ export default function Profile() {
                   onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
                   placeholder="あなた自身について簡単に紹介してください"
                   rows={4}
+                  maxLength={500}
                 />
               </div>
             </CardContent>
@@ -320,6 +323,8 @@ export default function Profile() {
                     value={formData.company}
                     onChange={(e) => setFormData({ ...formData, company: e.target.value })}
                     placeholder="株式会社〇〇"
+                    required
+                    maxLength={100}
                   />
                 </div>
                 <div className="space-y-2">
@@ -329,6 +334,7 @@ export default function Profile() {
                     value={formData.position}
                     onChange={(e) => setFormData({ ...formData, position: e.target.value })}
                     placeholder="代表取締役"
+                    maxLength={100}
                   />
                 </div>
               </div>

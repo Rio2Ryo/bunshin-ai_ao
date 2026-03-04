@@ -6,6 +6,7 @@ import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc, API_BASE } from "@/lib/trpc";
 import { Bot, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { useForm } from "react-hook-form";
 import { Link, useLocation } from "wouter";
 import { toast } from "sonner";
 import { useTranslation } from "@/contexts/LanguageContext";
@@ -13,9 +14,10 @@ import { useTranslation } from "@/contexts/LanguageContext";
 export default function Login() {
   const { t } = useTranslation();
   usePageMeta({ title: "ログイン", description: "分身AIにログインして、デジタルツインの管理やビジネスマッチングを開始しましょう。", path: "/login" });
+  type LoginForm = { email: string; password: string };
+
   const [, navigate] = useLocation();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const { register, handleSubmit, getValues, formState: { errors, isSubmitting } } = useForm<LoginForm>();
   const utils = trpc.useUtils();
 
   const [showResend, setShowResend] = useState(false);
@@ -57,11 +59,9 @@ export default function Login() {
     },
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email || !password) return;
-    loginMutation.mutate({ email, password });
-  };
+  const onSubmit = handleSubmit(async (data) => {
+    loginMutation.mutate({ email: data.email, password: data.password });
+  });
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4" role="main" aria-label="ログイン">
@@ -78,21 +78,23 @@ export default function Login() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4" aria-label="ログインフォーム">
+          <form onSubmit={onSubmit} className="space-y-4" aria-label="ログインフォーム">
             <div className="space-y-2">
               <Label htmlFor="email">{t("login.email")}</Label>
               <Input
                 id="email"
+                {...register("email", {
+                  required: "メールアドレスを入力してください",
+                  pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: "有効なメールアドレスを入力してください" }
+                })}
                 type="email"
                 placeholder="you@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
                 autoComplete="email"
                 aria-label="メールアドレス"
-                aria-invalid={loginMutation.isError || undefined}
-                aria-describedby={showResend ? "login-error" : undefined}
+                aria-invalid={!!errors.email || loginMutation.isError || undefined}
+                aria-describedby={errors.email ? "email-error" : showResend ? "login-error" : undefined}
               />
+              {errors.email && <p className="text-sm text-destructive mt-1" id="email-error">{errors.email.message}</p>}
             </div>
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -103,23 +105,26 @@ export default function Login() {
               </div>
               <Input
                 id="password"
+                {...register("password", {
+                  required: "パスワードを入力してください",
+                  minLength: { value: 8, message: "パスワードは8文字以上で入力してください" }
+                })}
                 type="password"
                 placeholder="8文字以上"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
                 autoComplete="current-password"
                 aria-label="パスワード"
-                aria-invalid={loginMutation.isError || undefined}
+                aria-invalid={!!errors.password || loginMutation.isError || undefined}
+                aria-describedby={errors.password ? "password-error" : undefined}
               />
+              {errors.password && <p className="text-sm text-destructive mt-1" id="password-error">{errors.password.message}</p>}
             </div>
             <Button
               type="submit"
               className="w-full"
-              disabled={loginMutation.isPending}
+              disabled={isSubmitting || loginMutation.isPending}
               aria-label="ログイン"
             >
-              {loginMutation.isPending ? (
+              {(isSubmitting || loginMutation.isPending) ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-2" aria-hidden="true" />
               ) : null}
               {t("login.submit")}
@@ -134,7 +139,7 @@ export default function Login() {
                 size="sm"
                 className="w-full"
                 disabled={resendMutation.isPending}
-                onClick={() => resendMutation.mutate({ email })}
+                onClick={() => resendMutation.mutate({ email: getValues("email") })}
               >
                 {resendMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                 {t("login.resend")}

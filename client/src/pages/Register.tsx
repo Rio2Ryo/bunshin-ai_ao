@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc, API_BASE } from "@/lib/trpc";
 import { Bot, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useForm } from "react-hook-form";
 import { Link, useLocation } from "wouter";
 import { toast } from "sonner";
 import { useTranslation } from "@/contexts/LanguageContext";
@@ -13,12 +13,12 @@ import { useTranslation } from "@/contexts/LanguageContext";
 export default function Register() {
   const { t } = useTranslation();
   usePageMeta({ title: "新規登録", description: "分身AIアカウントを作成して、あなたのデジタルツインを始めましょう。無料で登録できます。", path: "/register" });
+  type RegisterForm = { name: string; email: string; password: string; confirmPassword: string; tosAccepted: boolean };
+
   const [, navigate] = useLocation();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [tosAccepted, setTosAccepted] = useState(false);
+  const { register, handleSubmit, watch, getValues, formState: { errors, isSubmitting } } = useForm<RegisterForm>({
+    defaultValues: { tosAccepted: false },
+  });
 
   const utils = trpc.useUtils();
 
@@ -27,7 +27,7 @@ export default function Register() {
       if (data.requiresVerification) {
         // Email service is configured: user must verify email first
         toast.success("確認メールを送信しました");
-        navigate(`/verify-email?email=${encodeURIComponent(email)}`);
+        navigate(`/verify-email?email=${encodeURIComponent(getValues("email"))}`);
       } else if (data.token) {
         // No email service: auto-verified, set session and proceed
         await fetch(`${API_BASE}/api/auth/set-session`, {
@@ -37,7 +37,7 @@ export default function Register() {
           body: JSON.stringify({ token: data.token }),
         });
         await utils.auth.me.invalidate();
-        toast.success(`ようこそ、${data.user?.name ?? name}さん！`);
+        toast.success(`ようこそ、${data.user?.name ?? getValues("name")}さん！`);
         const onboardingCompleted = data.user?.onboardingCompleted ?? 0;
         if (onboardingCompleted) {
           navigate("/dashboard");
@@ -51,22 +51,9 @@ export default function Register() {
     },
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (password !== confirmPassword) {
-      toast.error(t("register.passwordMismatch"));
-      return;
-    }
-    if (password.length < 6) {
-      toast.error("パスワードは6文字以上で入力してください");
-      return;
-    }
-    if (!tosAccepted) {
-      toast.error(t("register.tosRequired"));
-      return;
-    }
-    registerMutation.mutate({ name, email, password, tosAccepted: true });
-  };
+  const onSubmit = handleSubmit(async (data) => {
+    registerMutation.mutate({ name: data.name, email: data.email, password: data.password, tosAccepted: true });
+  });
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4" role="main" aria-label="アカウント登録">
@@ -83,88 +70,102 @@ export default function Register() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4" aria-label="アカウント登録フォーム">
+          <form onSubmit={onSubmit} className="space-y-4" aria-label="アカウント登録フォーム">
             <div className="space-y-2">
               <Label htmlFor="name">{t("register.name")}</Label>
               <Input
                 id="name"
+                {...register("name", {
+                  required: "お名前を入力してください",
+                })}
                 type="text"
                 placeholder="山田 太郎"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
                 autoComplete="name"
                 aria-label="お名前"
-                aria-invalid={registerMutation.isError || undefined}
+                aria-invalid={!!errors.name || undefined}
+                aria-describedby={errors.name ? "name-error" : undefined}
               />
+              {errors.name && <p className="text-sm text-destructive mt-1" id="name-error">{errors.name.message}</p>}
             </div>
             <div className="space-y-2">
               <Label htmlFor="email">{t("register.email")}</Label>
               <Input
                 id="email"
+                {...register("email", {
+                  required: "メールアドレスを入力してください",
+                  pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: "有効なメールアドレスを入力してください" }
+                })}
                 type="email"
                 placeholder="you@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
                 autoComplete="email"
                 aria-label="メールアドレス"
-                aria-invalid={registerMutation.isError || undefined}
+                aria-invalid={!!errors.email || undefined}
+                aria-describedby={errors.email ? "email-error" : undefined}
               />
+              {errors.email && <p className="text-sm text-destructive mt-1" id="email-error">{errors.email.message}</p>}
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">{t("register.password")}</Label>
               <Input
                 id="password"
+                {...register("password", {
+                  required: "パスワードを入力してください",
+                  minLength: { value: 8, message: "パスワードは8文字以上で入力してください" }
+                })}
                 type="password"
-                placeholder="6文字以上"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={6}
+                placeholder="8文字以上"
                 autoComplete="new-password"
                 aria-label="パスワード"
-                aria-invalid={(password.length > 0 && password.length < 6) || undefined}
-                aria-describedby="password-hint"
+                aria-invalid={!!errors.password || undefined}
+                aria-describedby={errors.password ? "password-error" : "password-hint"}
               />
-              <p id="password-hint" className="sr-only">パスワードは6文字以上で入力してください</p>
+              {errors.password ? (
+                <p className="text-sm text-destructive mt-1" id="password-error">{errors.password.message}</p>
+              ) : (
+                <p id="password-hint" className="sr-only">パスワードは8文字以上で入力してください</p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="confirmPassword">{t("register.confirmPassword")}</Label>
               <Input
                 id="confirmPassword"
+                {...register("confirmPassword", {
+                  required: "パスワードを再入力してください",
+                  validate: (val) => val === watch("password") || "パスワードが一致しません"
+                })}
                 type="password"
                 placeholder="もう一度入力してください"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-                minLength={6}
                 autoComplete="new-password"
                 aria-label="パスワード（確認）"
-                aria-invalid={(confirmPassword.length > 0 && confirmPassword !== password) || undefined}
+                aria-invalid={!!errors.confirmPassword || undefined}
+                aria-describedby={errors.confirmPassword ? "confirm-password-error" : undefined}
               />
+              {errors.confirmPassword && <p className="text-sm text-destructive mt-1" id="confirm-password-error">{errors.confirmPassword.message}</p>}
             </div>
             <div className="flex items-start gap-2">
               <input
                 type="checkbox"
                 id="tos"
-                checked={tosAccepted}
-                onChange={(e) => setTosAccepted(e.target.checked)}
+                {...register("tosAccepted", {
+                  required: "利用規約に同意してください"
+                })}
                 className="mt-1 rounded border-input focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 aria-required="true"
+                aria-invalid={!!errors.tosAccepted || undefined}
               />
               <Label htmlFor="tos" className="text-xs text-muted-foreground leading-relaxed cursor-pointer">
                 <Link href="/terms" className="text-primary hover:underline">利用規約</Link>および
                 <Link href="/privacy" className="text-primary hover:underline">プライバシーポリシー</Link>に同意します
               </Label>
             </div>
+            {errors.tosAccepted && <p className="text-sm text-destructive -mt-2">{errors.tosAccepted.message}</p>}
             <Button
               type="submit"
               className="w-full"
-              disabled={registerMutation.isPending}
+              disabled={isSubmitting || registerMutation.isPending}
               aria-label="アカウント作成"
             >
-              {registerMutation.isPending ? (
+              {(isSubmitting || registerMutation.isPending) ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
               ) : null}
               {t("register.submit")}
