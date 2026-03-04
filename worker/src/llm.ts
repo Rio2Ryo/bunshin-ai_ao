@@ -3,6 +3,7 @@
  * Supports OpenAI, Gemini, Anthropic, Grok via their native APIs,
  * and Azure AI Foundry (Kimi-K2.5 etc.) as server-side fallback.
  */
+import { TRPCError } from "@trpc/server";
 
 type Message = { role: "system" | "user" | "assistant"; content: string };
 
@@ -20,6 +21,36 @@ type LLMResult = {
   provider: string;
   usage?: { promptTokens: number; completionTokens: number };
 };
+
+/** Convert raw LLM API errors into structured TRPCError */
+function wrapLLMError(provider: string, status: number, rawError: string): never {
+  // Rate limit
+  if (status === 429) {
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: `AIサービス（${provider}）のレート制限に達しました。しばらく待ってから再試行してください。`,
+    });
+  }
+  // Auth errors (bad API key)
+  if (status === 401 || status === 403) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: `AIサービス（${provider}）の認証に失敗しました。APIキーを確認してください。`,
+    });
+  }
+  // Server errors
+  if (status >= 500) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: `AIサービス（${provider}）が一時的に利用できません。しばらく待ってから再試行してください。`,
+    });
+  }
+  // Other errors
+  throw new TRPCError({
+    code: "INTERNAL_SERVER_ERROR",
+    message: `AIサービス（${provider}）でエラーが発生しました。`,
+  });
+}
 
 const DEFAULT_MODELS: Record<string, string> = {
   openai: "gpt-4o-mini",
@@ -53,7 +84,10 @@ export async function invokeLLM(
     case "azure-foundry":
       return callAzureFoundry(config.baseUrl!, apiKey, model, messages, maxTokens, temperature);
     default:
-      throw new Error(`Unsupported LLM provider: ${provider}`);
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `サポートされていないAIプロバイダー: ${provider}`,
+      });
   }
 }
 
@@ -78,7 +112,7 @@ async function callOpenAICompatible(
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`${provider} API error ${res.status}: ${err}`);
+    wrapLLMError(provider, res.status, err);
   }
 
   const data = await res.json() as any;
@@ -128,7 +162,7 @@ async function callGemini(
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Gemini API error ${res.status}: ${err}`);
+    wrapLLMError("gemini", res.status, err);
   }
 
   const data = await res.json() as any;
@@ -176,7 +210,7 @@ async function callAnthropic(
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Anthropic API error ${res.status}: ${err}`);
+    wrapLLMError("anthropic", res.status, err);
   }
 
   const data = await res.json() as any;
@@ -213,7 +247,7 @@ async function callAzureFoundry(
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Azure Foundry API error ${res.status}: ${err}`);
+    wrapLLMError("azure-foundry", res.status, err);
   }
 
   const data = await res.json() as any;
@@ -258,7 +292,10 @@ export async function invokeLLMStream(
     case "azure-foundry":
       return streamAzureFoundry(config.baseUrl!, apiKey, model, messages, maxTokens, temperature, onToken);
     default:
-      throw new Error(`Unsupported LLM provider: ${provider}`);
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `サポートされていないAIプロバイダー: ${provider}`,
+      });
   }
 }
 
@@ -315,7 +352,7 @@ async function streamOpenAICompatible(
   });
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`${provider} API error ${res.status}: ${err}`);
+    wrapLLMError(provider, res.status, err);
   }
   let full = "";
   await parseSSEStream(res.body!, (data) => {
@@ -349,7 +386,7 @@ async function streamGemini(
   );
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Gemini API error ${res.status}: ${err}`);
+    wrapLLMError("gemini", res.status, err);
   }
   let full = "";
   await parseSSEStream(res.body!, (data) => {
@@ -382,7 +419,7 @@ async function streamAnthropic(
   });
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Anthropic API error ${res.status}: ${err}`);
+    wrapLLMError("anthropic", res.status, err);
   }
   let full = "";
   // Anthropic SSE has event: lines before data: lines
@@ -433,7 +470,7 @@ async function streamAzureFoundry(
   });
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Azure Foundry API error ${res.status}: ${err}`);
+    wrapLLMError("azure-foundry", res.status, err);
   }
   let full = "";
   await parseSSEStream(res.body!, (data) => {

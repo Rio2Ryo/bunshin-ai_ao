@@ -101,6 +101,19 @@ export function parseCookie(cookieHeader: string | null, name: string): string |
 
 const t = initTRPC.context<Context>().create({
   transformer: superjson,
+  errorFormatter({ shape, error }) {
+    return {
+      ...shape,
+      data: {
+        ...shape.data,
+        // Never expose stack traces or internal error details to clients
+        stack: undefined,
+        // Add timestamp for debugging
+        timestamp: new Date().toISOString(),
+      },
+      message: shape.message || "エラーが発生しました",
+    };
+  },
 });
 
 export const router = t.router;

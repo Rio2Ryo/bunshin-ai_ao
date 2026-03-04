@@ -16,6 +16,7 @@ import { ensureSchema, toJson, parseJson, getMyTwin, normalizeTwin, addTrustActi
 import { invokeLLM, getUserLLMConfig } from "./llm";
 import { notifyMatchingComplete, createNotification, sendPaymentFailedEmail, sendReengagementEmail, sendWeeklyDigestEmail, sendWebPush } from "./notifications";
 import { requestLogger } from "./middleware";
+import { writeErrorLog, notifySlackError } from "./error-handler";
 
 // Re-export Durable Object classes (required by Cloudflare Workers runtime)
 export { ChatRoom } from "./chat-room";
@@ -980,6 +981,35 @@ api.all("/api/trpc/*", async (c) => {
     req: c.req.raw,
     router: appRouter,
     createContext: () => ({ env, userId, user }),
+    onError: ({ path, error, ctx }) => {
+      // Log all errors to D1 error_logs
+      const errPath = path ?? "unknown";
+      const errMessage = error.message || "Unknown error";
+      const errContext = JSON.stringify({
+        code: error.code,
+        cause: error.cause instanceof Error ? error.cause.message : undefined,
+      });
+
+      writeErrorLog(db, {
+        level: error.code === "INTERNAL_SERVER_ERROR" ? "error" : "warn",
+        path: errPath,
+        message: errMessage,
+        context: errContext,
+        userId: userId || undefined,
+      });
+
+      // Slack notification for INTERNAL_SERVER_ERROR only
+      if (error.code === "INTERNAL_SERVER_ERROR" && env.SLACK_WEBHOOK_URL) {
+        notifySlackError(env.SLACK_WEBHOOK_URL, {
+          path: errPath,
+          message: errMessage,
+          userId: userId || undefined,
+        });
+      }
+
+      // Console log for Workers dashboard
+      console.error(`[tRPC Error] ${errPath}: ${error.code} - ${errMessage}`);
+    },
   });
 });
 
