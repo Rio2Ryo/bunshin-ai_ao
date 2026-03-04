@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, publicProcedure, protectedProcedure, hashPassword, verifyPassword, createSessionToken, type Env, type Context } from "../trpc";
-import { ensureSchema, parseJson, normalizeTwin, ensureNpcFriends, addTrustAction } from "../db-helpers";
+import { ensureSchema, parseJson, normalizeTwin, ensureNpcFriends, addTrustAction, logAudit } from "../db-helpers";
 
 export const authRouter = router({
     register: publicProcedure
@@ -104,11 +104,16 @@ Step 5完了時に以下を出力:
             });
           } catch { /* email send failed, but token is still valid */ }
 
+          await logAudit(ctx.env.DB, 'auth.register', user.id, 'user', user.id, { email: input.email });
           return { success: true, requiresVerification: true, email: input.email };
         } else {
           // No email service: auto-verify and allow immediate login
           await ctx.env.DB.prepare(`UPDATE users SET emailVerified=1 WHERE id=?`).bind(user.id).run();
-          const token = await createSessionToken(user.id, ctx.env);
+          const { token, sessionId } = await createSessionToken(user.id, ctx.env);
+          await ctx.env.DB.prepare(
+            `INSERT INTO sessions (id, userId, expiresAt) VALUES (?, ?, datetime('now', '+30 days'))`
+          ).bind(sessionId, user.id).run();
+          await logAudit(ctx.env.DB, 'auth.register', user.id, 'user', user.id, { email: input.email });
           return {
             user: { id: user.id, name: user.name, email: user.email, role: user.role, plan: user.plan, onboardingCompleted: user.onboardingCompleted ?? 0 },
             token,
@@ -124,13 +129,20 @@ Step 5完了時に以下を出力:
         const user = await ctx.env.DB.prepare(`SELECT id, openId, name, email, passwordHash, loginMethod, role, plan, friendCode, createdAt, updatedAt, lastSignedIn, onboardingCompleted, isNpc, onboardingStep, tutorialCompleted, tosAcceptedAt, tosVersion, emailVerified FROM users WHERE email=?`).bind(input.email).first<any>();
         if (!user || !user.passwordHash) throw new TRPCError({ code: "UNAUTHORIZED", message: "メールアドレスまたはパスワードが正しくありません" });
         const valid = await verifyPassword(input.password, user.passwordHash);
-        if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "メールアドレスまたはパスワードが正しくありません" });
+        if (!valid) {
+          await logAudit(ctx.env.DB, 'auth.login.failed', user.id, 'user', user.id, { email: input.email, reason: 'wrong_password' });
+          throw new TRPCError({ code: "UNAUTHORIZED", message: "メールアドレスまたはパスワードが正しくありません" });
+        }
         // Block login for unverified emails (emailVerified=0). NULL = legacy user, treated as verified.
         if (user.emailVerified === 0) {
           throw new TRPCError({ code: "FORBIDDEN", message: "メールアドレスが未認証です。受信トレイを確認してください。" });
         }
         await ctx.env.DB.prepare(`UPDATE users SET lastSignedIn=datetime('now') WHERE id=?`).bind(user.id).run();
-        const token = await createSessionToken(user.id, ctx.env);
+        const { token, sessionId } = await createSessionToken(user.id, ctx.env);
+        await ctx.env.DB.prepare(
+          `INSERT INTO sessions (id, userId, expiresAt) VALUES (?, ?, datetime('now', '+30 days'))`
+        ).bind(sessionId, user.id).run();
+        await logAudit(ctx.env.DB, 'auth.login', user.id, 'user', user.id, { email: input.email });
         return { user: { id: user.id, name: user.name, email: user.email, role: user.role, plan: user.plan, onboardingCompleted: user.onboardingCompleted ?? 0 }, token };
       }),
     me: publicProcedure.query(async ({ ctx }) => {
@@ -189,6 +201,25 @@ Step 5完了時に以下を出力:
       return null;
     }),
     logout: publicProcedure.mutation(() => ({ success: true })),
+
+    // ---- Session Management ----
+    revokeAllSessions: protectedProcedure.mutation(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(
+        `UPDATE sessions SET revokedAt=datetime('now') WHERE userId=? AND revokedAt IS NULL`
+      ).bind(ctx.userId).run();
+      await logAudit(ctx.env.DB, 'auth.revoke_all_sessions', ctx.userId, 'user', ctx.userId);
+      return { success: true };
+    }),
+
+    listSessions: protectedProcedure.query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const rows = await ctx.env.DB.prepare(
+        `SELECT id, createdAt, expiresAt, revokedAt, ipAddress, userAgent FROM sessions WHERE userId=? ORDER BY createdAt DESC LIMIT 20`
+      ).bind(ctx.userId).all();
+      return rows.results || [];
+    }),
+
     acceptTos: protectedProcedure.mutation(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       await ctx.env.DB.prepare(`UPDATE users SET tosAcceptedAt=datetime('now'), tosVersion='1.0' WHERE id=?`).bind(ctx.userId).run();
@@ -221,6 +252,8 @@ Step 5完了時に以下を出力:
         delete twin.systemPrompt;
       }
 
+      await logAudit(ctx.env.DB, 'auth.export_data', ctx.userId, 'user', ctx.userId);
+
       return {
         exportedAt: new Date().toISOString(),
         user: user ? { ...user, passwordHash: undefined } : null,
@@ -237,14 +270,15 @@ Step 5完了時に以下を出力:
       };
     }),
 
-    // ---- GDPR: Account Deletion ----
+    // ---- GDPR: Account Deletion (comprehensive cascade delete — all tables) ----
     deleteAccount: protectedProcedure
       .input(z.object({ password: z.string().min(1).max(100), confirmation: z.literal("DELETE") }))
       .mutation(async ({ ctx, input }) => {
         await ensureSchema(ctx.env.DB);
+        const db = ctx.env.DB;
 
         // Verify password
-        const user = await ctx.env.DB.prepare(`SELECT passwordHash FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+        const user = await db.prepare(`SELECT passwordHash, email FROM users WHERE id=?`).bind(ctx.userId).first<any>();
         if (!user?.passwordHash) throw new TRPCError({ code: "UNAUTHORIZED", message: "パスワードが設定されていません" });
         const valid = await verifyPassword(input.password, user.passwordHash);
         if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "パスワードが正しくありません" });
@@ -252,11 +286,11 @@ Step 5完了時に以下を出力:
         const userId = ctx.userId;
 
         // Get user's twin ID for cascade deletes
-        const twin = await ctx.env.DB.prepare(`SELECT id FROM digital_twins WHERE userId=?`).bind(userId).first<any>();
+        const twin = await db.prepare(`SELECT id FROM digital_twins WHERE userId=?`).bind(userId).first<any>();
         const twinId = twin?.id;
 
         // Cancel Stripe subscription if exists
-        const stripeUser = await ctx.env.DB.prepare(`SELECT stripeSubscriptionId FROM users WHERE id=?`).bind(userId).first<any>();
+        const stripeUser = await db.prepare(`SELECT stripeSubscriptionId FROM users WHERE id=?`).bind(userId).first<any>();
         if (stripeUser?.stripeSubscriptionId && ctx.env.STRIPE_SECRET_KEY) {
           try {
             await fetch(`https://api.stripe.com/v1/subscriptions/${stripeUser.stripeSubscriptionId}`, {
@@ -266,89 +300,287 @@ Step 5完了時に以下を出力:
           } catch { /* ignore Stripe errors during deletion */ }
         }
 
-        // Delete all user data using parameterized queries
-        // Twin-related tables (only if twin exists)
-        if (twinId) {
-          const twinDeletions = [
-            ctx.env.DB.prepare(`DELETE FROM knowledge_base WHERE twinId=?`).bind(twinId),
-            ctx.env.DB.prepare(`DELETE FROM twin_growth_status WHERE twinId=?`).bind(twinId),
-            ctx.env.DB.prepare(`DELETE FROM twin_skill_levels WHERE twinId=?`).bind(twinId),
-            ctx.env.DB.prepare(`DELETE FROM twin_milestones WHERE twinId=?`).bind(twinId),
-            ctx.env.DB.prepare(`DELETE FROM twin_visibility_rules WHERE twinId=?`).bind(twinId),
-            ctx.env.DB.prepare(`DELETE FROM conversation_learning WHERE twinId=?`).bind(twinId),
-          ];
-          for (const stmt of twinDeletions) {
-            try { await stmt.run(); } catch { /* table may not exist */ }
+        // Helper: run a batch of prepared statements, ignoring errors for missing tables
+        const safeBatch = async (stmts: D1PreparedStatement[]) => {
+          if (stmts.length === 0) return;
+          try { await db.batch(stmts); } catch {
+            // If batch fails (e.g. table doesn't exist), fall back to individual execution
+            for (const stmt of stmts) {
+              try { await stmt.run(); } catch { /* table may not exist */ }
+            }
           }
+        };
+
+        // ===== PHASE 1: Child tables with indirect references (delete before parents) =====
+        await safeBatch([
+          db.prepare(`DELETE FROM negotiation_turns WHERE negotiationId IN (SELECT id FROM negotiation_sessions WHERE userId=?)`).bind(userId),
+          db.prepare(`DELETE FROM twin_collaboration_turns WHERE collaborationId IN (SELECT id FROM twin_collaborations WHERE userId=?)`).bind(userId),
+          db.prepare(`DELETE FROM twin_coaching_messages WHERE sessionId IN (SELECT id FROM twin_coaching_sessions WHERE userId=?)`).bind(userId),
+          db.prepare(`DELETE FROM curriculum_progress WHERE curriculumId IN (SELECT id FROM learning_curricula WHERE userId=?)`).bind(userId),
+          db.prepare(`DELETE FROM context_switch_logs WHERE ruleId IN (SELECT id FROM context_switch_rules WHERE userId=?)`).bind(userId),
+          db.prepare(`DELETE FROM facilitator_interventions WHERE sessionId IN (SELECT id FROM matching_sessions WHERE initiatorUserId=?)`).bind(userId),
+          db.prepare(`DELETE FROM matching_emotion_analysis WHERE sessionId IN (SELECT id FROM matching_sessions WHERE initiatorUserId=?)`).bind(userId),
+          db.prepare(`DELETE FROM matching_highlights WHERE sessionId IN (SELECT id FROM matching_sessions WHERE initiatorUserId=?)`).bind(userId),
+          db.prepare(`DELETE FROM journal_comments WHERE journalId IN (SELECT id FROM learning_journal_entries WHERE userId=?)`).bind(userId),
+        ]);
+
+        // ===== PHASE 2: Twin-related tables (only if twin exists) =====
+        if (twinId) {
+          // Batch 2a: existing + new twin tables (first half)
+          await safeBatch([
+            db.prepare(`DELETE FROM knowledge_base WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM twin_growth_status WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM twin_skill_levels WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM twin_milestones WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM twin_visibility_rules WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM conversation_learning WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM twin_personas WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM knowledge_graphs WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM twin_knowledge_graphs WHERE userId=?`).bind(userId),
+            db.prepare(`DELETE FROM sandbox_sessions WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM twin_benchmarks WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM emotion_journal_entries WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM twin_goals WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM knowledge_quizzes WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM persona_ab_tests WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM dialogue_style_profiles WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM personality_reports WHERE twinId=?`).bind(twinId),
+          ]);
+
+          // Batch 2b: remaining twin tables
+          await safeBatch([
+            db.prepare(`DELETE FROM context_switch_rules WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM learning_curricula WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM external_connectors WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM learning_journal_entries WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM roleplay_sessions WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM emotion_calibration WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM multimodal_inputs WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM twin_faqs WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM twin_templates WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM twin_clones WHERE sourceUserId=?`).bind(userId),
+            db.prepare(`DELETE FROM twin_evolution_events WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM conversation_style_analysis WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM twin_memories WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM twin_versions WHERE twinId=?`).bind(twinId),
+            db.prepare(`DELETE FROM twin_coaching_sessions WHERE twinId=?`).bind(twinId),
+          ]);
         }
 
-        // Chat data
-        try { await ctx.env.DB.prepare(`DELETE FROM chat_messages WHERE sessionId IN (SELECT id FROM chat_sessions WHERE userId=?)`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM chat_sessions WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // ===== PHASE 3: All userId-referenced tables =====
 
-        // Matching data
-        try { await ctx.env.DB.prepare(`DELETE FROM matching_dialogues WHERE sessionId IN (SELECT id FROM matching_sessions WHERE initiatorUserId=?)`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM matching_results WHERE sessionId IN (SELECT id FROM matching_sessions WHERE initiatorUserId=?)`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM matching_sessions WHERE initiatorUserId=?`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM matching_requests WHERE senderUserId=? OR receiverUserId=?`).bind(userId, userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM auto_matching_schedules WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Batch 3a: Chat data
+        await safeBatch([
+          db.prepare(`DELETE FROM chat_messages WHERE sessionId IN (SELECT id FROM chat_sessions WHERE userId=?)`).bind(userId),
+          db.prepare(`DELETE FROM chat_sessions WHERE userId=?`).bind(userId),
+        ]);
 
-        // Social
-        try { await ctx.env.DB.prepare(`DELETE FROM friendships WHERE userId=? OR friendId=?`).bind(userId, userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM intimacy_scores WHERE userId=? OR friendId=?`).bind(userId, userId).run(); } catch { /* ignore */ }
+        // Batch 3b: Matching data (child tables first)
+        await safeBatch([
+          db.prepare(`DELETE FROM matching_dialogues WHERE sessionId IN (SELECT id FROM matching_sessions WHERE initiatorUserId=?)`).bind(userId),
+          db.prepare(`DELETE FROM matching_results WHERE sessionId IN (SELECT id FROM matching_sessions WHERE initiatorUserId=?)`).bind(userId),
+          db.prepare(`DELETE FROM matching_sessions WHERE initiatorUserId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_requests WHERE senderUserId=? OR receiverUserId=?`).bind(userId, userId),
+          db.prepare(`DELETE FROM auto_matching_schedules WHERE userId=?`).bind(userId),
+        ]);
 
-        // Waveforms & scenarios
-        try { await ctx.env.DB.prepare(`DELETE FROM value_scenario_responses WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM cumulative_waveforms WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM other_perspective_waveforms WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Batch 3c: Social & waveforms
+        await safeBatch([
+          db.prepare(`DELETE FROM friendships WHERE userId=? OR friendId=?`).bind(userId, userId),
+          db.prepare(`DELETE FROM intimacy_scores WHERE userId=? OR friendId=?`).bind(userId, userId),
+          db.prepare(`DELETE FROM value_scenario_responses WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM cumulative_waveforms WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM other_perspective_waveforms WHERE userId=?`).bind(userId),
+        ]);
 
-        // Points & marketplace
-        try { await ctx.env.DB.prepare(`DELETE FROM point_transactions WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM user_points WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM persona_purchases WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM persona_reviews WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
-        // Anonymize persona templates (preserve marketplace integrity)
-        try { await ctx.env.DB.prepare(`UPDATE persona_templates SET creatorUserId=0 WHERE creatorUserId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Batch 3d: Points & marketplace
+        await safeBatch([
+          db.prepare(`DELETE FROM point_transactions WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM user_points WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM persona_purchases WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM persona_reviews WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM point_redemptions WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM scenario_purchases WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM scenario_reviews WHERE userId=?`).bind(userId),
+        ]);
+        // Anonymize persona templates & matching scenarios (preserve marketplace integrity)
+        try { await db.prepare(`UPDATE persona_templates SET creatorUserId=0 WHERE creatorUserId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await db.prepare(`UPDATE matching_scenarios SET creatorUserId=0 WHERE creatorUserId=?`).bind(userId).run(); } catch { /* ignore */ }
 
-        // Config & connections
-        try { await ctx.env.DB.prepare(`DELETE FROM ai_api_configs WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM orchestration_roles WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM ai_provider_settings WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM notification_settings WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM line_connections WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM clawdbot_connections WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Batch 3e: Config, connections, files
+        await safeBatch([
+          db.prepare(`DELETE FROM ai_api_configs WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM orchestration_roles WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM ai_provider_settings WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM notification_settings WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM line_connections WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM clawdbot_connections WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM uploaded_files WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM cards WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM content_reports WHERE reporterUserId=?`).bind(userId),
+        ]);
 
-        // Files & cards
-        try { await ctx.env.DB.prepare(`DELETE FROM uploaded_files WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM cards WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Batch 3f: Trust, usage, notifications, tokens, sessions
+        await safeBatch([
+          db.prepare(`DELETE FROM trust_score_history WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM trust_scores WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM usage_tracking WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM notifications WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM password_reset_tokens WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM email_verification_tokens WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM sessions WHERE userId=?`).bind(userId),
+        ]);
 
-        // Reports & moderation
-        try { await ctx.env.DB.prepare(`DELETE FROM content_reports WHERE reporterUserId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Batch 3g: Notification preferences, blocks, matching extensions
+        await safeBatch([
+          db.prepare(`DELETE FROM notification_preferences WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM user_blocks WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_comments WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_reactions WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM personality_profiles WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM dialogue_feedback WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_session_participants WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM push_subscriptions WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_notes WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM api_keys WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM webhooks WHERE userId=?`).bind(userId),
+        ]);
 
-        // Trust
-        try { await ctx.env.DB.prepare(`DELETE FROM trust_score_history WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM trust_scores WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Batch 3h: Cross-culture, second opinions, scheduler, predictions
+        await safeBatch([
+          db.prepare(`DELETE FROM cross_culture_analyses WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM second_opinions WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM scheduler_preferences WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_predictions WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM feed_items WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM feed_likes WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM feed_comments WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_templates WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_template_uses WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_insights WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_coach_advice WHERE userId=?`).bind(userId),
+        ]);
 
-        // Usage
-        try { await ctx.env.DB.prepare(`DELETE FROM usage_tracking WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Batch 3i: Workspace, negotiation, smart matching
+        await safeBatch([
+          db.prepare(`DELETE FROM workspace_board_items WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM negotiation_sessions WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM smart_matching_recommendations WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_challenges WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM challenge_participants WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_strategies WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM twin_collaborations WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_action_items WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_outcomes WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_quality_scores WHERE userId=?`).bind(userId),
+        ]);
 
-        // Notifications (table may not exist yet)
-        try { await ctx.env.DB.prepare(`DELETE FROM notifications WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Batch 3j: Digests, playbooks, network graphs, scenarios
+        await safeBatch([
+          db.prepare(`DELETE FROM matching_digests WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_playbooks WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_network_graphs WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM scenario_comparisons WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM custom_widgets WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_minutes WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM roi_goals WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_calendar_events WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_reminders WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_peer_reviews WHERE userId=?`).bind(userId),
+        ]);
 
-        // Point redemptions
-        try { await ctx.env.DB.prepare(`DELETE FROM point_redemptions WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Batch 3k: Debates, community, replays, heatmaps
+        await safeBatch([
+          db.prepare(`DELETE FROM debate_sessions WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM debate_rankings WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM community_events WHERE organizerId=?`).bind(userId),
+          db.prepare(`DELETE FROM community_event_participants WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM replay_commentaries WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_heatmap_analyses WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_storyboards WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM storyboard_collections WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM session_tags WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM weekly_reviews WHERE userId=?`).bind(userId),
+        ]);
 
-        // Password reset tokens
-        try { await ctx.env.DB.prepare(`DELETE FROM password_reset_tokens WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
-        // Email verification tokens
-        try { await ctx.env.DB.prepare(`DELETE FROM email_verification_tokens WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Batch 3l: Themes, success patterns, interactive scenarios, translations
+        await safeBatch([
+          db.prepare(`DELETE FROM theme_recommendations WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM theme_rankings WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM success_patterns WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM interactive_scenarios WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM translation_chat_messages WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM translation_chat_sessions WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_summaries WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM comparison_timelines WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM emotion_flow_analyses WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM connector_sync_logs WHERE userId=?`).bind(userId),
+        ]);
 
-        // Profile & twin (near-last)
-        try { await ctx.env.DB.prepare(`DELETE FROM user_profiles WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
-        try { await ctx.env.DB.prepare(`DELETE FROM digital_twins WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Batch 3m: Multi-perspective, team battles, risk, impact maps
+        await safeBatch([
+          db.prepare(`DELETE FROM multi_perspective_replays WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM team_battles WHERE creatorUserId=?`).bind(userId),
+          db.prepare(`DELETE FROM team_battle_members WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM risk_assessments WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM impact_map_entries WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM impact_map_reports WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM strategy_annotations WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM dialogue_quality_scores WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM rehearsal_sessions WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM consensus_tracking WHERE userId=?`).bind(userId),
+        ]);
 
-        // User record (last)
-        try { await ctx.env.DB.prepare(`DELETE FROM users WHERE id=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Batch 3n: Trust progress, brainstorm, voice notes, briefings, etc.
+        await safeBatch([
+          db.prepare(`DELETE FROM trust_progress WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM brainstorm_sessions WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_voice_notes WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM daily_briefings WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM session_bookmarks WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM action_plans WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_streaks WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM matching_achievements WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM friend_activities WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM error_logs WHERE userId=?`).bind(userId),
+        ]);
+
+        // Batch 3o: Workspaces (owner + member + items + goals)
+        await safeBatch([
+          db.prepare(`DELETE FROM workspace_items WHERE createdBy=?`).bind(userId),
+          db.prepare(`DELETE FROM workspace_goals WHERE createdBy=?`).bind(userId),
+          db.prepare(`DELETE FROM workspace_members WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM workspaces WHERE ownerId=?`).bind(userId),
+        ]);
+
+        // Batch 3p: Tournament matches (player on either side)
+        try { await db.prepare(`DELETE FROM tournament_matches WHERE player1UserId=? OR player2UserId=?`).bind(userId, userId).run(); } catch { /* ignore */ }
+
+        // ===== PHASE 4: R2 cleanup (best-effort) =====
+        try {
+          const assets = ctx.env.ASSETS;
+          if (assets) {
+            // Delete avatar
+            await assets.delete(`avatars/${userId}`).catch(() => {});
+            // List and delete user's uploaded files
+            const fileList = await assets.list({ prefix: `users/${userId}/` });
+            if (fileList.objects.length > 0) {
+              await Promise.all(fileList.objects.map(obj => assets.delete(obj.key).catch(() => {})));
+            }
+          }
+        } catch { /* R2 cleanup is best-effort */ }
+
+        // ===== PHASE 5: Audit log entry (before user deletion) =====
+        await logAudit(db, 'account.delete', userId, 'user', userId, { email: user.email });
+
+        // ===== PHASE 6: Profile, twin, and user record (last) =====
+        await safeBatch([
+          db.prepare(`DELETE FROM user_profiles WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM digital_twins WHERE userId=?`).bind(userId),
+        ]);
+
+        // User record (absolute last)
+        try { await db.prepare(`DELETE FROM users WHERE id=?`).bind(userId).run(); } catch { /* ignore */ }
 
         return { success: true, message: "アカウントが完全に削除されました" };
       }),
@@ -373,6 +605,8 @@ Step 5完了時に以下を出力:
         await ctx.env.DB.prepare(
           `INSERT INTO password_reset_tokens (userId, token, expiresAt) VALUES (?, ?, datetime('now', '+1 hour'))`
         ).bind(user.id, token).run();
+
+        await logAudit(ctx.env.DB, 'auth.password_reset_request', user.id, 'user', user.id, { email: input.email });
 
         // Send reset email if RESEND_API_KEY is configured
         const frontendUrl = ctx.env.FRONTEND_URL || "https://bunshin-ai.pages.dev";
@@ -412,6 +646,13 @@ Step 5完了時に以下を出力:
         // Mark token as used
         await ctx.env.DB.prepare(`UPDATE password_reset_tokens SET usedAt=datetime('now') WHERE id=?`).bind(tokenRow.id).run();
 
+        // Revoke ALL existing sessions for this user (password changed)
+        await ctx.env.DB.prepare(
+          `UPDATE sessions SET revokedAt=datetime('now') WHERE userId=? AND revokedAt IS NULL`
+        ).bind(tokenRow.userId).run();
+
+        await logAudit(ctx.env.DB, 'auth.password_reset', tokenRow.userId, 'user', tokenRow.userId);
+
         return { success: true };
       }),
 
@@ -434,7 +675,10 @@ Step 5完了時に以下を出力:
         const user = await ctx.env.DB.prepare(`SELECT id, openId, name, email, loginMethod, role, plan, friendCode, createdAt, updatedAt, lastSignedIn, onboardingCompleted, isNpc, onboardingStep, tutorialCompleted, tosAcceptedAt, tosVersion, emailVerified FROM users WHERE id=?`).bind(tokenRow.userId).first<any>();
         if (!user) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "ユーザーが見つかりません" });
         await ctx.env.DB.prepare(`UPDATE users SET lastSignedIn=datetime('now') WHERE id=?`).bind(user.id).run();
-        const token = await createSessionToken(user.id, ctx.env);
+        const { token, sessionId } = await createSessionToken(user.id, ctx.env);
+        await ctx.env.DB.prepare(
+          `INSERT INTO sessions (id, userId, expiresAt) VALUES (?, ?, datetime('now', '+30 days'))`
+        ).bind(sessionId, user.id).run();
         return {
           user: { id: user.id, name: user.name, email: user.email, role: user.role, plan: user.plan, onboardingCompleted: user.onboardingCompleted ?? 0 },
           token,

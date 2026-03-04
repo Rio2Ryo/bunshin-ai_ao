@@ -73,18 +73,23 @@ export async function verifyPassword(password: string, stored: string): Promise<
   return computedHex === hashHex;
 }
 
-export async function createSessionToken(userId: number, env: Env): Promise<string> {
-  return new SignJWT({ userId })
+export async function createSessionToken(userId: number, env: Env): Promise<{ token: string; sessionId: string }> {
+  const sessionId = crypto.randomUUID();
+  const token = await new SignJWT({ userId })
     .setProtectedHeader({ alg: "HS256" })
+    .setJti(sessionId)
     .setExpirationTime(Math.floor((Date.now() + THIRTY_DAYS_MS) / 1000))
     .setIssuedAt()
     .sign(getJwtSecret(env));
+  return { token, sessionId };
 }
 
-export async function verifySessionToken(token: string, env: Env): Promise<{ userId: number } | null> {
+export async function verifySessionToken(token: string, env: Env): Promise<{ userId: number; sessionId: string } | null> {
   try {
     const { payload } = await jwtVerify(token, getJwtSecret(env));
-    if (typeof payload.userId === "number") return { userId: payload.userId };
+    if (typeof payload.userId === "number") {
+      return { userId: payload.userId, sessionId: payload.jti || "" };
+    }
     return null;
   } catch {
     return null;

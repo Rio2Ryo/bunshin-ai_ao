@@ -965,7 +965,19 @@ api.all("/api/trpc/*", async (c) => {
   const token = parseCookie(cookieHeader, COOKIE_NAME);
 
   if (token) {
-    const session = await verifySessionToken(token, env);
+    let session = await verifySessionToken(token, env);
+    if (session) {
+      // Check if session is still valid (not revoked) in the sessions table
+      if (session.sessionId) {
+        const sess = await db.prepare(
+          `SELECT id FROM sessions WHERE id=? AND userId=? AND revokedAt IS NULL AND expiresAt > datetime('now')`
+        ).bind(session.sessionId, session.userId).first();
+        if (!sess) {
+          // Session revoked or expired — treat as unauthenticated
+          session = null;
+        }
+      }
+    }
     if (session) {
       const row = await db.prepare(`SELECT id, openId, name, email, role, plan FROM users WHERE id=?`).bind(session.userId).first<any>();
       if (row) {

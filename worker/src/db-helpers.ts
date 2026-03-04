@@ -2229,6 +2229,28 @@ CREATE INDEX IF NOT EXISTS idx_error_logs_created ON error_logs(createdAt);
 
 ALTER TABLE users ADD COLUMN subscriptionStatus TEXT;
 ALTER TABLE users ADD COLUMN paymentFailedAt TEXT;
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  userId INTEGER NOT NULL,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+  expiresAt TEXT NOT NULL,
+  revokedAt TEXT,
+  ipAddress TEXT,
+  userAgent TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_userId ON sessions(userId);
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action TEXT NOT NULL,
+  actorId INTEGER NOT NULL DEFAULT 0,
+  targetType TEXT,
+  targetId INTEGER,
+  metadata TEXT,
+  ipAddress TEXT,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actorId ON audit_logs(actorId);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
 `;
 
 let schemaReady = false;
@@ -2484,4 +2506,21 @@ export async function getOtherPerspectiveWaveform(db: D1Database, userId: number
     cumulativeJudgmentScores: parseJson<any>(row.cumulativeJudgmentScores),
     predictorBreakdown: parseJson<any>(row.predictorBreakdown),
   };
+}
+
+/** Record an audit log entry (best-effort, never throws). */
+export async function logAudit(
+  db: D1Database,
+  action: string,
+  actorId: number,
+  targetType?: string,
+  targetId?: number,
+  metadata?: Record<string, unknown>,
+  ipAddress?: string,
+): Promise<void> {
+  try {
+    await db.prepare(
+      `INSERT INTO audit_logs (action, actorId, targetType, targetId, metadata, ipAddress, createdAt) VALUES (?,?,?,?,?,?,datetime('now'))`
+    ).bind(action, actorId, targetType ?? null, targetId ?? null, metadata ? JSON.stringify(metadata) : null, ipAddress ?? null).run();
+  } catch { /* audit logging is best-effort */ }
 }

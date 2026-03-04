@@ -188,6 +188,38 @@ describe("Auth", () => {
     const data = unwrap(await trpcMutate("auth.logout"));
     expect(data.success).toBe(true);
   });
+
+  it("auth.listSessions returns sessions array", async () => {
+    const data = unwrap(await trpcQuery("auth.listSessions"));
+    expect(Array.isArray(data)).toBe(true);
+    expect(data.length).toBeGreaterThanOrEqual(1); // at least the current session
+  });
+
+  it("auth.revokeAllSessions revokes sessions", async () => {
+    const data = unwrap(await trpcMutate("auth.revokeAllSessions"));
+    expect(data.success).toBe(true);
+  });
+
+  it("auth.login re-authenticates after session revocation", async () => {
+    const body = await trpcMutate("auth.login", {
+      email: testEmail,
+      password: testPassword,
+    });
+    const data = unwrap(body);
+    expect(data.token).toBeDefined();
+    expect(data.user).toBeTruthy();
+    // Re-set the session cookie so subsequent tests still work
+    const setRes = await fetch(`${BASE}/api/auth/set-session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: data.token }),
+    });
+    const setCookieHeader = setRes.headers.get("set-cookie");
+    if (setCookieHeader) {
+      const match = setCookieHeader.match(/app_session_id=([^;]*)/);
+      if (match) sessionCookie = `app_session_id=${match[1]}`;
+    }
+  });
 });
 
 describe("Profile", () => {
@@ -931,6 +963,18 @@ describe("Notification", () => {
     expect(data).toBeTruthy();
     // Should have notification setting fields
     expect(typeof data.matchingComplete).toBe("number");
+  });
+
+  it("notification.getPreferences returns preferences", async () => {
+    const data = unwrap(await trpcQuery("notification.getPreferences"));
+    expect(Array.isArray(data)).toBe(true);
+    expect(data.length).toBeGreaterThan(0);
+    // Each preference should have key, enabled, frequency
+    for (const pref of data as any[]) {
+      expect(pref.key).toBeDefined();
+      expect(typeof pref.enabled).toBe("boolean");
+      expect(pref.frequency).toBeDefined();
+    }
   });
 });
 
