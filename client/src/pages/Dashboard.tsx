@@ -9,8 +9,18 @@ import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { Crown, ArrowRight, Sparkles, Bell, Loader2, Pencil, RotateCcw, Eye, EyeOff, GripVertical, CheckCircle } from "lucide-react";
 import { useDashboardLayout, type WidgetId } from "@/hooks/useDashboardLayout";
-import { KpiWidget, RecentMatchingsWidget, FriendsListWidget, TwinStatusWidget, NotificationsWidget, QuickActionsWidget, AnalyticsWidget, BriefingWidget, QualityTrendWidget, BookmarksWidget } from "@/components/widgets";
-import { useCallback, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useRef, useState } from "react";
+
+const KpiWidget = lazy(() => import("@/components/widgets/KpiWidget").then(m => ({ default: m.KpiWidget })));
+const RecentMatchingsWidget = lazy(() => import("@/components/widgets/RecentMatchingsWidget").then(m => ({ default: m.RecentMatchingsWidget })));
+const FriendsListWidget = lazy(() => import("@/components/widgets/FriendsListWidget").then(m => ({ default: m.FriendsListWidget })));
+const TwinStatusWidget = lazy(() => import("@/components/widgets/TwinStatusWidget").then(m => ({ default: m.TwinStatusWidget })));
+const NotificationsWidget = lazy(() => import("@/components/widgets/NotificationsWidget").then(m => ({ default: m.NotificationsWidget })));
+const QuickActionsWidget = lazy(() => import("@/components/widgets/QuickActionsWidget").then(m => ({ default: m.QuickActionsWidget })));
+const AnalyticsWidget = lazy(() => import("@/components/widgets/AnalyticsWidget").then(m => ({ default: m.AnalyticsWidget })));
+const BriefingWidget = lazy(() => import("@/components/widgets/BriefingWidget").then(m => ({ default: m.BriefingWidget })));
+const QualityTrendWidget = lazy(() => import("@/components/widgets/QualityTrendWidget").then(m => ({ default: m.QualityTrendWidget })));
+const BookmarksWidget = lazy(() => import("@/components/widgets/BookmarksWidget").then(m => ({ default: m.BookmarksWidget })));
 
 const WIDGET_COMPONENTS: Record<WidgetId, { component: React.FC; label: string }> = {
   kpi: { component: KpiWidget, label: "KPI" },
@@ -238,60 +248,62 @@ export default function Dashboard() {
         )}
 
         {/* Widget Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {visibleWidgets.map(widgetLayout => {
-            const config = WIDGET_COMPONENTS[widgetLayout.id];
-            if (!config) return null;
-            const WidgetComponent = config.component;
-            const isFullWidth = widgetLayout.w >= 12;
-            const isDragging = draggedWidget === widgetLayout.id;
+        <Suspense fallback={<div className="animate-pulse h-32 bg-muted rounded-lg" />}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {visibleWidgets.map(widgetLayout => {
+              const config = WIDGET_COMPONENTS[widgetLayout.id];
+              if (!config) return null;
+              const WidgetComponent = config.component;
+              const isFullWidth = widgetLayout.w >= 12;
+              const isDragging = draggedWidget === widgetLayout.id;
 
-            return (
-              <div
-                key={widgetLayout.id}
-                className={`${isFullWidth ? "md:col-span-2" : ""} ${isDragging ? "opacity-50" : ""} ${isEditing ? "relative group" : ""}`}
-                draggable={isEditing}
-                onDragStart={(e) => handleDragStart(e, widgetLayout.id)}
-                onDragOver={isEditing ? handleDragOver : undefined}
-                onDrop={isEditing ? (e) => handleDrop(e, widgetLayout.id) : undefined}
-              >
-                {isEditing && (
-                  <div className="absolute -top-2 -right-2 z-10 flex items-center gap-1">
-                    <button
-                      onClick={() => toggleWidget(widgetLayout.id)}
-                      className="h-6 w-6 rounded-full bg-destructive/90 text-white flex items-center justify-center hover:bg-destructive text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                      aria-label={`${config.label}ウィジェットを非表示`}
+              return (
+                <div
+                  key={widgetLayout.id}
+                  className={`${isFullWidth ? "md:col-span-2" : ""} ${isDragging ? "opacity-50" : ""} ${isEditing ? "relative group" : ""}`}
+                  draggable={isEditing}
+                  onDragStart={(e) => handleDragStart(e, widgetLayout.id)}
+                  onDragOver={isEditing ? handleDragOver : undefined}
+                  onDrop={isEditing ? (e) => handleDrop(e, widgetLayout.id) : undefined}
+                >
+                  {isEditing && (
+                    <div className="absolute -top-2 -right-2 z-10 flex items-center gap-1">
+                      <button
+                        onClick={() => toggleWidget(widgetLayout.id)}
+                        className="h-6 w-6 rounded-full bg-destructive/90 text-white flex items-center justify-center hover:bg-destructive text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        aria-label={`${config.label}ウィジェットを非表示`}
+                      >
+                        <EyeOff className="h-3 w-3" aria-hidden="true" />
+                      </button>
+                    </div>
+                  )}
+                  {isEditing && (
+                    <div
+                      className="absolute top-2 left-2 z-10 cursor-grab active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-ring rounded"
+                      tabIndex={0}
+                      role="button"
+                      aria-label={`${config.label}ウィジェットを移動（矢印キーで並べ替え）`}
+                      aria-roledescription="ドラッグハンドル"
+                      onKeyDown={(e) => {
+                        const idx = visibleWidgets.findIndex(w => w.id === widgetLayout.id);
+                        if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+                          e.preventDefault();
+                          if (idx > 0) swapWidgets(widgetLayout.id, visibleWidgets[idx - 1].id);
+                        } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+                          e.preventDefault();
+                          if (idx < visibleWidgets.length - 1) swapWidgets(widgetLayout.id, visibleWidgets[idx + 1].id);
+                        }
+                      }}
                     >
-                      <EyeOff className="h-3 w-3" aria-hidden="true" />
-                    </button>
-                  </div>
-                )}
-                {isEditing && (
-                  <div
-                    className="absolute top-2 left-2 z-10 cursor-grab active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-ring rounded"
-                    tabIndex={0}
-                    role="button"
-                    aria-label={`${config.label}ウィジェットを移動（矢印キーで並べ替え）`}
-                    aria-roledescription="ドラッグハンドル"
-                    onKeyDown={(e) => {
-                      const idx = visibleWidgets.findIndex(w => w.id === widgetLayout.id);
-                      if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
-                        e.preventDefault();
-                        if (idx > 0) swapWidgets(widgetLayout.id, visibleWidgets[idx - 1].id);
-                      } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
-                        e.preventDefault();
-                        if (idx < visibleWidgets.length - 1) swapWidgets(widgetLayout.id, visibleWidgets[idx + 1].id);
-                      }
-                    }}
-                  >
-                    <GripVertical className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                  </div>
-                )}
-                <WidgetComponent />
-              </div>
-            );
-          })}
-        </div>
+                      <GripVertical className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                    </div>
+                  )}
+                  <WidgetComponent />
+                </div>
+              );
+            })}
+          </div>
+        </Suspense>
 
         {/* Login Streak */}
         {(me?.loginStreak ?? 0) > 1 && (

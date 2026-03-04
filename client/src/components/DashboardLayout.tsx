@@ -23,7 +23,29 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useRealtimeNotifications } from "@/hooks/useRealtimeNotifications";
 import { useWebPush } from "@/hooks/useWebPush";
 import { toast } from "sonner";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare, FileCheck, History, Mic, TrendingUp, MessageCircleHeart, CalendarDays, FlaskRound, Star, Gauge, Scale, BookHeart, Calendar, Captions, Goal, Grid3x3, BookText, HelpCircle, MessageSquarePlus, TestTubes, Tags, CalendarRange, Wand2, PenLine, Library, Gamepad2, FileBarChart, ScrollText, Repeat2, ArrowLeftRight, GraduationCap, Waves, Plug, Binoculars, BookMarked, Drama, MapPin, Handshake, SlidersHorizontal, GitFork, Eye, Sun, Bookmark, ListTodo, LayoutTemplate, Flame, FolderArchive, Code2, HeartPulse, Search, AlertTriangle, ChevronRight, Crosshair, Smile, Flag, Hash, Diff, Landmark, ShieldCheck, Compass, Waypoints } from "lucide-react";
+import {
+  AlertTriangle,
+  Bell,
+  ChevronRight,
+  CreditCard,
+  Crown,
+  Languages,
+  Loader2,
+  LogOut,
+  MoreHorizontal,
+  PanelLeft,
+  Search,
+  Settings2,
+  User,
+  X,
+} from "lucide-react";
+import {
+  adminMenuItems,
+  getBottomNavItems,
+  getMenuGroups,
+  type MenuGroup,
+  type MenuItem,
+} from "@/components/sidebar-menu-data";
 import { CSSProperties, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -41,23 +63,6 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-
-type MenuItem = { icon: React.ElementType; label: string; path: string };
-type SubGroup = { label: string; items: MenuItem[] };
-type MenuGroup = { label: string; items?: MenuItem[]; subGroups?: SubGroup[] };
-
-// 管理者専用メニュー (includes items hidden from regular users)
-const adminMenuItems: MenuItem[] = [
-  { icon: ShieldAlert, label: "審査", path: "/admin/review" },
-  { icon: BarChart3, label: "分析", path: "/admin/analytics" },
-  { icon: Activity, label: "ヘルスチェック", path: "/health-dashboard" },
-  { icon: Cpu, label: "AIプロバイダー", path: "/admin/ai-provider" },
-  { icon: Settings2, label: "AI API設定", path: "/ai-config" },
-  { icon: Zap, label: "オーケストレーション", path: "/orchestration" },
-  { icon: Link2, label: "Clawdbot連携", path: "/clawdbot" },
-  { icon: Brain, label: "学習した人格", path: "/learned-personality" },
-  { icon: BookOpen, label: "API Docs", path: "/api-docs" },
-];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
 const DEFAULT_WIDTH = 280;
@@ -222,174 +227,20 @@ function DashboardLayoutContent({
     }
   }, []);
 
-  const translatedMenuGroups: MenuGroup[] = useMemo(() => [
-    {
-      label: language === "en" ? "Main" : "メイン",
-      items: [
-        { icon: LayoutDashboard, label: t("nav.dashboard"), path: "/dashboard" },
-        { icon: User, label: t("nav.profile"), path: "/profile" },
-        { icon: Shield, label: t("nav.trust"), path: "/trust" },
-        { icon: Bot, label: t("nav.twins"), path: "/twins" },
-        { icon: MessageSquare, label: t("nav.chat"), path: "/chat" },
-        { icon: BarChart3, label: t("nav.analytics"), path: "/analytics" },
-        { icon: Rss, label: language === "en" ? "Feed" : "フィード", path: "/feed" },
-        { icon: BellRing, label: "通知管理", path: "/notifications" },
-        { icon: SlidersHorizontal, label: "通知プリファレンス", path: "/notification-preferences" },
-      ],
-    },
-    {
-      label: language === "en" ? "Connect" : "つながる",
-      subGroups: [
-        {
-          label: language === "en" ? "Matching" : "マッチング系",
-          items: [
-            { icon: Users, label: t("nav.matching"), path: "/matching" },
-            { icon: Crosshair, label: "インサイト", path: "/matching/insights" },
-            { icon: Swords, label: language === "en" ? "Negotiation" : "ネゴ練習", path: "/negotiation" },
-            { icon: Scale, label: language === "en" ? "Debate" : "ディベート", path: "/debate" },
-            { icon: MessageSquarePlus, label: language === "en" ? "Facilitator" : "AIファシリ", path: "/facilitator" },
-            { icon: Flag, label: language === "en" ? "Team Battle" : "チーム対抗戦", path: "/team-battle" },
-            { icon: Gamepad2, label: language === "en" ? "Scenario" : "交渉シナリオ", path: "/interactive-scenario" },
-            { icon: Wand2, label: language === "en" ? "Theme Suggest" : "テーマ推薦", path: "/theme-recommender" },
-            { icon: ScrollText, label: language === "en" ? "Summary" : "AI要約", path: "/matching-summary" },
-            { icon: Flame, label: language === "en" ? "Streaks" : "ストリーク", path: "/streaks" },
-          ],
-        },
-        {
-          label: language === "en" ? "Analysis" : "分析系",
-          items: [
-            { icon: Map, label: language === "en" ? "Strategy" : "戦略プランナー", path: "/strategy" },
-            { icon: ClipboardList, label: language === "en" ? "Outcomes" : "成果トラッカー", path: "/outcomes" },
-            { icon: Award, label: language === "en" ? "Quality" : "品質評価", path: "/quality" },
-            { icon: TrendingUp, label: language === "en" ? "ROI" : "ROI分析", path: "/roi" },
-            { icon: Grid3x3, label: language === "en" ? "Heatmap" : "ヒートマップ", path: "/heatmap" },
-            { icon: Gauge, label: language === "en" ? "Quality Meter" : "品質メーター", path: "/quality-meter" },
-            { icon: ShieldAlert, label: language === "en" ? "Risk" : "リスク診断", path: "/risk-assessment" },
-            { icon: Smile, label: language === "en" ? "Emotions" : "感情分析", path: "/emotions" },
-            { icon: Waves, label: language === "en" ? "Emotion Flow" : "感情フロー", path: "/emotion-flow" },
-            { icon: ArrowLeftRight, label: language === "en" ? "Compare" : "比較タイムライン", path: "/comparison-timeline" },
-            { icon: Diff, label: language === "en" ? "Compare" : "セッション比較", path: "/compare-report" },
-            { icon: BookText, label: language === "en" ? "Storyboard" : "ストーリーボード", path: "/storyboard" },
-            { icon: Tags, label: language === "en" ? "Tags" : "セッションタグ", path: "/session-tags" },
-            { icon: Hash, label: language === "en" ? "Strategy Tags" : "戦略タグ", path: "/strategy-annotation" },
-            { icon: Library, label: language === "en" ? "Patterns" : "成功パターン", path: "/success-patterns" },
-            { icon: Binoculars, label: language === "en" ? "Multi-View" : "マルチ視点", path: "/multi-perspective" },
-            { icon: Network, label: language === "en" ? "Network" : "ネットワーク", path: "/network" },
-            { icon: MessageCircle, label: language === "en" ? "Conv. Style" : "会話スタイル", path: "/conversation-style" },
-            { icon: MapPin, label: language === "en" ? "Impact Map" : "インパクトマップ", path: "/impact-map" },
-          ],
-        },
-        {
-          label: language === "en" ? "Collaboration" : "コラボ系",
-          items: [
-            { icon: Globe, label: t("nav.discover"), path: "/discover" },
-            { icon: UserPlus, label: t("nav.friends"), path: "/friends" },
-            { icon: Heart, label: t("nav.intimacy"), path: "/intimacy" },
-            { icon: CalendarClock, label: language === "en" ? "Scheduler" : "スケジューラー", path: "/scheduler" },
-            { icon: LayoutGrid, label: language === "en" ? "Workspace" : "ワークスペース", path: "/workspaces" },
-            { icon: Lightbulb, label: t("nav.recommendations"), path: "/recommendations" },
-            { icon: FileText, label: language === "en" ? "Digest" : "ダイジェスト", path: "/digest" },
-            { icon: BookOpen, label: language === "en" ? "Playbooks" : "プレイブック", path: "/playbooks" },
-            { icon: CalendarDays, label: language === "en" ? "Calendar" : "カレンダー", path: "/calendar" },
-            { icon: Calendar, label: language === "en" ? "Events" : "イベント", path: "/events" },
-            { icon: Handshake, label: language === "en" ? "Consensus" : "合意形成", path: "/consensus" },
-            { icon: Landmark, label: language === "en" ? "Cross-Culture" : "異文化分析", path: "/cross-culture" },
-            { icon: Eye, label: language === "en" ? "Second Opinion" : "セカンドオピニオン", path: "/second-opinion" },
-            { icon: ShieldCheck, label: language === "en" ? "Trust Progress" : "信頼構築", path: "/trust-progress" },
-            { icon: Zap, label: language === "en" ? "Brainstorm" : "ブレスト", path: "/brainstorm" },
-            { icon: Mic, label: language === "en" ? "Voice Notes" : "音声ノート", path: "/voice-notes" },
-            { icon: Sun, label: language === "en" ? "Briefing" : "ブリーフィング", path: "/daily-briefing" },
-            { icon: Bookmark, label: language === "en" ? "Bookmarks" : "ブックマーク", path: "/bookmarks" },
-            { icon: ListTodo, label: language === "en" ? "Action Plans" : "アクションプラン", path: "/action-plans" },
-            { icon: FolderArchive, label: language === "en" ? "Archive" : "アーカイブ", path: "/session-archive" },
-            { icon: Activity, label: language === "en" ? "Friend Activity" : "友達タイムライン", path: "/friend-activity" },
-            { icon: Languages, label: language === "en" ? "Translate Chat" : "翻訳チャット", path: "/translation-chat" },
-          ],
-        },
-      ],
-    },
-    {
-      label: language === "en" ? "More" : "もっと",
-      subGroups: [
-        {
-          label: language === "en" ? "Twin" : "ツイン系",
-          items: [
-            { icon: Brain, label: language === "en" ? "Personality" : "人格診断", path: "/personality" },
-            { icon: Compass, label: language === "en" ? "AI Mentor" : "AIメンター", path: "/mentor" },
-            { icon: TreePine, label: language === "en" ? "Skill Tree" : "スキルツリー", path: "/skill-tree" },
-            { icon: GitBranch, label: language === "en" ? "Evolution" : "進化マップ", path: "/evolution" },
-            { icon: Trophy, label: language === "en" ? "Challenges" : "チャレンジ", path: "/challenges" },
-            { icon: Users, label: language === "en" ? "Collab" : "ツイン共同", path: "/collaboration" },
-            { icon: GitFork, label: language === "en" ? "Clone/Fork" : "クローン", path: "/twin-clone" },
-            { icon: MessageSquare, label: language === "en" ? "Rehearsal" : "リハーサル", path: "/rehearsal" },
-            { icon: HelpCircle, label: language === "en" ? "Twin FAQ" : "ツインFAQ", path: "/twin-faq" },
-            { icon: LayoutTemplate, label: language === "en" ? "Gallery" : "テンプレート", path: "/twin-gallery" },
-            { icon: Code2, label: language === "en" ? "Embed Card" : "埋め込みカード", path: "/twin-embed" },
-            { icon: HeartPulse, label: language === "en" ? "Twin Health" : "ヘルスチェック", path: "/twin-health" },
-            { icon: ArrowLeftRight, label: language === "en" ? "Twin Compare" : "ツイン比較", path: "/twin-compare" },
-            { icon: Goal, label: language === "en" ? "Goals" : "ツイン目標", path: "/goals" },
-          ],
-        },
-        {
-          label: language === "en" ? "Learning" : "学習系",
-          items: [
-            { icon: MessageCircleHeart, label: language === "en" ? "Coaching" : "コーチング", path: "/coaching" },
-            { icon: GraduationCap, label: language === "en" ? "Curriculum" : "学習カリキュラム", path: "/learning-curriculum" },
-            { icon: BookMarked, label: language === "en" ? "Journal" : "学習ジャーナル", path: "/learning-journal" },
-            { icon: Drama, label: language === "en" ? "Roleplay" : "ロールプレイ", path: "/roleplay-training" },
-            { icon: Network, label: language === "en" ? "Knowledge Graph" : "ナレッジグラフ", path: "/knowledge-graph" },
-            { icon: Waypoints, label: language === "en" ? "Knowledge Builder" : "知識グラフ", path: "/knowledge-graph-builder" },
-            { icon: Database, label: language === "en" ? "Memory Bank" : "メモリーバンク", path: "/memory-bank" },
-            { icon: HelpCircle, label: language === "en" ? "Quiz" : "ナレッジクイズ", path: "/quiz" },
-            { icon: PenLine, label: language === "en" ? "Style Learning" : "対話スタイル", path: "/dialogue-style" },
-            { icon: FileBarChart, label: language === "en" ? "Report" : "人格レポート", path: "/personality-report" },
-            { icon: TestTubes, label: language === "en" ? "Persona Test" : "ペルソナテスト", path: "/persona-ab-test" },
-            { icon: FlaskRound, label: language === "en" ? "Sandbox" : "サンドボックス", path: "/sandbox" },
-            { icon: BookHeart, label: language === "en" ? "Emotion Journal" : "感情ジャーナル", path: "/emotion-journal" },
-            { icon: Captions, label: language === "en" ? "Commentary" : "リプレイ解説", path: "/replay-commentary" },
-            { icon: CalendarRange, label: language === "en" ? "Weekly Review" : "週次レビュー", path: "/weekly-review" },
-            { icon: SlidersHorizontal, label: language === "en" ? "Calibration" : "感情調整", path: "/emotion-calibration" },
-          ],
-        },
-        {
-          label: language === "en" ? "Settings" : "設定系",
-          items: [
-            { icon: Store, label: t("nav.marketplace"), path: "/marketplace" },
-            { icon: Sparkles, label: t("nav.growth"), path: "/growth" },
-            { icon: MessageCircle, label: t("nav.line"), path: "/line-link" },
-            { icon: CreditCard, label: t("nav.cards"), path: "/cards" },
-            { icon: Crown, label: t("nav.plan"), path: "/plan" },
-            { icon: FlaskConical, label: language === "en" ? "A/B Test" : "A/Bテスト", path: "/ab-test" },
-            { icon: Target, label: language === "en" ? "Predictions" : "AI予測", path: "/predictions" },
-            { icon: BookOpen, label: language === "en" ? "Scenarios" : "シナリオ", path: "/scenarios" },
-            { icon: Swords, label: language === "en" ? "Tournament" : "トーナメント", path: "/tournament" },
-            { icon: GitCompare, label: language === "en" ? "Scenarios" : "シナリオ比較", path: "/scenario-compare" },
-            { icon: LayoutGrid, label: language === "en" ? "Widgets" : "ウィジェット", path: "/widgets" },
-            { icon: FileCheck, label: language === "en" ? "Minutes" : "議事録", path: "/minutes" },
-            { icon: History, label: language === "en" ? "Versions" : "バージョン", path: "/versions" },
-            { icon: Mic, label: language === "en" ? "Voice Replay" : "音声リプレイ", path: "/voice-replay" },
-            { icon: Star, label: language === "en" ? "Peer Review" : "相互評価", path: "/peer-review" },
-            { icon: Gauge, label: language === "en" ? "Benchmark" : "ベンチマーク", path: "/benchmark" },
-            { icon: Repeat2, label: language === "en" ? "Context Rules" : "コンテキスト切替", path: "/context-switcher" },
-            { icon: Plug, label: language === "en" ? "Connectors" : "外部コネクター", path: "/external-connectors" },
-            { icon: Mic, label: language === "en" ? "Multimodal" : "マルチモーダル", path: "/multimodal-input" },
-          ],
-        },
-      ],
-    },
-  ], [t, language]);
+  const translatedMenuGroups: MenuGroup[] = useMemo(
+    () => getMenuGroups(t, language),
+    [t, language],
+  );
 
   const translatedMenuItems = useMemo(() =>
     translatedMenuGroups.flatMap(g => g.items ?? g.subGroups?.flatMap(sg => sg.items) ?? []),
     [translatedMenuGroups]
   );
 
-  const translatedBottomNavItems: MenuItem[] = useMemo(() => [
-    { icon: LayoutDashboard, label: t("nav.home"), path: "/dashboard" },
-    { icon: MessageSquare, label: t("nav.chat"), path: "/chat" },
-    { icon: Users, label: t("nav.match"), path: "/matching" },
-    { icon: UserPlus, label: t("nav.friends"), path: "/friends" },
-  ], [t]);
+  const translatedBottomNavItems: MenuItem[] = useMemo(
+    () => getBottomNavItems(t),
+    [t],
+  );
 
   const activeMenuItem = translatedMenuItems.find(item => item.path === location);
 

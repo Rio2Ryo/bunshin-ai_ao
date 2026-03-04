@@ -46,6 +46,10 @@ export default defineConfig({
           if (id.includes("lucide-react")) {
             return "vendor-icons";
           }
+          // Vendor: Charts (recharts) - used by 33 pages
+          if (id.includes("recharts") || id.includes("d3-")) {
+            return "vendor-charts";
+          }
           // Mermaid (lazy loaded, large)
           if (id.includes("mermaid")) {
             return "vendor-mermaid";
