@@ -31,54 +31,13 @@ export default function MyTwin() {
   const { data: twin, isLoading, isError, refetch } = trpc.myTwin.get.useQuery();
   const upsertMutation = trpc.myTwin.upsert.useMutation();
   const updateMutation = trpc.myTwin.update.useMutation();
-  const updatePublicMutation = trpc.myTwin.updatePublicSettings.useMutation();
   const runFullAnalysisMutation = trpc.myTwin.runFullAnalysis.useMutation();
   const generateSelfWaveformMutation = trpc.myTwin.generateSelfWaveform.useMutation();
   const evaluateByAllTwinsMutation = trpc.myTwin.evaluateByAllTwins.useMutation();
   const generateFriendPredictionsMutation = trpc.friends.generateFriendPredictions.useMutation();
   const applyFeedbackMutation = trpc.matching.applyFeedback.useMutation();
   const generateAvatarMut = trpc.myTwin.generateAvatar.useMutation();
-  const analyzeDocMut = trpc.myTwin.analyzeDocument.useMutation();
-  const [docFile, setDocFile] = useState<File | null>(null);
-  const [docDragOver, setDocDragOver] = useState(false);
-  const [docResult, setDocResult] = useState<any>(null);
-
-  // Visibility settings
-  const { data: visibilityData, refetch: refetchVisibility } = trpc.myTwin.getVisibilitySettings.useQuery();
   const { data: friendsList } = trpc.friends.list.useQuery();
-  const [visibility, setVisibility] = useState<"public" | "friends" | "private" | "custom">("public");
-  const [selectedViewerIds, setSelectedViewerIds] = useState<number[]>([]);
-  const [isSavingVisibility, setIsSavingVisibility] = useState(false);
-
-  useEffect(() => {
-    if (visibilityData) {
-      setVisibility(visibilityData.visibility as "public" | "friends" | "private" | "custom");
-      setSelectedViewerIds(visibilityData.allowedViewers.map((v) => v.id));
-    }
-  }, [visibilityData]);
-
-  const handleSaveVisibility = async () => {
-    setIsSavingVisibility(true);
-    try {
-      await updateMutation.mutateAsync({
-        visibility,
-        allowedViewerIds: visibility === "custom" ? selectedViewerIds : undefined,
-      });
-      toast.success("プライバシー設定を保存しました");
-      refetchVisibility();
-      refetch();
-    } catch (error) {
-      toast.error("プライバシー設定の保存に失敗しました");
-    } finally {
-      setIsSavingVisibility(false);
-    }
-  };
-
-  const toggleViewer = (friendId: number) => {
-    setSelectedViewerIds((prev) =>
-      prev.includes(friendId) ? prev.filter((id) => id !== friendId) : [...prev, friendId]
-    );
-  };
   const handleGenerateAvatar = async () => {
     try {
       const result = await generateAvatarMut.mutateAsync();
@@ -160,58 +119,10 @@ export default function MyTwin() {
     }
   };
 
-  const handleDocFileSelect = (file: File) => {
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("ファイルサイズは5MB以下にしてください");
-      return;
-    }
-    setDocFile(file);
-    setDocResult(null);
-  };
-
-  const handleDocAnalyze = async () => {
-    if (!docFile) return;
-    try {
-      const reader = new FileReader();
-      const base64 = await new Promise<string>((resolve, reject) => {
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(docFile);
-      });
-      const result = await analyzeDocMut.mutateAsync({
-        fileData: base64,
-        fileName: docFile.name,
-        mimeType: docFile.type || "application/octet-stream",
-      });
-      setDocResult(result);
-      if (result.updated) {
-        toast.success("ドキュメントを解析し、ツイン設定を更新しました");
-        refetch();
-      } else {
-        toast.info("ドキュメントを解析しましたが、更新する情報が見つかりませんでした");
-      }
-    } catch (e: any) {
-      toast.error(e.message || "ドキュメント解析に失敗しました");
-    }
-  };
-
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState("");
   const [rawInput, setRawInput] = useState("");
 
-  // 公開設定
-  const [isPublic, setIsPublic] = useState(false);
-  const [publicBio, setPublicBio] = useState("");
-  const [tags, setTags] = useState<string[]>([]);
-  const [newTag, setNewTag] = useState("");
-
-  useEffect(() => {
-    if (twin) {
-      setIsPublic(twin.isPublic === 1);
-      setPublicBio(twin.publicBio || "");
-      setTags(twin.tags || []);
-    }
-  }, [twin]);
 
   if (isLoading) {
     return (
@@ -264,31 +175,6 @@ export default function MyTwin() {
     } catch (error) {
       toast.error("エラーが発生しました");
     }
-  };
-
-  const handleUpdatePublicSettings = async () => {
-    try {
-      await updatePublicMutation.mutateAsync({
-        isPublic,
-        publicBio: publicBio || undefined,
-        tags: tags.length > 0 ? tags : undefined,
-      });
-      toast.success("公開設定を更新しました");
-      refetch();
-    } catch (error) {
-      toast.error("エラーが発生しました");
-    }
-  };
-
-  const addTag = () => {
-    if (newTag.trim() && !tags.includes(newTag.trim())) {
-      setTags([...tags, newTag.trim()]);
-      setNewTag("");
-    }
-  };
-
-  const removeTag = (tagToRemove: string) => {
-    setTags(tags.filter(t => t !== tagToRemove));
   };
 
   const isSaving = upsertMutation.isPending || updateMutation.isPending;
@@ -459,99 +345,7 @@ export default function MyTwin() {
             </Card>
 
             {/* 公開設定 */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Globe className="h-5 w-5" />
-                  公開設定
-                </CardTitle>
-                <CardDescription>
-                  分身AIを公開すると、他のユーザーから発見・マッチングリクエストを受けられます
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* 公開スイッチ */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    {isPublic ? (
-                      <Eye className="h-5 w-5 text-cyan-400" />
-                    ) : (
-                      <EyeOff className="h-5 w-5 text-gray-400" />
-                    )}
-                    <div>
-                      <p className="font-medium">分身AIを公開</p>
-                      <p className="text-sm text-muted-foreground">
-                        {isPublic ? "他のユーザーから見つけられます" : "友達のみがアクセス可能"}
-                      </p>
-                    </div>
-                  </div>
-                  <Switch
-                    checked={isPublic}
-                    onCheckedChange={setIsPublic}
-                  />
-                </div>
-
-                {/* 公開プロフィール */}
-                <div className="space-y-2">
-                  <Label htmlFor="publicBio">公開プロフィール</Label>
-                  <Textarea
-                    id="publicBio"
-                    value={publicBio}
-                    onChange={(e) => setPublicBio(e.target.value)}
-                    placeholder="他のユーザーに表示される自己紹介文..."
-                    rows={3}
-                    disabled={!isPublic}
-                  />
-                </div>
-
-                {/* タグ */}
-                <div className="space-y-2">
-                  <Label>タグ（検索用）</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      value={newTag}
-                      onChange={(e) => setNewTag(e.target.value)}
-                      placeholder="タグを追加..."
-                      disabled={!isPublic}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          addTag();
-                        }
-                      }}
-                    />
-                    <Button onClick={addTag} disabled={!isPublic || !newTag.trim()}>
-                      <Tag className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  {tags.length > 0 && (
-                    <div className="flex flex-wrap gap-2 mt-2">
-                      {tags.map((tag, i) => (
-                        <Badge key={i} variant="secondary" className="gap-1">
-                          {tag}
-                          <button onClick={() => removeTag(tag)} className="ml-1 hover:text-destructive">
-                            <X className="h-3 w-3" />
-                          </button>
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <Button 
-                  onClick={handleUpdatePublicSettings} 
-                  className="w-full"
-                  disabled={updatePublicMutation.isPending}
-                >
-                  {updatePublicMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  ) : (
-                    <Save className="h-4 w-4 mr-2" />
-                  )}
-                  公開設定を保存
-                </Button>
-              </CardContent>
-            </Card>
+            <TwinPublicSettingsCard twin={twin} onUpdate={() => refetch()} />
 
             {/* AIアバター生成 */}
             <Card>
@@ -585,112 +379,7 @@ export default function MyTwin() {
             <VoiceCapture onComplete={() => refetch()} />
 
             {/* ドキュメント解析でツイン人格キャプチャ */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-blue-500" />
-                  ドキュメント解析
-                </CardTitle>
-                <CardDescription>
-                  履歴書、プレゼン資料、名刺画像などをアップロードして、人格・スキル・ナレッジを自動抽出
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div
-                  className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-                    docDragOver ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50"
-                  }`}
-                  onDragOver={(e) => { e.preventDefault(); setDocDragOver(true); }}
-                  onDragLeave={() => setDocDragOver(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setDocDragOver(false);
-                    const file = e.dataTransfer.files[0];
-                    if (file) handleDocFileSelect(file);
-                  }}
-                >
-                  {docFile ? (
-                    <div className="flex items-center justify-center gap-3">
-                      <FileText className="h-8 w-8 text-primary" />
-                      <div className="text-left">
-                        <p className="font-medium text-sm">{docFile.name}</p>
-                        <p className="text-xs text-muted-foreground">{(docFile.size / 1024).toFixed(1)} KB</p>
-                      </div>
-                      <Button variant="ghost" size="icon" onClick={() => { setDocFile(null); setDocResult(null); }}>
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  ) : (
-                    <label className="cursor-pointer block">
-                      <input
-                        type="file"
-                        className="hidden"
-                        accept=".pdf,.jpg,.jpeg,.png,.webp,.txt,.md,.csv,.json"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) handleDocFileSelect(file);
-                          e.target.value = "";
-                        }}
-                      />
-                      <Plus className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                      <p className="text-sm text-muted-foreground">ファイルをドラッグ&ドロップ、またはクリックして選択</p>
-                      <p className="text-xs text-muted-foreground mt-1">PDF, 画像 (JPG/PNG/WebP), テキスト (TXT/MD/CSV/JSON) — 最大5MB</p>
-                    </label>
-                  )}
-                </div>
-
-                {docFile && !docResult && (
-                  <Button
-                    onClick={handleDocAnalyze}
-                    disabled={analyzeDocMut.isPending}
-                    className="w-full"
-                  >
-                    {analyzeDocMut.isPending ? (
-                      <><Loader2 className="h-4 w-4 animate-spin mr-2" />解析中...</>
-                    ) : (
-                      <><Sparkles className="h-4 w-4 mr-2" />解析開始</>
-                    )}
-                  </Button>
-                )}
-
-                {docResult && (
-                  <div className="space-y-3 bg-muted/50 rounded-lg p-4">
-                    <h4 className="font-medium text-sm flex items-center gap-2">
-                      <Check className="h-4 w-4 text-green-500" />
-                      解析完了
-                    </h4>
-                    {docResult.personality && (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground">性格</p>
-                        <p className="text-sm">{docResult.personality}</p>
-                      </div>
-                    )}
-                    {docResult.description && (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground">説明</p>
-                        <p className="text-sm">{docResult.description}</p>
-                      </div>
-                    )}
-                    {docResult.skills?.length > 0 && (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground mb-1">抽出スキル</p>
-                        <div className="flex flex-wrap gap-1">
-                          {docResult.skills.map((s: string, i: number) => (
-                            <Badge key={i} variant="secondary" className="text-xs">{s}</Badge>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {docResult.knowledgeTitle && (
-                      <p className="text-xs text-muted-foreground">📚 ナレッジベースに追加: {docResult.knowledgeTitle}</p>
-                    )}
-                    <Button variant="outline" size="sm" onClick={() => { setDocFile(null); setDocResult(null); }}>
-                      別のファイルを解析
-                    </Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <TwinDocumentAnalysisCard twinId={twin.id} onUpdate={() => refetch()} />
 
             {/* 知識ベース */}
             <KnowledgeBaseSection />
@@ -699,130 +388,7 @@ export default function MyTwin() {
             <PersonaSection />
 
             {/* プライバシー設定 */}
-            <Card className="lg:col-span-2">
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Shield className="h-5 w-5" />
-                  プライバシー設定
-                </CardTitle>
-                <CardDescription>
-                  分身AIの公開範囲を細かく制御できます
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <RadioGroup
-                  value={visibility}
-                  onValueChange={(val) => setVisibility(val as "public" | "friends" | "private" | "custom")}
-                  className="space-y-3"
-                >
-                  <div className="flex items-center space-x-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors">
-                    <RadioGroupItem value="public" id="vis-public" />
-                    <Label htmlFor="vis-public" className="flex items-center gap-2 cursor-pointer flex-1">
-                      <Globe className="h-4 w-4 text-green-500" />
-                      <div>
-                        <p className="font-medium">公開</p>
-                        <p className="text-xs text-muted-foreground">全てのユーザーが発見・閲覧できます</p>
-                      </div>
-                    </Label>
-                  </div>
-
-                  <div className="flex items-center space-x-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors">
-                    <RadioGroupItem value="friends" id="vis-friends" />
-                    <Label htmlFor="vis-friends" className="flex items-center gap-2 cursor-pointer flex-1">
-                      <Users className="h-4 w-4 text-blue-500" />
-                      <div>
-                        <p className="font-medium">友達のみ</p>
-                        <p className="text-xs text-muted-foreground">承認済みの友達だけが閲覧できます</p>
-                      </div>
-                    </Label>
-                  </div>
-
-                  <div className="flex items-center space-x-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors">
-                    <RadioGroupItem value="private" id="vis-private" />
-                    <Label htmlFor="vis-private" className="flex items-center gap-2 cursor-pointer flex-1">
-                      <Lock className="h-4 w-4 text-red-500" />
-                      <div>
-                        <p className="font-medium">非公開</p>
-                        <p className="text-xs text-muted-foreground">自分だけが閲覧できます（誰にも表示されません）</p>
-                      </div>
-                    </Label>
-                  </div>
-
-                  <div className="flex items-center space-x-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors">
-                    <RadioGroupItem value="custom" id="vis-custom" />
-                    <Label htmlFor="vis-custom" className="flex items-center gap-2 cursor-pointer flex-1">
-                      <UserCheck className="h-4 w-4 text-purple-500" />
-                      <div>
-                        <p className="font-medium">カスタム</p>
-                        <p className="text-xs text-muted-foreground">指定したユーザーのみ閲覧を許可します</p>
-                      </div>
-                    </Label>
-                  </div>
-                </RadioGroup>
-
-                {/* カスタムモード：友達選択 */}
-                {visibility === "custom" && (
-                  <div className="space-y-3 rounded-lg border p-4 bg-muted/30">
-                    <Label className="flex items-center gap-2">
-                      <UserCheck className="h-4 w-4" />
-                      閲覧を許可する友達
-                    </Label>
-                    {friendsList && friendsList.length > 0 ? (
-                      <div className="space-y-2 max-h-48 overflow-y-auto">
-                        {friendsList.map((f) => (
-                          <div
-                            key={f.friend.id}
-                            className="flex items-center space-x-3 rounded-md border p-2 hover:bg-muted/50 transition-colors cursor-pointer"
-                            onClick={() => toggleViewer(f.friend.id)}
-                          >
-                            <Checkbox
-                              checked={selectedViewerIds.includes(f.friend.id)}
-                              onCheckedChange={() => toggleViewer(f.friend.id)}
-                            />
-                            <div className="flex items-center gap-2 flex-1">
-                              <div className="rounded-full bg-primary/10 p-1.5">
-                                <User className="h-3 w-3 text-primary" />
-                              </div>
-                              <div>
-                                <p className="text-sm font-medium">{f.friend.name || "名前未設定"}</p>
-                                {f.friend.isNpc && (
-                                  <Badge variant="outline" className="text-xs">NPC</Badge>
-                                )}
-                              </div>
-                            </div>
-                            {selectedViewerIds.includes(f.friend.id) && (
-                              <Check className="h-4 w-4 text-green-500" />
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground py-2">
-                        友達がいません。まず友達を追加してください。
-                      </p>
-                    )}
-                    {selectedViewerIds.length > 0 && (
-                      <p className="text-xs text-muted-foreground">
-                        {selectedViewerIds.length}人を選択中
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                <Button
-                  onClick={handleSaveVisibility}
-                  className="w-full"
-                  disabled={isSavingVisibility}
-                >
-                  {isSavingVisibility ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  ) : (
-                    <Shield className="h-4 w-4 mr-2" />
-                  )}
-                  プライバシー設定を保存
-                </Button>
-              </CardContent>
-            </Card>
+            <TwinPrivacySettingsCard twin={twin} friends={friendsList || []} onUpdate={() => refetch()} />
 
             {/* 人格評価システム */}
             <Card className="lg:col-span-2">
@@ -1137,6 +703,478 @@ export default function MyTwin() {
         ) : null}
       </div>
     </DashboardLayout>
+  );
+}
+
+/** Document Analysis Card — extracted from MyTwin */
+type TwinDocumentAnalysisCardProps = {
+  twinId: number;
+  onUpdate: () => void;
+};
+
+function TwinDocumentAnalysisCard({ twinId, onUpdate }: TwinDocumentAnalysisCardProps) {
+  const analyzeDocMut = trpc.myTwin.analyzeDocument.useMutation();
+  const [docFile, setDocFile] = useState<File | null>(null);
+  const [docDragOver, setDocDragOver] = useState(false);
+  const [docResult, setDocResult] = useState<any>(null);
+
+  const handleDocFileSelect = (file: File) => {
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("ファイルサイズは5MB以下にしてください");
+      return;
+    }
+    setDocFile(file);
+    setDocResult(null);
+  };
+
+  const handleDocAnalyze = async () => {
+    if (!docFile) return;
+    try {
+      const reader = new FileReader();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(docFile);
+      });
+      const result = await analyzeDocMut.mutateAsync({
+        fileData: base64,
+        fileName: docFile.name,
+        mimeType: docFile.type || "application/octet-stream",
+      });
+      setDocResult(result);
+      if (result.updated) {
+        toast.success("ドキュメントを解析し、ツイン設定を更新しました");
+        onUpdate();
+      } else {
+        toast.info("ドキュメントを解析しましたが、更新する情報が見つかりませんでした");
+      }
+    } catch (e: any) {
+      toast.error(e.message || "ドキュメント解析に失敗しました");
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg flex items-center gap-2">
+          <FileText className="h-5 w-5 text-blue-500" />
+          ドキュメント解析
+        </CardTitle>
+        <CardDescription>
+          履歴書、プレゼン資料、名刺画像などをアップロードして、人格・スキル・ナレッジを自動抽出
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div
+          className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+            docDragOver ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50"
+          }`}
+          onDragOver={(e) => { e.preventDefault(); setDocDragOver(true); }}
+          onDragLeave={() => setDocDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDocDragOver(false);
+            const file = e.dataTransfer.files[0];
+            if (file) handleDocFileSelect(file);
+          }}
+        >
+          {docFile ? (
+            <div className="flex items-center justify-center gap-3">
+              <FileText className="h-8 w-8 text-primary" />
+              <div className="text-left">
+                <p className="font-medium text-sm">{docFile.name}</p>
+                <p className="text-xs text-muted-foreground">{(docFile.size / 1024).toFixed(1)} KB</p>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => { setDocFile(null); setDocResult(null); }}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          ) : (
+            <label className="cursor-pointer block">
+              <input
+                type="file"
+                className="hidden"
+                accept=".pdf,.jpg,.jpeg,.png,.webp,.txt,.md,.csv,.json"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleDocFileSelect(file);
+                  e.target.value = "";
+                }}
+              />
+              <Plus className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+              <p className="text-sm text-muted-foreground">ファイルをドラッグ&ドロップ、またはクリックして選択</p>
+              <p className="text-xs text-muted-foreground mt-1">PDF, 画像 (JPG/PNG/WebP), テキスト (TXT/MD/CSV/JSON) — 最大5MB</p>
+            </label>
+          )}
+        </div>
+
+        {docFile && !docResult && (
+          <Button
+            onClick={handleDocAnalyze}
+            disabled={analyzeDocMut.isPending}
+            className="w-full"
+          >
+            {analyzeDocMut.isPending ? (
+              <><Loader2 className="h-4 w-4 animate-spin mr-2" />解析中...</>
+            ) : (
+              <><Sparkles className="h-4 w-4 mr-2" />解析開始</>
+            )}
+          </Button>
+        )}
+
+        {docResult && (
+          <div className="space-y-3 bg-muted/50 rounded-lg p-4">
+            <h4 className="font-medium text-sm flex items-center gap-2">
+              <Check className="h-4 w-4 text-green-500" />
+              解析完了
+            </h4>
+            {docResult.personality && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground">性格</p>
+                <p className="text-sm">{docResult.personality}</p>
+              </div>
+            )}
+            {docResult.description && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground">説明</p>
+                <p className="text-sm">{docResult.description}</p>
+              </div>
+            )}
+            {docResult.skills?.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1">抽出スキル</p>
+                <div className="flex flex-wrap gap-1">
+                  {docResult.skills.map((s: string, i: number) => (
+                    <Badge key={i} variant="secondary" className="text-xs">{s}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {docResult.knowledgeTitle && (
+              <p className="text-xs text-muted-foreground">📚 ナレッジベースに追加: {docResult.knowledgeTitle}</p>
+            )}
+            <Button variant="outline" size="sm" onClick={() => { setDocFile(null); setDocResult(null); }}>
+              別のファイルを解析
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Public Settings Card — extracted from MyTwin */
+type TwinPublicSettingsCardProps = {
+  twin: any;
+  onUpdate: () => void;
+};
+
+function TwinPublicSettingsCard({ twin, onUpdate }: TwinPublicSettingsCardProps) {
+  const updatePublicMutation = trpc.myTwin.updatePublicSettings.useMutation();
+  const [isPublic, setIsPublic] = useState(false);
+  const [publicBio, setPublicBio] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
+  const [newTag, setNewTag] = useState("");
+
+  useEffect(() => {
+    if (twin) {
+      setIsPublic(twin.isPublic === 1);
+      setPublicBio(twin.publicBio || "");
+      setTags(twin.tags || []);
+    }
+  }, [twin]);
+
+  const handleUpdatePublicSettings = async () => {
+    try {
+      await updatePublicMutation.mutateAsync({
+        isPublic,
+        publicBio: publicBio || undefined,
+        tags: tags.length > 0 ? tags : undefined,
+      });
+      toast.success("公開設定を更新しました");
+      onUpdate();
+    } catch (error) {
+      toast.error("エラーが発生しました");
+    }
+  };
+
+  const addTag = () => {
+    if (newTag.trim() && !tags.includes(newTag.trim())) {
+      setTags([...tags, newTag.trim()]);
+      setNewTag("");
+    }
+  };
+
+  const removeTag = (tagToRemove: string) => {
+    setTags(tags.filter(t => t !== tagToRemove));
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg flex items-center gap-2">
+          <Globe className="h-5 w-5" />
+          公開設定
+        </CardTitle>
+        <CardDescription>
+          分身AIを公開すると、他のユーザーから発見・マッチングリクエストを受けられます
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {/* 公開スイッチ */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            {isPublic ? (
+              <Eye className="h-5 w-5 text-cyan-400" />
+            ) : (
+              <EyeOff className="h-5 w-5 text-gray-400" />
+            )}
+            <div>
+              <p className="font-medium">分身AIを公開</p>
+              <p className="text-sm text-muted-foreground">
+                {isPublic ? "他のユーザーから見つけられます" : "友達のみがアクセス可能"}
+              </p>
+            </div>
+          </div>
+          <Switch
+            checked={isPublic}
+            onCheckedChange={setIsPublic}
+          />
+        </div>
+
+        {/* 公開プロフィール */}
+        <div className="space-y-2">
+          <Label htmlFor="publicBio">公開プロフィール</Label>
+          <Textarea
+            id="publicBio"
+            value={publicBio}
+            onChange={(e) => setPublicBio(e.target.value)}
+            placeholder="他のユーザーに表示される自己紹介文..."
+            rows={3}
+            disabled={!isPublic}
+          />
+        </div>
+
+        {/* タグ */}
+        <div className="space-y-2">
+          <Label>タグ（検索用）</Label>
+          <div className="flex gap-2">
+            <Input
+              value={newTag}
+              onChange={(e) => setNewTag(e.target.value)}
+              placeholder="タグを追加..."
+              disabled={!isPublic}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addTag();
+                }
+              }}
+            />
+            <Button onClick={addTag} disabled={!isPublic || !newTag.trim()}>
+              <Tag className="h-4 w-4" />
+            </Button>
+          </div>
+          {tags.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-2">
+              {tags.map((tag, i) => (
+                <Badge key={i} variant="secondary" className="gap-1">
+                  {tag}
+                  <button onClick={() => removeTag(tag)} className="ml-1 hover:text-destructive">
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <Button
+          onClick={handleUpdatePublicSettings}
+          className="w-full"
+          disabled={updatePublicMutation.isPending}
+        >
+          {updatePublicMutation.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+          ) : (
+            <Save className="h-4 w-4 mr-2" />
+          )}
+          公開設定を保存
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Privacy Settings Card — extracted from MyTwin */
+type TwinPrivacySettingsCardProps = {
+  twin: any;
+  friends: any[];
+  onUpdate: () => void;
+};
+
+function TwinPrivacySettingsCard({ twin, friends, onUpdate }: TwinPrivacySettingsCardProps) {
+  const updateMutation = trpc.myTwin.update.useMutation();
+  const { data: visibilityData, refetch: refetchVisibility } = trpc.myTwin.getVisibilitySettings.useQuery();
+  const [visibility, setVisibility] = useState<"public" | "friends" | "private" | "custom">("public");
+  const [selectedViewerIds, setSelectedViewerIds] = useState<number[]>([]);
+  const [isSavingVisibility, setIsSavingVisibility] = useState(false);
+
+  useEffect(() => {
+    if (visibilityData) {
+      setVisibility(visibilityData.visibility as "public" | "friends" | "private" | "custom");
+      setSelectedViewerIds(visibilityData.allowedViewers.map((v) => v.id));
+    }
+  }, [visibilityData]);
+
+  const handleSaveVisibility = async () => {
+    setIsSavingVisibility(true);
+    try {
+      await updateMutation.mutateAsync({
+        visibility,
+        allowedViewerIds: visibility === "custom" ? selectedViewerIds : undefined,
+      });
+      toast.success("プライバシー設定を保存しました");
+      refetchVisibility();
+      onUpdate();
+    } catch (error) {
+      toast.error("プライバシー設定の保存に失敗しました");
+    } finally {
+      setIsSavingVisibility(false);
+    }
+  };
+
+  const toggleViewer = (friendId: number) => {
+    setSelectedViewerIds((prev) =>
+      prev.includes(friendId) ? prev.filter((id) => id !== friendId) : [...prev, friendId]
+    );
+  };
+
+  return (
+    <Card className="lg:col-span-2">
+      <CardHeader>
+        <CardTitle className="text-lg flex items-center gap-2">
+          <Shield className="h-5 w-5" />
+          プライバシー設定
+        </CardTitle>
+        <CardDescription>
+          分身AIの公開範囲を細かく制御できます
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <RadioGroup
+          value={visibility}
+          onValueChange={(val) => setVisibility(val as "public" | "friends" | "private" | "custom")}
+          className="space-y-3"
+        >
+          <div className="flex items-center space-x-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors">
+            <RadioGroupItem value="public" id="vis-public" />
+            <Label htmlFor="vis-public" className="flex items-center gap-2 cursor-pointer flex-1">
+              <Globe className="h-4 w-4 text-green-500" />
+              <div>
+                <p className="font-medium">公開</p>
+                <p className="text-xs text-muted-foreground">全てのユーザーが発見・閲覧できます</p>
+              </div>
+            </Label>
+          </div>
+
+          <div className="flex items-center space-x-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors">
+            <RadioGroupItem value="friends" id="vis-friends" />
+            <Label htmlFor="vis-friends" className="flex items-center gap-2 cursor-pointer flex-1">
+              <Users className="h-4 w-4 text-blue-500" />
+              <div>
+                <p className="font-medium">友達のみ</p>
+                <p className="text-xs text-muted-foreground">承認済みの友達だけが閲覧できます</p>
+              </div>
+            </Label>
+          </div>
+
+          <div className="flex items-center space-x-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors">
+            <RadioGroupItem value="private" id="vis-private" />
+            <Label htmlFor="vis-private" className="flex items-center gap-2 cursor-pointer flex-1">
+              <Lock className="h-4 w-4 text-red-500" />
+              <div>
+                <p className="font-medium">非公開</p>
+                <p className="text-xs text-muted-foreground">自分だけが閲覧できます（誰にも表示されません）</p>
+              </div>
+            </Label>
+          </div>
+
+          <div className="flex items-center space-x-3 rounded-lg border p-3 hover:bg-muted/50 transition-colors">
+            <RadioGroupItem value="custom" id="vis-custom" />
+            <Label htmlFor="vis-custom" className="flex items-center gap-2 cursor-pointer flex-1">
+              <UserCheck className="h-4 w-4 text-purple-500" />
+              <div>
+                <p className="font-medium">カスタム</p>
+                <p className="text-xs text-muted-foreground">指定したユーザーのみ閲覧を許可します</p>
+              </div>
+            </Label>
+          </div>
+        </RadioGroup>
+
+        {/* カスタムモード：友達選択 */}
+        {visibility === "custom" && (
+          <div className="space-y-3 rounded-lg border p-4 bg-muted/30">
+            <Label className="flex items-center gap-2">
+              <UserCheck className="h-4 w-4" />
+              閲覧を許可する友達
+            </Label>
+            {friends && friends.length > 0 ? (
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {friends.map((f) => (
+                  <div
+                    key={f.friend.id}
+                    className="flex items-center space-x-3 rounded-md border p-2 hover:bg-muted/50 transition-colors cursor-pointer"
+                    onClick={() => toggleViewer(f.friend.id)}
+                  >
+                    <Checkbox
+                      checked={selectedViewerIds.includes(f.friend.id)}
+                      onCheckedChange={() => toggleViewer(f.friend.id)}
+                    />
+                    <div className="flex items-center gap-2 flex-1">
+                      <div className="rounded-full bg-primary/10 p-1.5">
+                        <User className="h-3 w-3 text-primary" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium">{f.friend.name || "名前未設定"}</p>
+                        {f.friend.isNpc && (
+                          <Badge variant="outline" className="text-xs">NPC</Badge>
+                        )}
+                      </div>
+                    </div>
+                    {selectedViewerIds.includes(f.friend.id) && (
+                      <Check className="h-4 w-4 text-green-500" />
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground py-2">
+                友達がいません。まず友達を追加してください。
+              </p>
+            )}
+            {selectedViewerIds.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {selectedViewerIds.length}人を選択中
+              </p>
+            )}
+          </div>
+        )}
+
+        <Button
+          onClick={handleSaveVisibility}
+          className="w-full"
+          disabled={isSavingVisibility}
+        >
+          {isSavingVisibility ? (
+            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+          ) : (
+            <Shield className="h-4 w-4 mr-2" />
+          )}
+          プライバシー設定を保存
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 

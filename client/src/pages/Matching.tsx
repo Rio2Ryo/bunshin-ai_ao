@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
 import { Link, useLocation } from "wouter";
-import { useState } from "react";
+import { useReducer, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -61,6 +61,415 @@ function AvatarCircle({ name, size = "md" }: { name: string; size?: "sm" | "md" 
 }
 
 // ---------------------------------------------------------------------------
+// CreateMatchingDialog — useReducer for 5 state fields
+// ---------------------------------------------------------------------------
+
+type CreateMatchingState = {
+  isOpen: boolean;
+  selectedFriendId: string;
+  theme: string;
+  turns: number;
+  prediction: any;
+};
+
+type CreateMatchingAction =
+  | { type: "OPEN" }
+  | { type: "OPEN_WITH"; selectedFriendId: string; theme: string }
+  | { type: "CLOSE" }
+  | { type: "SET_FIELD"; field: keyof CreateMatchingState; value: any }
+  | { type: "SET_PREDICTION"; prediction: any };
+
+const createMatchingInitial: CreateMatchingState = {
+  isOpen: false,
+  selectedFriendId: "",
+  theme: "",
+  turns: 5,
+  prediction: null,
+};
+
+function createMatchingReducer(state: CreateMatchingState, action: CreateMatchingAction): CreateMatchingState {
+  switch (action.type) {
+    case "OPEN":
+      return { ...state, isOpen: true };
+    case "OPEN_WITH":
+      return { ...state, isOpen: true, selectedFriendId: action.selectedFriendId, theme: action.theme };
+    case "CLOSE":
+      return { ...createMatchingInitial };
+    case "SET_FIELD":
+      return { ...state, [action.field]: action.value };
+    case "SET_PREDICTION":
+      return { ...state, prediction: action.prediction };
+  }
+}
+
+type CreateMatchingDialogProps = {
+  friends: any[];
+  myTwin: any;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  dispatch: React.Dispatch<CreateMatchingAction>;
+  state: CreateMatchingState;
+};
+
+function CreateMatchingDialog({ friends, myTwin, open, onOpenChange, dispatch, state }: CreateMatchingDialogProps) {
+  const [, navigate] = useLocation();
+  const startStreaming = trpc.matching.startStreaming.useMutation();
+  const predictMut = trpc.matching.predictScore.useMutation();
+
+  const friendsWithTwin = friends?.filter((f: any) => f.twin) || [];
+
+  const handleCreate = async () => {
+    if (!state.selectedFriendId || !state.theme.trim()) { toast.error("友達とテーマを選択してください"); return; }
+    if (!myTwin) { toast.error("まず自分の分身AIを作成してください"); return; }
+    const friend = friends?.find((f: any) => f.friend.id === parseInt(state.selectedFriendId));
+    if (!friend?.twin) { toast.error("この友達はまだ分身AIを作成していません"); return; }
+    try {
+      const result = await startStreaming.mutateAsync({ friendId: friend.friend.id, theme: state.theme, turns: state.turns });
+      dispatch({ type: "CLOSE" });
+      navigate(`/matching/${result.sessionId}`);
+    } catch (error: any) { toast.error(error?.message || "作成に失敗しました"); }
+  };
+
+  const handlePredict = async () => {
+    if (!state.selectedFriendId || !state.theme.trim()) { toast.error("友達とテーマを選択してください"); return; }
+    try {
+      const result = await predictMut.mutateAsync({ friendId: parseInt(state.selectedFriendId), theme: state.theme });
+      dispatch({ type: "SET_PREDICTION", prediction: result });
+    } catch (e: any) { toast.error(e.message || "予測に失敗しました"); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) dispatch({ type: "CLOSE" }); }}>
+      <DialogTrigger asChild>
+        <Button size="sm" disabled={!myTwin}><Plus className="h-4 w-4 mr-2" />新規マッチング</Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>新規マッチングセッション</DialogTitle>
+          <DialogDescription>友達の分身AIを選んで、ビジネステーマを設定してください</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 mt-4">
+          <div className="p-3 rounded-lg bg-muted/50 border">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1"><Bot className="h-4 w-4" />あなたの分身AI</div>
+            <p className="font-medium">{myTwin?.name || "未作成"}</p>
+          </div>
+          <div className="space-y-2">
+            <Label>対話相手（友達の分身AI）</Label>
+            <Select value={state.selectedFriendId} onValueChange={(v) => dispatch({ type: "SET_FIELD", field: "selectedFriendId", value: v })}>
+              <SelectTrigger><SelectValue placeholder="友達を選択" /></SelectTrigger>
+              <SelectContent>
+                {friendsWithTwin.length > 0 ? friendsWithTwin.map((friend: any) => (
+                  <SelectItem key={friend.friend.id} value={friend.friend.id.toString()}>
+                    {friend.twin?.name} ({friend.friend.name})
+                  </SelectItem>
+                )) : <div className="p-2 text-sm text-muted-foreground text-center">分身AIを持つ友達がいません</div>}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="theme">対話テーマ</Label>
+            <Input id="theme" value={state.theme} onChange={(e) => dispatch({ type: "SET_FIELD", field: "theme", value: e.target.value })} placeholder="例: AI活用した新規事業の可能性" />
+          </div>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label className="flex items-center gap-2"><MessageSquare className="h-4 w-4" />対話ターン数</Label>
+              <span className="text-sm font-medium text-primary">{state.turns}ターン</span>
+            </div>
+            <Slider value={[state.turns]} onValueChange={(v) => dispatch({ type: "SET_FIELD", field: "turns", value: v[0] })} min={3} max={30} step={1} className="w-full" />
+            <div className="flex justify-between text-xs text-muted-foreground"><span>3（簡潔）</span><span>15（標準）</span><span>30（徹底議論）</span></div>
+          </div>
+          {/* AI Prediction */}
+          <div className="border rounded-lg p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium flex items-center gap-1"><Target className="h-4 w-4" />AI予測</span>
+              <Button variant="outline" size="sm" onClick={handlePredict} disabled={!state.selectedFriendId || !state.theme.trim() || predictMut.isPending}>
+                {predictMut.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Sparkles className="h-3 w-3 mr-1" />}
+                予測する
+              </Button>
+            </div>
+            {state.prediction && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                  <div className={`text-2xl font-bold ${state.prediction.predictedScore >= 70 ? "text-green-500" : state.prediction.predictedScore >= 50 ? "text-blue-500" : "text-yellow-500"}`}>
+                    {state.prediction.predictedScore}%
+                  </div>
+                  <div className="text-xs text-muted-foreground flex-1">
+                    <p>{state.prediction.reasoning}</p>
+                    <p className="mt-1">確信度: {state.prediction.confidence}% | 過去{state.prediction.pastMatchCount}回のデータ使用</p>
+                  </div>
+                </div>
+                {state.prediction.tips?.length > 0 && (
+                  <div className="text-xs space-y-1">
+                    {state.prediction.tips.map((tip: string, i: number) => (
+                      <p key={i} className="text-muted-foreground">💡 {tip}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => dispatch({ type: "CLOSE" })}>キャンセル</Button>
+            <Button onClick={handleCreate} disabled={startStreaming.isPending || friendsWithTwin.length === 0}>
+              {startStreaming.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              作成して対話開始
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// GroupMatchingDialog — useReducer for 4 state fields
+// ---------------------------------------------------------------------------
+
+type GroupMatchingState = {
+  isOpen: boolean;
+  friendIds: number[];
+  theme: string;
+  turns: number;
+};
+
+type GroupMatchingAction =
+  | { type: "OPEN" }
+  | { type: "CLOSE" }
+  | { type: "SET_FIELD"; field: keyof GroupMatchingState; value: any }
+  | { type: "TOGGLE_FRIEND"; friendId: number };
+
+const groupMatchingInitial: GroupMatchingState = {
+  isOpen: false,
+  friendIds: [],
+  theme: "",
+  turns: 3,
+};
+
+function groupMatchingReducer(state: GroupMatchingState, action: GroupMatchingAction): GroupMatchingState {
+  switch (action.type) {
+    case "OPEN":
+      return { ...state, isOpen: true };
+    case "CLOSE":
+      return { ...groupMatchingInitial };
+    case "SET_FIELD":
+      return { ...state, [action.field]: action.value };
+    case "TOGGLE_FRIEND": {
+      const exists = state.friendIds.includes(action.friendId);
+      if (exists) return { ...state, friendIds: state.friendIds.filter((id) => id !== action.friendId) };
+      if (state.friendIds.length >= 4) return state;
+      return { ...state, friendIds: [...state.friendIds, action.friendId] };
+    }
+  }
+}
+
+type GroupMatchingDialogProps = {
+  friends: any[];
+  myTwin: any;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  dispatch: React.Dispatch<GroupMatchingAction>;
+  state: GroupMatchingState;
+};
+
+function GroupMatchingDialog({ friends, myTwin, open, onOpenChange, dispatch, state }: GroupMatchingDialogProps) {
+  const [, navigate] = useLocation();
+  const createGroupMut = trpc.matching.createGroup.useMutation();
+
+  const friendsWithTwin = friends?.filter((f: any) => f.twin) || [];
+
+  const handleCreateGroup = async () => {
+    if (state.friendIds.length < 2 || !state.theme.trim()) { toast.error("2人以上の友達とテーマを選択してください"); return; }
+    if (!myTwin) { toast.error("まず自分の分身AIを作成してください"); return; }
+    try {
+      const result = await createGroupMut.mutateAsync({ friendIds: state.friendIds, theme: state.theme, turns: state.turns });
+      dispatch({ type: "CLOSE" });
+      navigate(`/matching/group/${result.sessionId}`);
+    } catch (error: any) { toast.error(error?.message || "グループマッチング作成に失敗しました"); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) dispatch({ type: "CLOSE" }); }}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm" disabled={!myTwin || friendsWithTwin.length < 2}><Users className="h-4 w-4 mr-2" />グループ</Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>グループマッチング（3〜5人）</DialogTitle>
+          <DialogDescription>複数の友達と同時にマッチング対話を行います</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 mt-4">
+          <div>
+            <Label>参加者を選択（2〜4人）</Label>
+            <div className="space-y-2 mt-2 max-h-40 overflow-y-auto">
+              {friendsWithTwin.map((f: any) => (
+                <label key={f.friend.id} className="flex items-center gap-2 p-2 rounded-lg hover:bg-muted cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={state.friendIds.includes(f.friend.id)}
+                    onChange={() => dispatch({ type: "TOGGLE_FRIEND", friendId: f.friend.id })}
+                    disabled={!state.friendIds.includes(f.friend.id) && state.friendIds.length >= 4}
+                    className="rounded border-gray-300"
+                  />
+                  <span className="text-sm font-medium">{f.friend.name}</span>
+                  {f.twin?.name && <span className="text-xs text-muted-foreground">({f.twin.name})</span>}
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">{state.friendIds.length}/4 選択中（あなたを含めて{state.friendIds.length + 1}人）</p>
+          </div>
+          <div>
+            <Label htmlFor="group-theme">テーマ</Label>
+            <Input id="group-theme" placeholder="例: 新規事業アイデアのブレインストーミング" value={state.theme} onChange={(e) => dispatch({ type: "SET_FIELD", field: "theme", value: e.target.value })} />
+          </div>
+          <div>
+            <Label>ラウンド数（各参加者の発言回数）</Label>
+            <Slider min={1} max={5} step={1} value={[state.turns]} onValueChange={([v]) => dispatch({ type: "SET_FIELD", field: "turns", value: v })} />
+            <p className="text-xs text-muted-foreground mt-1">{state.turns}ラウンド（計{state.turns * (state.friendIds.length + 1)}ターン）</p>
+          </div>
+          <Button onClick={handleCreateGroup} disabled={state.friendIds.length < 2 || !state.theme.trim() || createGroupMut.isPending} className="w-full">
+            {createGroupMut.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />作成中...</> : <><Users className="h-4 w-4 mr-2" />グループマッチング開始</>}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MultilingualMatchingDialog — useReducer for 5 state fields
+// ---------------------------------------------------------------------------
+
+type MultilingualMatchingState = {
+  isOpen: boolean;
+  selectedFriend: string;
+  lang1: string;
+  lang2: string;
+  theme: string;
+};
+
+type MultilingualMatchingAction =
+  | { type: "OPEN" }
+  | { type: "CLOSE" }
+  | { type: "SET_FIELD"; field: keyof MultilingualMatchingState; value: any };
+
+const multilingualMatchingInitial: MultilingualMatchingState = {
+  isOpen: false,
+  selectedFriend: "",
+  lang1: "日本語",
+  lang2: "English",
+  theme: "",
+};
+
+function multilingualMatchingReducer(state: MultilingualMatchingState, action: MultilingualMatchingAction): MultilingualMatchingState {
+  switch (action.type) {
+    case "OPEN":
+      return { ...state, isOpen: true };
+    case "CLOSE":
+      return { ...multilingualMatchingInitial };
+    case "SET_FIELD":
+      return { ...state, [action.field]: action.value };
+  }
+}
+
+type MultilingualMatchingDialogProps = {
+  friends: any[];
+  myTwin: any;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  dispatch: React.Dispatch<MultilingualMatchingAction>;
+  state: MultilingualMatchingState;
+};
+
+function MultilingualMatchingDialog({ friends, myTwin, open, onOpenChange, dispatch, state }: MultilingualMatchingDialogProps) {
+  const [, navigate] = useLocation();
+  const createMultilingualMut = trpc.matching.createMultilingual.useMutation();
+
+  const friendsWithTwin = friends?.filter((f: any) => f.twin) || [];
+
+  const handleCreateMultilingual = async () => {
+    if (!state.selectedFriend || !state.theme.trim()) { toast.error("友達とテーマを選択してください"); return; }
+    try {
+      const result = await createMultilingualMut.mutateAsync({
+        friendId: parseInt(state.selectedFriend),
+        theme: state.theme,
+        language1: state.lang1,
+        language2: state.lang2,
+      });
+      dispatch({ type: "CLOSE" });
+      navigate(`/matching/${result.sessionId}`);
+    } catch (e: any) { toast.error(e.message || "作成に失敗しました"); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) dispatch({ type: "CLOSE" }); }}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm" disabled={!myTwin || friendsWithTwin.length === 0}><Globe className="h-4 w-4 mr-2" />多言語</Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>多言語マッチング対話</DialogTitle>
+          <DialogDescription>異なる言語でツインが対話し、リアルタイム翻訳を表示します</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 mt-4">
+          <div>
+            <Label>友達を選択</Label>
+            <Select value={state.selectedFriend} onValueChange={(v) => dispatch({ type: "SET_FIELD", field: "selectedFriend", value: v })}>
+              <SelectTrigger><SelectValue placeholder="友達を選択" /></SelectTrigger>
+              <SelectContent>
+                {friendsWithTwin.map((f: any) => (
+                  <SelectItem key={f.friend.id} value={f.friend.id.toString()}>
+                    {f.friend.name} ({f.twin?.name})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>テーマ</Label>
+            <Input placeholder="例: 国際ビジネス展開の戦略" value={state.theme} onChange={(e) => dispatch({ type: "SET_FIELD", field: "theme", value: e.target.value })} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label>あなたの言語</Label>
+              <Select value={state.lang1} onValueChange={(v) => dispatch({ type: "SET_FIELD", field: "lang1", value: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="日本語">日本語</SelectItem>
+                  <SelectItem value="English">English</SelectItem>
+                  <SelectItem value="中文">中文</SelectItem>
+                  <SelectItem value="한국어">한국어</SelectItem>
+                  <SelectItem value="Español">Español</SelectItem>
+                  <SelectItem value="Français">Français</SelectItem>
+                  <SelectItem value="Deutsch">Deutsch</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>相手の言語</Label>
+              <Select value={state.lang2} onValueChange={(v) => dispatch({ type: "SET_FIELD", field: "lang2", value: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="日本語">日本語</SelectItem>
+                  <SelectItem value="English">English</SelectItem>
+                  <SelectItem value="中文">中文</SelectItem>
+                  <SelectItem value="한국어">한국어</SelectItem>
+                  <SelectItem value="Español">Español</SelectItem>
+                  <SelectItem value="Français">Français</SelectItem>
+                  <SelectItem value="Deutsch">Deutsch</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <Button onClick={handleCreateMultilingual} disabled={!state.selectedFriend || !state.theme.trim() || createMultilingualMut.isPending} className="w-full">
+            {createMultilingualMut.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />作成中...</> : <><Globe className="h-4 w-4 mr-2" />多言語マッチング開始</>}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -80,89 +489,23 @@ export default function Matching() {
 
   const [, navigate] = useLocation();
   const createSession = trpc.matching.create.useMutation();
-  const startStreaming = trpc.matching.startStreaming.useMutation();
   const runDialogue = trpc.matching.runDialogue.useMutation();
   const completeTutorial = trpc.onboarding.completeTutorial.useMutation();
   const sendRequestMut = trpc.matching.sendRequest.useMutation();
   const acceptRequestMut = trpc.matching.acceptRequest.useMutation();
   const rejectRequestMut = trpc.matching.rejectRequest.useMutation();
 
-  const createGroupMut = trpc.matching.createGroup.useMutation();
+  // Dialog state — useReducer for each dialog's form state
+  const [createState, createDispatch] = useReducer(createMatchingReducer, createMatchingInitial);
+  const [groupState, groupDispatch] = useReducer(groupMatchingReducer, groupMatchingInitial);
+  const [multiState, multiDispatch] = useReducer(multilingualMatchingReducer, multilingualMatchingInitial);
 
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [isGroupOpen, setIsGroupOpen] = useState(false);
-  const [selectedFriendId, setSelectedFriendId] = useState("");
-  const [groupFriendIds, setGroupFriendIds] = useState<number[]>([]);
-  const [groupTheme, setGroupTheme] = useState("");
-  const [groupTurns, setGroupTurns] = useState(3);
-  const [theme, setTheme] = useState("");
-  const [turns, setTurns] = useState(5);
+  // Remaining local state (request flow in discover tab)
   const [requestMsg, setRequestMsg] = useState("");
   const [requestTargetId, setRequestTargetId] = useState<number | null>(null);
 
-  // Multilingual matching state
-  const [isMultilingualOpen, setIsMultilingualOpen] = useState(false);
-  const [multiLang1, setMultiLang1] = useState("日本語");
-  const [multiLang2, setMultiLang2] = useState("English");
-  const [multiTheme, setMultiTheme] = useState("");
-  const [multiSelectedFriend, setMultiSelectedFriend] = useState("");
-  const createMultilingualMut = trpc.matching.createMultilingual.useMutation();
-  const predictMut = trpc.matching.predictScore.useMutation();
-  const [prediction, setPrediction] = useState<any>(null);
-
-  const handleCreate = async () => {
-    if (!selectedFriendId || !theme.trim()) { toast.error("友達とテーマを選択してください"); return; }
-    if (!myTwin) { toast.error("まず自分の分身AIを作成してください"); return; }
-    const friend = friends?.find(f => f.friend.id === parseInt(selectedFriendId));
-    if (!friend?.twin) { toast.error("この友達はまだ分身AIを作成していません"); return; }
-    try {
-      // Use streaming mode — creates session, then navigates to session page where SSE streaming begins
-      const result = await startStreaming.mutateAsync({ friendId: friend.friend.id, theme, turns });
-      setIsCreateOpen(false); setSelectedFriendId(""); setTheme(""); setTurns(5); setPrediction(null);
-      navigate(`/matching/${result.sessionId}`);
-    } catch (error: any) { toast.error(error?.message || "作成に失敗しました"); }
-  };
-
-  const handlePredict = async () => {
-    if (!selectedFriendId || !theme.trim()) { toast.error("友達とテーマを選択してください"); return; }
-    try {
-      const result = await predictMut.mutateAsync({ friendId: parseInt(selectedFriendId), theme });
-      setPrediction(result);
-    } catch (e: any) { toast.error(e.message || "予測に失敗しました"); }
-  };
-
-  const handleCreateGroup = async () => {
-    if (groupFriendIds.length < 2 || !groupTheme.trim()) { toast.error("2人以上の友達とテーマを選択してください"); return; }
-    if (!myTwin) { toast.error("まず自分の分身AIを作成してください"); return; }
-    try {
-      const result = await createGroupMut.mutateAsync({ friendIds: groupFriendIds, theme: groupTheme, turns: groupTurns });
-      setIsGroupOpen(false); setGroupFriendIds([]); setGroupTheme(""); setGroupTurns(3);
-      navigate(`/matching/group/${result.sessionId}`);
-    } catch (error: any) { toast.error(error?.message || "グループマッチング作成に失敗しました"); }
-  };
-
-  const toggleGroupFriend = (id: number) => {
-    setGroupFriendIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : prev.length < 4 ? [...prev, id] : prev);
-  };
-
-  const handleCreateMultilingual = async () => {
-    if (!multiSelectedFriend || !multiTheme.trim()) { toast.error("友達とテーマを選択してください"); return; }
-    try {
-      const result = await createMultilingualMut.mutateAsync({
-        friendId: parseInt(multiSelectedFriend),
-        theme: multiTheme,
-        language1: multiLang1,
-        language2: multiLang2,
-      });
-      setIsMultilingualOpen(false);
-      navigate(`/matching/${result.sessionId}`);
-    } catch (e: any) { toast.error(e.message || "作成に失敗しました"); }
-  };
-
   const handleQuickMatch = (friendId: number, friendName: string) => {
-    setSelectedFriendId(friendId.toString());
-    setTheme(`${friendName}とのビジネス協業の可能性`);
-    setIsCreateOpen(true);
+    createDispatch({ type: "OPEN_WITH", selectedFriendId: friendId.toString(), theme: `${friendName}とのビジネス協業の可能性` });
   };
 
   const handleSendRequest = async (userId: number) => {
@@ -205,7 +548,6 @@ export default function Matching() {
   };
   const getStatusText = (s: string) => s === "completed" ? "完了" : s === "running" ? "実行中" : s === "failed" ? "失敗" : "待機中";
 
-  const friendsWithTwin = friends?.filter(f => f.twin) || [];
   const me = user as any;
   const tutorialDone = me?.tutorialCompleted === 1;
   const displayedSessions = tutorialDone ? sessions?.filter((s: any) => !s.isNpcSession) || [] : sessions || [];
@@ -239,194 +581,30 @@ export default function Matching() {
           <Link href="/predictions">
             <Button variant="outline" size="sm"><Target className="h-4 w-4 mr-2" />AI予測</Button>
           </Link>
-          <Dialog open={isGroupOpen} onOpenChange={setIsGroupOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline" size="sm" disabled={!myTwin || friendsWithTwin.length < 2}><Users className="h-4 w-4 mr-2" />グループ</Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>グループマッチング（3〜5人）</DialogTitle>
-                <DialogDescription>複数の友達と同時にマッチング対話を行います</DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 mt-4">
-                <div>
-                  <Label>参加者を選択（2〜4人）</Label>
-                  <div className="space-y-2 mt-2 max-h-40 overflow-y-auto">
-                    {friendsWithTwin.map((f: any) => (
-                      <label key={f.friend.id} className="flex items-center gap-2 p-2 rounded-lg hover:bg-muted cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={groupFriendIds.includes(f.friend.id)}
-                          onChange={() => toggleGroupFriend(f.friend.id)}
-                          disabled={!groupFriendIds.includes(f.friend.id) && groupFriendIds.length >= 4}
-                          className="rounded border-gray-300"
-                        />
-                        <span className="text-sm font-medium">{f.friend.name}</span>
-                        {f.twin?.name && <span className="text-xs text-muted-foreground">({f.twin.name})</span>}
-                      </label>
-                    ))}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">{groupFriendIds.length}/4 選択中（あなたを含めて{groupFriendIds.length + 1}人）</p>
-                </div>
-                <div>
-                  <Label htmlFor="group-theme">テーマ</Label>
-                  <Input id="group-theme" placeholder="例: 新規事業アイデアのブレインストーミング" value={groupTheme} onChange={(e) => setGroupTheme(e.target.value)} />
-                </div>
-                <div>
-                  <Label>ラウンド数（各参加者の発言回数）</Label>
-                  <Slider min={1} max={5} step={1} value={[groupTurns]} onValueChange={([v]) => setGroupTurns(v)} />
-                  <p className="text-xs text-muted-foreground mt-1">{groupTurns}ラウンド（計{groupTurns * (groupFriendIds.length + 1)}ターン）</p>
-                </div>
-                <Button onClick={handleCreateGroup} disabled={groupFriendIds.length < 2 || !groupTheme.trim() || createGroupMut.isPending} className="w-full">
-                  {createGroupMut.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />作成中...</> : <><Users className="h-4 w-4 mr-2" />グループマッチング開始</>}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-          <Dialog open={isMultilingualOpen} onOpenChange={setIsMultilingualOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline" size="sm" disabled={!myTwin || friendsWithTwin.length === 0}><Globe className="h-4 w-4 mr-2" />多言語</Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>多言語マッチング対話</DialogTitle>
-                <DialogDescription>異なる言語でツインが対話し、リアルタイム翻訳を表示します</DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 mt-4">
-                <div>
-                  <Label>友達を選択</Label>
-                  <Select value={multiSelectedFriend} onValueChange={setMultiSelectedFriend}>
-                    <SelectTrigger><SelectValue placeholder="友達を選択" /></SelectTrigger>
-                    <SelectContent>
-                      {friendsWithTwin.map((f: any) => (
-                        <SelectItem key={f.friend.id} value={f.friend.id.toString()}>
-                          {f.friend.name} ({f.twin?.name})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>テーマ</Label>
-                  <Input placeholder="例: 国際ビジネス展開の戦略" value={multiTheme} onChange={(e) => setMultiTheme(e.target.value)} />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label>あなたの言語</Label>
-                    <Select value={multiLang1} onValueChange={setMultiLang1}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="日本語">日本語</SelectItem>
-                        <SelectItem value="English">English</SelectItem>
-                        <SelectItem value="中文">中文</SelectItem>
-                        <SelectItem value="한국어">한국어</SelectItem>
-                        <SelectItem value="Español">Español</SelectItem>
-                        <SelectItem value="Français">Français</SelectItem>
-                        <SelectItem value="Deutsch">Deutsch</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label>相手の言語</Label>
-                    <Select value={multiLang2} onValueChange={setMultiLang2}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="日本語">日本語</SelectItem>
-                        <SelectItem value="English">English</SelectItem>
-                        <SelectItem value="中文">中文</SelectItem>
-                        <SelectItem value="한국어">한국어</SelectItem>
-                        <SelectItem value="Español">Español</SelectItem>
-                        <SelectItem value="Français">Français</SelectItem>
-                        <SelectItem value="Deutsch">Deutsch</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <Button onClick={handleCreateMultilingual} disabled={!multiSelectedFriend || !multiTheme.trim() || createMultilingualMut.isPending} className="w-full">
-                  {createMultilingualMut.isPending ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />作成中...</> : <><Globe className="h-4 w-4 mr-2" />多言語マッチング開始</>}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-          <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) setPrediction(null); }}>
-            <DialogTrigger asChild>
-              <Button size="sm" disabled={!myTwin}><Plus className="h-4 w-4 mr-2" />新規マッチング</Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>新規マッチングセッション</DialogTitle>
-                <DialogDescription>友達の分身AIを選んで、ビジネステーマを設定してください</DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 mt-4">
-                <div className="p-3 rounded-lg bg-muted/50 border">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1"><Bot className="h-4 w-4" />あなたの分身AI</div>
-                  <p className="font-medium">{myTwin?.name || "未作成"}</p>
-                </div>
-                <div className="space-y-2">
-                  <Label>対話相手（友達の分身AI）</Label>
-                  <Select value={selectedFriendId} onValueChange={setSelectedFriendId}>
-                    <SelectTrigger><SelectValue placeholder="友達を選択" /></SelectTrigger>
-                    <SelectContent>
-                      {friendsWithTwin.length > 0 ? friendsWithTwin.map((friend) => (
-                        <SelectItem key={friend.friend.id} value={friend.friend.id.toString()}>
-                          {friend.twin?.name} ({friend.friend.name})
-                        </SelectItem>
-                      )) : <div className="p-2 text-sm text-muted-foreground text-center">分身AIを持つ友達がいません</div>}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="theme">対話テーマ</Label>
-                  <Input id="theme" value={theme} onChange={(e) => setTheme(e.target.value)} placeholder="例: AI活用した新規事業の可能性" />
-                </div>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <Label className="flex items-center gap-2"><MessageSquare className="h-4 w-4" />対話ターン数</Label>
-                    <span className="text-sm font-medium text-primary">{turns}ターン</span>
-                  </div>
-                  <Slider value={[turns]} onValueChange={(v) => setTurns(v[0])} min={3} max={30} step={1} className="w-full" />
-                  <div className="flex justify-between text-xs text-muted-foreground"><span>3（簡潔）</span><span>15（標準）</span><span>30（徹底議論）</span></div>
-                </div>
-                {/* AI Prediction */}
-                <div className="border rounded-lg p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium flex items-center gap-1"><Target className="h-4 w-4" />AI予測</span>
-                    <Button variant="outline" size="sm" onClick={handlePredict} disabled={!selectedFriendId || !theme.trim() || predictMut.isPending}>
-                      {predictMut.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Sparkles className="h-3 w-3 mr-1" />}
-                      予測する
-                    </Button>
-                  </div>
-                  {prediction && (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-3">
-                        <div className={`text-2xl font-bold ${prediction.predictedScore >= 70 ? "text-green-500" : prediction.predictedScore >= 50 ? "text-blue-500" : "text-yellow-500"}`}>
-                          {prediction.predictedScore}%
-                        </div>
-                        <div className="text-xs text-muted-foreground flex-1">
-                          <p>{prediction.reasoning}</p>
-                          <p className="mt-1">確信度: {prediction.confidence}% | 過去{prediction.pastMatchCount}回のデータ使用</p>
-                        </div>
-                      </div>
-                      {prediction.tips?.length > 0 && (
-                        <div className="text-xs space-y-1">
-                          {prediction.tips.map((tip: string, i: number) => (
-                            <p key={i} className="text-muted-foreground">💡 {tip}</p>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <div className="flex justify-end gap-2">
-                  <Button variant="outline" onClick={() => setIsCreateOpen(false)}>キャンセル</Button>
-                  <Button onClick={handleCreate} disabled={startStreaming.isPending || friendsWithTwin.length === 0}>
-                    {startStreaming.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                    作成して対話開始
-                  </Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
+          <GroupMatchingDialog
+            friends={friends || []}
+            myTwin={myTwin}
+            open={groupState.isOpen}
+            onOpenChange={(o) => { if (o) groupDispatch({ type: "OPEN" }); else groupDispatch({ type: "CLOSE" }); }}
+            dispatch={groupDispatch}
+            state={groupState}
+          />
+          <MultilingualMatchingDialog
+            friends={friends || []}
+            myTwin={myTwin}
+            open={multiState.isOpen}
+            onOpenChange={(o) => { if (o) multiDispatch({ type: "OPEN" }); else multiDispatch({ type: "CLOSE" }); }}
+            dispatch={multiDispatch}
+            state={multiState}
+          />
+          <CreateMatchingDialog
+            friends={friends || []}
+            myTwin={myTwin}
+            open={createState.isOpen}
+            onOpenChange={(o) => { if (o) createDispatch({ type: "OPEN" }); else createDispatch({ type: "CLOSE" }); }}
+            dispatch={createDispatch}
+            state={createState}
+          />
           </div>
         </div>
 
