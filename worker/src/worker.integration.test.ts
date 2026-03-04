@@ -1189,3 +1189,146 @@ describe("Twin Reset (end of test)", () => {
     expect(data).toBeNull();
   });
 });
+
+// ============ Helper: register a fresh user and return session cookie ============
+async function registerAndLogin(): Promise<{ cookie: string }> {
+  const email = `test-api-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
+  const password = "testpass123";
+  const name = "API Test User";
+
+  const regBody = await withRetry(async () => {
+    const res = await fetch(`${BASE}/api/trpc/auth.register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ json: { email, password, name } }),
+    });
+    return res.json() as Promise<any>;
+  });
+  const regData = regBody.result?.data?.json;
+  if (!regData?.token) {
+    // If registration requires verification, do login
+    const loginBody = await withRetry(async () => {
+      const res = await fetch(`${BASE}/api/trpc/auth.login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ json: { email, password } }),
+      });
+      return res.json() as Promise<any>;
+    });
+    const token = loginBody.result?.data?.json?.token;
+    const setRes = await fetch(`${BASE}/api/auth/set-session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    const setCookieHeader = setRes.headers.get("set-cookie");
+    const match = setCookieHeader?.match(/app_session_id=([^;]*)/);
+    return { cookie: match ? `app_session_id=${match[1]}` : "" };
+  }
+
+  const setRes = await fetch(`${BASE}/api/auth/set-session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: regData.token }),
+  });
+  const setCookieHeader = setRes.headers.get("set-cookie");
+  const match = setCookieHeader?.match(/app_session_id=([^;]*)/);
+  return { cookie: match ? `app_session_id=${match[1]}` : "" };
+}
+
+/** Call a tRPC mutation with a specific cookie (for isolated session tests). */
+async function trpcMutateWith(path: string, input: unknown, cookie: string) {
+  return withRetry(async () => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (cookie) headers["Cookie"] = cookie;
+    const res = await fetch(`${BASE}/api/trpc/${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(input !== undefined ? { json: input } : { json: {} }),
+    });
+    if (res.status === 429) {
+      const body = await res.json() as any;
+      return { error: "Rate limit exceeded", retryAfter: body.retryAfter ?? 2 };
+    }
+    return res.json() as Promise<any>;
+  });
+}
+
+/** Call a tRPC query with a specific cookie (for isolated session tests). */
+async function trpcQueryWith(path: string, input: Record<string, unknown> | undefined, cookie: string) {
+  return withRetry(async () => {
+    let url = `${BASE}/api/trpc/${path}`;
+    if (input) {
+      url += `?input=${encodeURIComponent(JSON.stringify({ json: input }))}`;
+    }
+    const headers: Record<string, string> = {};
+    if (cookie) headers["Cookie"] = cookie;
+    const res = await fetch(url, { headers });
+    if (res.status === 429) {
+      const body = await res.json() as any;
+      return { error: "Rate limit exceeded", retryAfter: body.retryAfter ?? 2 };
+    }
+    return res.json() as Promise<any>;
+  });
+}
+
+// ============ Public API Key Auth ============
+describe("Public API", () => {
+  it("GET /api/v1/twin returns 401 without API key", async () => {
+    const res = await fetch(`${BASE}/api/v1/twin`);
+    expect(res.status).toBe(401);
+  });
+
+  it("GET /api/v1/twin returns 401 with invalid API key", async () => {
+    const res = await fetch(`${BASE}/api/v1/twin`, {
+      headers: { "x-api-key": "bai_invalid-key-12345" },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("GET /api/v1/friends returns 401 without API key", async () => {
+    const res = await fetch(`${BASE}/api/v1/friends`);
+    expect(res.status).toBe(401);
+  });
+
+  it("GET /api/v1/knowledge returns 401 without API key", async () => {
+    const res = await fetch(`${BASE}/api/v1/knowledge`);
+    expect(res.status).toBe(401);
+  });
+
+  it("POST /api/v1/matchings returns 401 without API key", async () => {
+    const res = await fetch(`${BASE}/api/v1/matchings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ friendId: 1 }),
+    });
+    expect(res.status).toBe(401);
+  });
+});
+
+// ============ Webhook Delivery Logs ============
+describe("Webhook", () => {
+  it("apiPublic.createWebhook returns id and secret", async () => {
+    const { cookie } = await registerAndLogin();
+    const res = unwrap(await trpcMutateWith("apiPublic.createWebhook", { url: "https://example.com/hook", events: ["matching_complete"] }, cookie));
+    expect(res).toHaveProperty("id");
+    expect(res).toHaveProperty("secret");
+    expect(typeof res.secret).toBe("string");
+  });
+
+  it("apiPublic.listWebhooks returns masked secret", async () => {
+    const { cookie } = await registerAndLogin();
+    await trpcMutateWith("apiPublic.createWebhook", { url: "https://example.com/hook2", events: ["friend_request"] }, cookie);
+    const res = unwrap(await trpcQueryWith("apiPublic.listWebhooks", undefined, cookie));
+    expect(res.length).toBeGreaterThan(0);
+    expect(res[0].secret).toBe("***");
+  });
+
+  it("apiPublic.toggleWebhook disables webhook", async () => {
+    const { cookie } = await registerAndLogin();
+    const createRes = unwrap(await trpcMutateWith("apiPublic.createWebhook", { url: "https://example.com/hook3", events: ["*"] }, cookie));
+    const whId = createRes.id;
+    const toggleRes = unwrap(await trpcMutateWith("apiPublic.toggleWebhook", { id: whId, isActive: false }, cookie));
+    expect(toggleRes.success).toBe(true);
+  });
+});

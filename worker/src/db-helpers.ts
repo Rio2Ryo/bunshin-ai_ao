@@ -853,6 +853,19 @@ CREATE TABLE IF NOT EXISTS webhooks (
 );
 CREATE INDEX IF NOT EXISTS idx_webhooks_userId ON webhooks(userId);
 
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  webhookId INTEGER NOT NULL,
+  event TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  statusCode INTEGER,
+  response TEXT,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  success INTEGER NOT NULL DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhookId ON webhook_deliveries(webhookId);
+
 CREATE TABLE IF NOT EXISTS cross_culture_analyses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   sessionId INTEGER NOT NULL,

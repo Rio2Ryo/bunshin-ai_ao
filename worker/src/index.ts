@@ -130,7 +130,7 @@ api.use(
       // Return the origin if allowed; Hono omits Access-Control-Allow-Origin if empty string returned
       return allowed || "";
     },
-    allowHeaders: ["content-type", "x-trpc-source"],
+    allowHeaders: ["content-type", "x-trpc-source", "x-api-key", "authorization"],
     allowMethods: ["GET", "POST", "OPTIONS"],
     credentials: true,
   })
@@ -920,41 +920,102 @@ api.get("/api/workspace/ws/:workspaceId", async (c) => {
 
 // ============ Public API (API Key Auth) ============
 
-api.get("/api/v1/twin", async (c) => {
+// Shared API key auth — returns auth info or an error Response
+async function authenticateApiKey(c: any, requiredPermission?: string): Promise<{ userId: number; keyId: number; permissions: string[] } | Response> {
   const env = c.env as Env;
   await ensureSchema(env.DB);
   const apiKey = c.req.header("x-api-key") || c.req.header("authorization")?.replace("Bearer ", "");
-  if (!apiKey || !apiKey.startsWith("bai_")) return c.json({ error: "Invalid API key" }, 401);
+  if (!apiKey || !apiKey.startsWith("bai_")) {
+    return c.json({ error: "Invalid API key" }, 401);
+  }
   const rawKey = apiKey.replace("bai_", "");
   const encoder = new TextEncoder();
   const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(rawKey));
   const keyHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
-  const keyRow = await env.DB.prepare(`SELECT * FROM api_keys WHERE keyHash=? AND revokedAt IS NULL`).bind(keyHash).first<any>();
-  if (!keyRow) return c.json({ error: "Invalid or revoked API key" }, 401);
+  const keyRow = await env.DB.prepare(
+    `SELECT id, userId, permissions FROM api_keys WHERE keyHash=? AND revokedAt IS NULL`
+  ).bind(keyHash).first<any>();
+  if (!keyRow) {
+    return c.json({ error: "Invalid or revoked API key" }, 401);
+  }
   await env.DB.prepare(`UPDATE api_keys SET lastUsedAt=datetime('now') WHERE id=?`).bind(keyRow.id).run();
-  const twin = await env.DB.prepare(`SELECT id, name, description, personality, tags, status, isPublic FROM digital_twins WHERE userId=?`).bind(keyRow.userId).first<any>();
+
+  const permissions: string[] = (() => { try { return JSON.parse(keyRow.permissions || "[]"); } catch { return []; } })();
+
+  // Check required permission
+  if (requiredPermission && !permissions.includes(requiredPermission) && !permissions.includes("admin")) {
+    return c.json({ error: "Insufficient permissions" }, 403);
+  }
+
+  return { userId: keyRow.userId, keyId: keyRow.id, permissions };
+}
+
+api.get("/api/v1/twin", async (c) => {
+  const auth = await authenticateApiKey(c, "read");
+  if (auth instanceof Response) return auth;
+  const env = c.env as Env;
+  const twin = await env.DB.prepare(
+    `SELECT id, name, description, personality, tags, status, isPublic FROM digital_twins WHERE userId=?`
+  ).bind(auth.userId).first<any>();
   return c.json({ twin: twin || null });
 });
 
 api.get("/api/v1/matchings", async (c) => {
+  const auth = await authenticateApiKey(c, "read");
+  if (auth instanceof Response) return auth;
   const env = c.env as Env;
-  await ensureSchema(env.DB);
-  const apiKey = c.req.header("x-api-key") || c.req.header("authorization")?.replace("Bearer ", "");
-  if (!apiKey || !apiKey.startsWith("bai_")) return c.json({ error: "Invalid API key" }, 401);
-  const rawKey = apiKey.replace("bai_", "");
-  const encoder = new TextEncoder();
-  const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(rawKey));
-  const keyHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
-  const keyRow = await env.DB.prepare(`SELECT * FROM api_keys WHERE keyHash=? AND revokedAt IS NULL`).bind(keyHash).first<any>();
-  if (!keyRow) return c.json({ error: "Invalid or revoked API key" }, 401);
-  await env.DB.prepare(`UPDATE api_keys SET lastUsedAt=datetime('now') WHERE id=?`).bind(keyRow.id).run();
   const limit = Math.min(parseInt(c.req.query("limit") || "20"), 100);
   const rows = await env.DB.prepare(
     `SELECT ms.id, ms.theme, ms.status, ms.createdAt, ms.completedAt, mr.compatibilityScore, mr.summary FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id WHERE ms.initiatorUserId=? ORDER BY ms.createdAt DESC LIMIT ?`
-  ).bind(keyRow.userId, limit).all<any>();
+  ).bind(auth.userId, limit).all<any>();
   return c.json({ matchings: rows.results ?? [] });
 });
 
+api.post("/api/v1/matchings", async (c) => {
+  const auth = await authenticateApiKey(c, "write");
+  if (auth instanceof Response) return auth;
+  const env = c.env as Env;
+  const body = await c.req.json<{ friendId: number; theme?: string }>().catch(() => null);
+  if (!body?.friendId) return c.json({ error: "friendId is required" }, 400);
+  // Verify friendship
+  const friendship = await env.DB.prepare(
+    `SELECT id FROM friendships WHERE ((userId=? AND friendId=?) OR (userId=? AND friendId=?)) AND status='accepted'`
+  ).bind(auth.userId, body.friendId, body.friendId, auth.userId).first<any>();
+  if (!friendship) return c.json({ error: "Not friends with this user" }, 403);
+  // Create matching session
+  const theme = body.theme || "ビジネスマッチング";
+  const res = await env.DB.prepare(
+    `INSERT INTO matching_sessions (initiatorUserId, theme, status) VALUES (?,?,?)`
+  ).bind(auth.userId, theme, "pending").run();
+  return c.json({ id: Number(res.meta.last_row_id), theme, status: "pending" }, 201);
+});
+
+api.get("/api/v1/friends", async (c) => {
+  const auth = await authenticateApiKey(c, "read");
+  if (auth instanceof Response) return auth;
+  const env = c.env as Env;
+  const rows = await env.DB.prepare(
+    `SELECT f.id, f.status, f.createdAt,
+      CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END as friendUserId,
+      u.name as friendName, u.friendCode
+    FROM friendships f
+    JOIN users u ON u.id = CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END
+    WHERE (f.userId=? OR f.friendId=?) AND f.status='accepted'
+    ORDER BY f.createdAt DESC`
+  ).bind(auth.userId, auth.userId, auth.userId, auth.userId).all<any>();
+  return c.json({ friends: rows.results ?? [] });
+});
+
+api.get("/api/v1/knowledge", async (c) => {
+  const auth = await authenticateApiKey(c, "read");
+  if (auth instanceof Response) return auth;
+  const env = c.env as Env;
+  const limit = Math.min(parseInt(c.req.query("limit") || "50"), 200);
+  const rows = await env.DB.prepare(
+    `SELECT id, title, content, sourceType, summary, createdAt FROM knowledge_base WHERE userId=? ORDER BY createdAt DESC LIMIT ?`
+  ).bind(auth.userId, limit).all<any>();
+  return c.json({ knowledge: rows.results ?? [] });
+});
 
 api.all("/api/trpc/*", async (c) => {
   const env = c.env as Env;

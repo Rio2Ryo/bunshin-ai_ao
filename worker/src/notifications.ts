@@ -1,4 +1,5 @@
 import type { Env } from "./trpc";
+import { ensureSchema, parseJson } from "./db-helpers";
 
 /** Send Slack webhook notification */
 export async function sendSlackNotification(webhookUrl: string, text: string): Promise<boolean> {
@@ -46,11 +47,96 @@ async function isNotificationEnabled(db: D1Database, userId: number, type: strin
   } catch { return true; }
 }
 
+/** Deliver webhooks for a given event to all matching user webhooks */
+export async function triggerWebhooks(
+  db: D1Database,
+  userId: number,
+  event: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const rows = await db.prepare(
+      `SELECT id, url, secret, events, failCount FROM webhooks WHERE userId=? AND isActive=1`
+    ).bind(userId).all<any>();
+    const webhooks = rows.results ?? [];
+
+    for (const wh of webhooks) {
+      const events = parseJson<string[]>(wh.events) ?? [];
+      if (!events.includes(event) && !events.includes("*")) continue;
+
+      // Auto-disable after 10 consecutive failures
+      if (wh.failCount >= 10) {
+        await db.prepare(`UPDATE webhooks SET isActive=0 WHERE id=?`).bind(wh.id).run();
+        continue;
+      }
+
+      const body = JSON.stringify({ event, data: payload, timestamp: new Date().toISOString() });
+
+      // HMAC-SHA256 signature
+      const encoder = new TextEncoder();
+      const key = await crypto.subtle.importKey(
+        "raw", encoder.encode(wh.secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+      );
+      const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(body));
+      const signature = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, "0")).join("");
+
+      let success = false;
+      let statusCode = 0;
+      let responseText = "";
+      const MAX_RETRIES = 3;
+
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          const res = await fetch(wh.url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Webhook-Signature": `sha256=${signature}`,
+              "X-Webhook-Event": event,
+              "User-Agent": "BunshinAI-Webhook/1.0",
+            },
+            body,
+          });
+          statusCode = res.status;
+          responseText = (await res.text()).slice(0, 500);
+          success = res.ok;
+
+          // Log delivery attempt
+          await db.prepare(
+            `INSERT INTO webhook_deliveries (webhookId, event, payload, statusCode, response, attempt, success) VALUES (?,?,?,?,?,?,?)`
+          ).bind(wh.id, event, body, statusCode, responseText, attempt, success ? 1 : 0).run();
+
+          if (success) break;
+        } catch (err: any) {
+          statusCode = 0;
+          responseText = err?.message?.slice(0, 500) || "Network error";
+          await db.prepare(
+            `INSERT INTO webhook_deliveries (webhookId, event, payload, statusCode, response, attempt, success) VALUES (?,?,?,?,?,?,?)`
+          ).bind(wh.id, event, body, statusCode, responseText, attempt, 0).run();
+        }
+      }
+
+      // Update webhook status
+      if (success) {
+        await db.prepare(
+          `UPDATE webhooks SET lastTriggeredAt=datetime('now'), failCount=0 WHERE id=?`
+        ).bind(wh.id).run();
+      } else {
+        await db.prepare(
+          `UPDATE webhooks SET failCount=failCount+1 WHERE id=?`
+        ).bind(wh.id).run();
+      }
+    }
+  } catch { /* webhook delivery should never break the main flow */ }
+}
+
 /** Create in-app notification (respects per-type preferences) */
 export async function createNotification(db: D1Database, userId: number, type: string, title: string, message: string, data?: Record<string, unknown>): Promise<void> {
   try {
     if (!(await isNotificationEnabled(db, userId, type))) return;
     await db.prepare(`INSERT INTO notifications (userId, type, title, message, data) VALUES (?,?,?,?,?)`).bind(userId, type, title, message, data ? JSON.stringify(data) : null).run();
+    // Fire webhook delivery (best-effort, non-blocking)
+    triggerWebhooks(db, userId, type, { title, message, ...data }).catch(() => {});
   } catch { /* ignore notification errors */ }
 }
 
