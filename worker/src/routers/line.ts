@@ -9,6 +9,14 @@ import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, generateCode, type Env } from "../trpc";
 import { ensureSchema, parseJson, toJson, now, getMyTwin } from "../db-helpers";
 import { invokeLLM, getUserLLMConfig } from "../llm";
+import {
+  fetchLineMessageContent,
+  ocrImageViaVision,
+  syncLineProfileToR2,
+  buildWelcomeGuidanceFlex,
+  buildImageOCRResultFlex,
+  buildQuickReplyItems,
+} from "./line-rich";
 
 // ============ LINE API Helpers ============
 
@@ -266,7 +274,7 @@ export async function handleLineWebhook(
           break;
         case "message":
           if (event.source?.type === "group") {
-            await handleGroupMessage(db, event);
+            await handleGroupMessage(db, env, event, accessToken);
           } else {
             await handleMessageEvent(db, env, event, accessToken);
           }
@@ -348,6 +356,16 @@ async function handleFollowEvent(
     ],
     accessToken
   );
+
+  // Sync LINE profile image to R2 (non-blocking, for future linking)
+  if (profile?.pictureUrl) {
+    try {
+      // Store in line_connections for later sync when user links
+      // Actual R2 sync happens during linkByCode
+    } catch {
+      /* profile sync failure is non-critical */
+    }
+  }
 }
 
 /** Handle unfollow event: disconnect LINE connection */
@@ -370,15 +388,20 @@ async function handleJoinEvent(event: any, accessToken: string) {
     [
       {
         type: "text",
-        text: "分身AIボットがグループに参加しました！🤖\n\nグループ内の会話を観察して、メンバーの分身AIの人格学習に活用します。\n\n※プライバシーに配慮し、学習データは各ユーザーの分身AIのみに使用されます。",
+        text: "分身AIボットがグループに参加しました！🤖\n\n📝 会話を観察して分身AIの人格学習に活用します\n💬 @分身AI でメンションすると返答します\n\n※プライバシーに配慮し、学習データは各ユーザーの分身AIのみに使用されます。",
       },
     ],
     accessToken
   );
 }
 
-/** Handle group message: observe and save for learning (no reply) */
-async function handleGroupMessage(db: D1Database, event: any) {
+/** Handle group message: observe for learning + reply when @mentioned */
+async function handleGroupMessage(
+  db: D1Database,
+  env: Env,
+  event: any,
+  accessToken: string
+) {
   const groupId = event.source?.groupId;
   const lineUserId = event.source?.userId;
   if (
@@ -395,7 +418,10 @@ async function handleGroupMessage(db: D1Database, event: any) {
   // Check if sender is a linked user
   const conn = await db
     .prepare(
-      `SELECT userId, twinId FROM line_connections WHERE lineUserId=? AND status='active' AND userId IS NOT NULL`
+      `SELECT lc.userId, lc.twinId, dt.id as dtId, dt.name as twinName, dt.personality, dt.description, dt.learnedTraits
+       FROM line_connections lc
+       LEFT JOIN digital_twins dt ON dt.userId = lc.userId
+       WHERE lc.lineUserId=? AND lc.status='active' AND lc.userId IS NOT NULL`
     )
     .bind(lineUserId)
     .first<any>();
@@ -418,6 +444,169 @@ async function handleGroupMessage(db: D1Database, event: any) {
       )
       .run();
   }
+
+  // Only reply if @mentioned (check for bot name mention or @分身AI/@bunshin)
+  const botMentionPatterns = [
+    /(@分身AI|@bunshin|@ぶんしん)/i,
+    /@bot/i,
+  ];
+  // Also check LINE mention objects
+  const hasMentionObj = event.message.mention?.mentionees?.some(
+    (m: any) => m.type === "all" || m.isSelf === true
+  );
+  const hasTextMention = botMentionPatterns.some((p) => p.test(messageText));
+
+  if (!hasMentionObj && !hasTextMention) return; // Silent observation mode
+
+  // Generate AI response for @mention
+  if (!conn.dtId || !event.replyToken) return;
+
+  // Strip mention text for cleaner input
+  const cleanMessage = messageText
+    .replace(/@分身AI|@bunshin|@ぶんしん|@bot/gi, "")
+    .trim() || "こんにちは";
+
+  // Build system prompt
+  const kbRows = await db
+    .prepare(
+      `SELECT title, content, summary FROM knowledge_base WHERE twinId=? ORDER BY createdAt DESC LIMIT 5`
+    )
+    .bind(conn.dtId)
+    .all<any>();
+  const knowledgeEntries = kbRows.results ?? [];
+
+  const systemPrompt = buildLineSystemPrompt(
+    {
+      name: conn.twinName,
+      personality: conn.personality,
+      description: conn.description,
+      learnedTraits: conn.learnedTraits,
+    },
+    knowledgeEntries
+  );
+
+  const allMessages = [
+    { role: "system" as const, content: systemPrompt + "\n\nグループチャットでメンションされました。簡潔に返答してください。" },
+    { role: "user" as const, content: cleanMessage },
+  ];
+
+  // Try LLM
+  let responseText = "";
+  const llmConfig = await getUserLLMConfig(db, conn.userId, "chat", env);
+  if (llmConfig) {
+    try {
+      const result = await invokeLLM(llmConfig, allMessages, {
+        maxTokens: 256,
+        temperature: 0.8,
+      });
+      if (result.content) responseText = result.content;
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!responseText) responseText = "呼びましたか？😊";
+
+  await replyToLine(
+    event.replyToken,
+    [{ type: "text", text: responseText }],
+    accessToken
+  );
+}
+
+/** Handle image message: OCR via Vision API → save to knowledge base */
+async function handleImageMessage(
+  db: D1Database,
+  env: Env,
+  event: any,
+  accessToken: string
+) {
+  const lineUserId = event.source?.userId;
+  if (!lineUserId || !event.replyToken) return;
+
+  // Find connected user
+  const conn = await db
+    .prepare(
+      `SELECT lc.id as connId, lc.userId, dt.id as twinId
+       FROM line_connections lc
+       LEFT JOIN digital_twins dt ON dt.userId = lc.userId
+       WHERE lc.lineUserId=? AND lc.status='active' AND lc.userId IS NOT NULL`
+    )
+    .bind(lineUserId)
+    .first<any>();
+
+  if (!conn || !conn.twinId) {
+    await replyToLine(
+      event.replyToken,
+      [{ type: "text", text: "画像を処理するにはLINE連携を完了してください。" }],
+      accessToken
+    );
+    return;
+  }
+
+  // Fetch image content from LINE
+  const messageId = event.message?.id;
+  if (!messageId) return;
+
+  const imageContent = await fetchLineMessageContent(messageId, accessToken);
+  if (!imageContent) {
+    await replyToLine(
+      event.replyToken,
+      [{ type: "text", text: "画像の取得に失敗しました。もう一度お試しください。" }],
+      accessToken
+    );
+    return;
+  }
+
+  // OCR via Vision API
+  const extractedText = await ocrImageViaVision(
+    imageContent.data,
+    imageContent.contentType,
+    db,
+    conn.userId,
+    env
+  );
+
+  if (!extractedText) {
+    await replyToLine(
+      event.replyToken,
+      [{ type: "text", text: "画像からテキストを読み取れませんでした。別の画像をお試しください。" }],
+      accessToken
+    );
+    return;
+  }
+
+  // Save to knowledge base
+  let savedToKB = false;
+  try {
+    await db
+      .prepare(
+        `INSERT INTO knowledge_base (twinId, sourceType, sourceId, title, content, summary) VALUES (?,?,?,?,?,?)`
+      )
+      .bind(
+        conn.twinId,
+        "line_image",
+        `line_img_${messageId}`,
+        "LINE画像読み取り",
+        extractedText,
+        extractedText.substring(0, 200)
+      )
+      .run();
+    savedToKB = true;
+  } catch {
+    /* KB save failure is non-critical */
+  }
+
+  // Reply with OCR result as Flex Message
+  const flexMsg = buildImageOCRResultFlex(extractedText, savedToKB);
+  await replyToLine(event.replyToken, [flexMsg], accessToken);
+
+  // Update stats
+  await db
+    .prepare(
+      `UPDATE line_connections SET totalMessages=totalMessages+1, lastMessageAt=datetime('now'), updatedAt=datetime('now') WHERE id=?`
+    )
+    .bind(conn.connId)
+    .run();
 }
 
 /** Handle 1:1 text message: generate twin response via Clawdbot/LLM */
@@ -427,11 +616,26 @@ async function handleMessageEvent(
   event: any,
   accessToken: string
 ) {
-  if (
-    event.message?.type !== "text" ||
-    !event.replyToken
-  )
+  if (!event.replyToken) return;
+
+  // Handle image messages → Vision OCR → Knowledge base
+  if (event.message?.type === "image") {
+    await handleImageMessage(db, env, event, accessToken);
     return;
+  }
+
+  // Handle sticker messages with acknowledgment
+  if (event.message?.type === "sticker") {
+    await replyToLine(
+      event.replyToken,
+      [{ type: "text", text: "👍" }],
+      accessToken
+    );
+    return;
+  }
+
+  // Only process text messages beyond this point
+  if (event.message?.type !== "text") return;
 
   const lineUserId = event.source?.userId;
   if (!lineUserId) return;
@@ -689,7 +893,14 @@ async function handleMessageEvent(
 
   // Build LINE reply messages
   const lineMessages: any[] = [];
-  if (responseText) lineMessages.push({ type: "text", text: responseText });
+  if (responseText) {
+    const textMsg: any = { type: "text", text: responseText };
+    // Add quick reply actions to every Nth message or first message
+    if (conn.totalMessages === 0 || (conn.totalMessages + 1) % 10 === 0) {
+      textMsg.quickReply = buildQuickReplyItems();
+    }
+    lineMessages.push(textMsg);
+  }
   for (const imgUrl of responseImages.slice(0, 3)) {
     if (/^https:\/\/.+\.(png|jpg|jpeg|gif|webp)/i.test(imgUrl)) {
       lineMessages.push({
@@ -789,6 +1000,27 @@ export const lineRouter = router({
           conn.id
         )
         .run();
+
+      // Send rich guidance message via push
+      const accessToken = ctx.env.LINE_CHANNEL_ACCESS_TOKEN;
+      if (accessToken && conn.lineUserId) {
+        const guidanceFlex = buildWelcomeGuidanceFlex(twin?.name || "分身AI");
+        await pushToLine(conn.lineUserId, [guidanceFlex], accessToken);
+
+        // Sync LINE profile image to R2 if user has no avatar
+        if (conn.linePictureUrl && ctx.env.ASSETS) {
+          try {
+            await syncLineProfileToR2(
+              conn.linePictureUrl,
+              ctx.userId,
+              ctx.env.DB,
+              ctx.env.ASSETS
+            );
+          } catch {
+            /* profile sync failure is non-critical */
+          }
+        }
+      }
 
       return { success: true };
     }),

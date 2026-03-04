@@ -1357,9 +1357,9 @@ api.post("/api/line/webhook", async (c) => {
 api.get("/api/line/webhook", (c) => {
   return c.json({
     status: "active",
-    version: "2.0.0",
+    version: "3.0.0",
     supportedEvents: ["follow", "unfollow", "message", "join"],
-    supportedMessageTypes: ["text"],
+    supportedMessageTypes: ["text", "image", "sticker"],
   });
 });
 
