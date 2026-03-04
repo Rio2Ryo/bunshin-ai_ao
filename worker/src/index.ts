@@ -12,7 +12,7 @@ import {
   type Env,
   type Context,
 } from "./trpc";
-import { ensureSchema, toJson, parseJson, getMyTwin, normalizeTwin, addTrustAction } from "./db-helpers";
+import { ensureSchema, toJson, parseJson, getMyTwin, normalizeTwin, addTrustAction, logError } from "./db-helpers";
 import { invokeLLM, getUserLLMConfig } from "./llm";
 import { notifyMatchingComplete, createNotification, sendPaymentFailedEmail, sendReengagementEmail, sendWeeklyDigestEmail, sendWebPush } from "./notifications";
 import { requestLogger } from "./middleware";
@@ -168,6 +168,9 @@ api.use("/api/*", async (c, next) => {
     if (c.res.status >= 500) errorCountSinceStart++;
   } catch (err) {
     errorCountSinceStart++;
+    const env = c.env as Env;
+    const path = new URL(c.req.url).pathname;
+    logError(env.DB, "error", path, err instanceof Error ? err.message : String(err), { stack: err instanceof Error ? err.stack?.slice(0, 500) : undefined });
     throw err;
   }
 });
@@ -979,10 +982,10 @@ api.all("/api/trpc/*", async (c) => {
       }
     }
     if (session) {
-      const row = await db.prepare(`SELECT id, openId, name, email, role, plan FROM users WHERE id=?`).bind(session.userId).first<any>();
+      const row = await db.prepare(`SELECT id, openId, name, email, role, plan, isBanned FROM users WHERE id=?`).bind(session.userId).first<any>();
       if (row) {
         userId = row.id;
-        user = { id: row.id, openId: row.openId, name: row.name, email: row.email, role: row.role };
+        user = { id: row.id, openId: row.openId, name: row.name, email: row.email, role: row.role, isBanned: row.isBanned };
       }
     }
   }
@@ -992,6 +995,13 @@ api.all("/api/trpc/*", async (c) => {
     req: c.req.raw,
     router: appRouter,
     createContext: () => ({ env, userId, user }),
+    onError: ({ error, path }) => {
+      // Only log server-side errors (not client errors like UNAUTHORIZED, NOT_FOUND)
+      const clientCodes = new Set(["UNAUTHORIZED", "NOT_FOUND", "BAD_REQUEST", "FORBIDDEN", "CONFLICT", "PARSE_ERROR", "PRECONDITION_FAILED", "PAYLOAD_TOO_LARGE", "METHOD_NOT_SUPPORTED", "UNPROCESSABLE_CONTENT", "TOO_MANY_REQUESTS"]);
+      if (!clientCodes.has(error.code)) {
+        logError(env.DB, "error", path ?? null, error.message, { code: error.code, cause: String(error.cause ?? "") }, userId);
+      }
+    },
   });
 });
 

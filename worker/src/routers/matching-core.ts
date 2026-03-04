@@ -752,6 +752,11 @@ JSONのみ出力し、他の説明は不要です。`;
       await ensureSchema(ctx.env.DB);
       const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND" });
+      // Ownership check: user must be initiator or twin owner
+      const twin1Owner = await ctx.env.DB.prepare(`SELECT userId FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+      const twin2Owner = await ctx.env.DB.prepare(`SELECT userId FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+      const isParticipant = ctx.userId === session.initiatorUserId || ctx.userId === twin1Owner?.userId || ctx.userId === twin2Owner?.userId;
+      if (!isParticipant) throw new TRPCError({ code: "FORBIDDEN", message: "このレポートにアクセスする権限がありません" });
       const twin1 = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
       const twin2 = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
       const dialogues = await ctx.env.DB.prepare(`SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionId).all<any>();

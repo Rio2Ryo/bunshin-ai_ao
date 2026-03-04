@@ -1120,6 +1120,28 @@ describe("Admin AI Provider", () => {
   });
 });
 
+describe("Export Report Authorization", () => {
+  it("matching.exportReport returns NOT_FOUND for non-existent session", async () => {
+    const body = await trpcQuery("matching.exportReport", { sessionId: 999999 });
+    expect(body.error).toBeTruthy();
+    expect(body.error.json.data.code).toBe("NOT_FOUND");
+  });
+
+  it("matching.exportData returns NOT_FOUND for non-existent session", async () => {
+    const body = await trpcQuery("matching.exportData", { sessionId: 999999 });
+    expect(body.error).toBeTruthy();
+    expect(body.error.json.data.code).toBe("NOT_FOUND");
+  });
+});
+
+describe("Error Logs", () => {
+  it("admin.getErrorStats returns array (non-admin gets error)", async () => {
+    const body = await trpcQuery("admin.getErrorStats");
+    // Non-admin user gets FORBIDDEN
+    expect(body.error).toBeTruthy();
+  });
+});
+
 describe("Twin Reset (end of test)", () => {
   it("myTwin.reset deletes the twin", async () => {
     const data = unwrap(await trpcMutate("myTwin.reset"));

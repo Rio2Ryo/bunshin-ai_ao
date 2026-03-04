@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure } from "../trpc";
 import { ensureSchema, parseJson, toJson, getMyTwin } from "../db-helpers";
+import { createNotification } from "../notifications";
 
 export const adminRouter = router({
     // Dashboard overview
@@ -70,6 +71,50 @@ export const adminRouter = router({
             await ctx.env.DB.prepare(`UPDATE digital_twins SET isPublic=0 WHERE id=?`).bind(report.targetId).run();
           } else if (report.targetType === "persona_template") {
             await ctx.env.DB.prepare(`UPDATE persona_templates SET isPublished=0, isApproved=0 WHERE id=?`).bind(report.targetId).run();
+          }
+        }
+
+        // Warn user: send in-app notification
+        if (input.action === "warn_user") {
+          let targetUserId: number | null = null;
+          if (report.targetType === "user_profile") {
+            targetUserId = report.targetId;
+          } else if (report.targetType === "twin") {
+            const twin = await ctx.env.DB.prepare(`SELECT userId FROM digital_twins WHERE id=?`).bind(report.targetId).first<any>();
+            targetUserId = twin?.userId ?? null;
+          } else if (report.targetType === "persona_template") {
+            const tmpl = await ctx.env.DB.prepare(`SELECT creatorUserId FROM persona_templates WHERE id=?`).bind(report.targetId).first<any>();
+            targetUserId = tmpl?.creatorUserId ?? null;
+          } else if (report.targetType === "chat_message") {
+            const msg = await ctx.env.DB.prepare(`SELECT cm.sessionId, cs.userId FROM chat_messages cm JOIN chat_sessions cs ON cs.id=cm.sessionId WHERE cm.id=?`).bind(report.targetId).first<any>();
+            targetUserId = msg?.userId ?? null;
+          }
+          if (targetUserId) {
+            await createNotification(ctx.env.DB, targetUserId, "admin_warning", "管理者からの警告", input.reason || "コンテンツポリシーに違反する可能性があります。繰り返しの違反はアカウント停止につながります。", { reportId: input.reportId });
+          }
+        }
+
+        // Ban user: set isBanned flag + revoke all sessions
+        if (input.action === "ban_user") {
+          let targetUserId: number | null = null;
+          if (report.targetType === "user_profile") {
+            targetUserId = report.targetId;
+          } else if (report.targetType === "twin") {
+            const twin = await ctx.env.DB.prepare(`SELECT userId FROM digital_twins WHERE id=?`).bind(report.targetId).first<any>();
+            targetUserId = twin?.userId ?? null;
+          } else if (report.targetType === "persona_template") {
+            const tmpl = await ctx.env.DB.prepare(`SELECT creatorUserId FROM persona_templates WHERE id=?`).bind(report.targetId).first<any>();
+            targetUserId = tmpl?.creatorUserId ?? null;
+          } else if (report.targetType === "chat_message") {
+            const msg = await ctx.env.DB.prepare(`SELECT cm.sessionId, cs.userId FROM chat_messages cm JOIN chat_sessions cs ON cs.id=cm.sessionId WHERE cm.id=?`).bind(report.targetId).first<any>();
+            targetUserId = msg?.userId ?? null;
+          }
+          if (targetUserId) {
+            await ctx.env.DB.prepare(`UPDATE users SET isBanned=1, bannedAt=datetime('now'), bannedReason=? WHERE id=?`).bind(input.reason || "コンテンツポリシー違反", targetUserId).run();
+            // Revoke all sessions to force immediate logout
+            try { await ctx.env.DB.prepare(`UPDATE sessions SET revokedAt=datetime('now') WHERE userId=? AND revokedAt IS NULL`).bind(targetUserId).run(); } catch {}
+            // Send notification before ban takes effect
+            await createNotification(ctx.env.DB, targetUserId, "account_banned", "アカウント停止", input.reason || "コンテンツポリシーに違反したため、アカウントが停止されました。", { reportId: input.reportId });
           }
         }
 

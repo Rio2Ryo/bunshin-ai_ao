@@ -34,7 +34,7 @@ export type Env = {
 export type Context = {
   env: Env;
   userId: number;
-  user: { id: number; openId: string; name: string | null; email: string | null; role: string } | null;
+  user: { id: number; openId: string; name: string | null; email: string | null; role: string; isBanned?: number } | null;
 };
 
 // ============ Auth Helpers ============
@@ -114,6 +114,9 @@ export const publicProcedure = t.procedure;
 export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
   if (!ctx.user) {
     throw new TRPCError({ code: "UNAUTHORIZED", message: "ログインが必要です" });
+  }
+  if (ctx.user.isBanned) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "アカウントが停止されています。サポートにお問い合わせください。" });
   }
   return next({ ctx: { ...ctx, user: ctx.user, userId: ctx.user.id } });
 });

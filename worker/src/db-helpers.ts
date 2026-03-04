@@ -2271,6 +2271,9 @@ CREATE TABLE IF NOT EXISTS llm_usage (
 );
 CREATE INDEX IF NOT EXISTS idx_llm_usage_userId ON llm_usage(userId);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_createdAt ON llm_usage(createdAt);
+ALTER TABLE users ADD COLUMN isBanned INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN bannedAt TEXT;
+ALTER TABLE users ADD COLUMN bannedReason TEXT;
 `;
 
 let schemaReady = false;
@@ -2543,4 +2546,20 @@ export async function logAudit(
       `INSERT INTO audit_logs (action, actorId, targetType, targetId, metadata, ipAddress, createdAt) VALUES (?,?,?,?,?,?,datetime('now'))`
     ).bind(action, actorId, targetType ?? null, targetId ?? null, metadata ? JSON.stringify(metadata) : null, ipAddress ?? null).run();
   } catch { /* audit logging is best-effort */ }
+}
+
+/** Best-effort error logging — never throws */
+export async function logError(
+  db: D1Database,
+  level: string,
+  path: string | null,
+  message: string,
+  context?: Record<string, unknown>,
+  userId?: number,
+): Promise<void> {
+  try {
+    await db.prepare(
+      `INSERT INTO error_logs (level, path, message, context, userId, createdAt) VALUES (?,?,?,?,?,datetime('now'))`
+    ).bind(level, path ?? null, message, context ? JSON.stringify(context) : null, userId ?? null).run();
+  } catch { /* best-effort — never block request processing */ }
 }
