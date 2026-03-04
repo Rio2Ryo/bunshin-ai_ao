@@ -22,6 +22,7 @@ import {
   ArrowUpRight, ArrowDownRight, Minus, Check, X,
   CalendarClock, Trash2, Bell, BarChart3, Globe, Target, Mail,
 } from "lucide-react";
+import MatchingQuickStart from "@/components/MatchingQuickStart";
 
 // ---------------------------------------------------------------------------
 // Score components
@@ -429,6 +430,9 @@ export default function Matching() {
           </div>
         </div>
 
+
+        {/* Quick Start Wizard */}
+        <MatchingQuickStart />
         {/* Warning banners */}
         {!myTwin && (
           <Card className="border-yellow-500/50 bg-yellow-500/10">

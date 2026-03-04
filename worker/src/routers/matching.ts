@@ -8693,4 +8693,83 @@ ${(dialogues.results || []).map((d: any) => `${d.speaker}: ${(d.content || '').s
       return { claimed: true, pointsAwarded: points };
     }),
 
+
+  quickStart: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+
+    // 1. Check if user qualifies for quick start (0-3 completed matchings)
+    const countResult = await ctx.env.DB.prepare(
+      `SELECT COUNT(*) as cnt FROM matching_sessions WHERE initiatorUserId=? AND status='completed'`
+    ).bind(ctx.userId).first<any>();
+    const completedCount = countResult?.cnt || 0;
+    if (completedCount > 3) {
+      return { eligible: false, completedCount, friends: [], suggestedThemes: [] };
+    }
+
+    // 2. Get friends with twins
+    const friendRows = await ctx.env.DB.prepare(
+      `SELECT u.id as friendId, u.name as friendName, u.isNpc as isNpc,
+        dt.id as twinId, dt.name as twinName, dt.description as twinDesc, dt.tags as twinTags,
+        up.avatarUrl as avatarUrl, up.company as company, up.position as position
+        FROM friendships f
+        JOIN users u ON u.id = CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END
+        LEFT JOIN digital_twins dt ON dt.userId = u.id
+        LEFT JOIN user_profiles up ON up.userId = u.id
+        WHERE (f.userId=? OR f.friendId=?) AND f.status='accepted' AND dt.id IS NOT NULL
+        ORDER BY u.isNpc DESC, f.createdAt DESC
+        LIMIT 10`
+    ).bind(ctx.userId, ctx.userId, ctx.userId).all();
+    const friends = (friendRows.results || []).map((r: any) => ({
+      friendId: r.friendId,
+      friendName: r.friendName,
+      isNpc: !!r.isNpc,
+      twinId: r.twinId,
+      twinName: r.twinName,
+      twinDesc: (r.twinDesc || "").substring(0, 80),
+      twinTags: (r.twinTags || "").split(",").filter(Boolean).slice(0, 3),
+      avatarUrl: r.avatarUrl || "",
+      company: r.company || "",
+      position: r.position || "",
+    }));
+
+    // 3. Suggest themes based on user profile + twin data
+    const myTwin = await getMyTwin(ctx.env.DB, ctx.userId);
+    const profile = await ctx.env.DB.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+    const industry = profile?.industry || "";
+    const skills = (myTwin?.tags || "").split(",").filter(Boolean);
+
+    const baseThemes = [
+      "AI活用による業務効率化の可能性について",
+      "新規事業のアイデアブレインストーミング",
+      "お互いの強みを活かしたコラボレーション提案",
+      "業界トレンドと今後のビジネス機会について",
+      "リーダーシップと組織マネジメントの課題共有",
+    ];
+    const industryThemes: Record<string, string[]> = {
+      "IT": ["最新テクノロジートレンドと事業への応用", "DX推進の課題と成功事例"],
+      "金融": ["フィンテック活用の未来", "リスク管理とイノベーションの両立"],
+      "製造": ["製造業DXの最前線", "サプライチェーン最適化戦略"],
+      "医療": ["ヘルステック最新動向", "医療AIの可能性と課題"],
+      "教育": ["EdTech活用の最前線", "次世代の学習体験デザイン"],
+      "不動産": ["不動産テック活用戦略", "都市開発と持続可能性"],
+    };
+    const suggestedThemes = [...baseThemes];
+    if (industry && industryThemes[industry]) {
+      suggestedThemes.unshift(...industryThemes[industry]);
+    }
+    if (skills.length > 0) {
+      suggestedThemes.unshift(`${skills[0]}分野での協業可能性について`);
+    }
+    // Deduplicate and limit to 8
+    const uniqueThemes = Array.from(new Set(suggestedThemes)).slice(0, 8);
+
+    return {
+      eligible: true,
+      completedCount,
+      friends,
+      suggestedThemes: uniqueThemes,
+      defaultTurns: completedCount === 0 ? 3 : 5,
+    };
+  }),
+
 });
