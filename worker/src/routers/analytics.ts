@@ -180,6 +180,38 @@ export const analyticsRouter = router({
       };
     });
   }),
+
+  getLLMUsage: protectedProcedure
+    .input(z.object({ days: z.number().min(1).max(90).optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const days = input?.days ?? 30;
+      const rows = await ctx.env.DB.prepare(
+        `SELECT provider, model, purpose,
+                SUM(promptTokens) as totalPromptTokens,
+                SUM(completionTokens) as totalCompletionTokens,
+                COUNT(*) as callCount,
+                AVG(durationMs) as avgDurationMs
+         FROM llm_usage WHERE userId=? AND createdAt > datetime('now', '-' || ? || ' days')
+         GROUP BY provider, model, purpose ORDER BY totalPromptTokens DESC`
+      ).bind(ctx.userId, days).all();
+
+      const totals = await ctx.env.DB.prepare(
+        `SELECT SUM(promptTokens) as totalPromptTokens,
+                SUM(completionTokens) as totalCompletionTokens,
+                COUNT(*) as totalCalls
+         FROM llm_usage WHERE userId=? AND createdAt > datetime('now', '-' || ? || ' days')`
+      ).bind(ctx.userId, days).first<any>();
+
+      return {
+        breakdown: rows.results || [],
+        totals: {
+          promptTokens: totals?.totalPromptTokens ?? 0,
+          completionTokens: totals?.totalCompletionTokens ?? 0,
+          totalCalls: totals?.totalCalls ?? 0,
+        },
+      };
+    }),
 });
 
 export const trustRouter = router({

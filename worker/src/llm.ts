@@ -31,30 +31,51 @@ const DEFAULT_MODELS: Record<string, string> = {
 
 /**
  * Call an LLM provider with messages.
+ * Optionally tracks usage to D1 if db and userId are provided in options.
  */
 export async function invokeLLM(
   config: LLMConfig,
   messages: Message[],
-  options?: { maxTokens?: number; temperature?: number }
+  options?: { maxTokens?: number; temperature?: number; db?: D1Database; userId?: number; purpose?: string }
 ): Promise<LLMResult> {
   const { provider, apiKey } = config;
   const model = config.model || DEFAULT_MODELS[provider] || "gpt-4o-mini";
   const maxTokens = options?.maxTokens ?? 4096;
   const temperature = options?.temperature ?? 0.7;
 
+  const startMs = Date.now();
+  let result: LLMResult;
+
   switch (provider) {
     case "openai":
     case "grok":
-      return callOpenAICompatible(provider, apiKey, model, messages, maxTokens, temperature);
+      result = await callOpenAICompatible(provider, apiKey, model, messages, maxTokens, temperature);
+      break;
     case "gemini":
-      return callGemini(apiKey, model, messages, maxTokens, temperature);
+      result = await callGemini(apiKey, model, messages, maxTokens, temperature);
+      break;
     case "anthropic":
-      return callAnthropic(apiKey, model, messages, maxTokens, temperature);
+      result = await callAnthropic(apiKey, model, messages, maxTokens, temperature);
+      break;
     case "azure-foundry":
-      return callAzureFoundry(config.baseUrl!, apiKey, model, messages, maxTokens, temperature);
+      result = await callAzureFoundry(config.baseUrl!, apiKey, model, messages, maxTokens, temperature);
+      break;
     default:
       throw new Error(`Unsupported LLM provider: ${provider}`);
   }
+
+  const durationMs = Date.now() - startMs;
+
+  // Record LLM usage if tracking info provided
+  if (options?.db && options?.userId && result.usage) {
+    try {
+      await options.db.prepare(
+        `INSERT INTO llm_usage (userId, provider, model, purpose, promptTokens, completionTokens, durationMs) VALUES (?,?,?,?,?,?,?)`
+      ).bind(options.userId, result.provider, result.model, options.purpose ?? null, result.usage.promptTokens, result.usage.completionTokens, durationMs).run();
+    } catch { /* usage tracking is best-effort */ }
+  }
+
+  return result;
 }
 
 async function callOpenAICompatible(

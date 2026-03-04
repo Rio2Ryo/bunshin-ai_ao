@@ -171,7 +171,7 @@ export const matchingAnalysisRouter = router({
 最高スコア: ${Math.max(...allScores)}%
 
 JSON形式で回答: {"summary": "傾向の要約(50文字)", "topPattern": "最も相性の良いパターン(30文字)", "suggestion": "次のマッチングへの提案(50文字)"}` },
-          ], { maxTokens: 256, temperature: 0.3 });
+          ], { maxTokens: 256, temperature: 0.3, db: ctx.env.DB, userId: ctx.userId, purpose: "matching_analysis" });
           const jsonMatch = aiResult.content.match(/\{[\s\S]*\}/);
           if (jsonMatch) insights = JSON.parse(jsonMatch[0]);
         }
@@ -213,7 +213,7 @@ JSON形式で回答: {"summary": "傾向の要約(50文字)", "topPattern": "最
           content: `あなたはビジネスマッチング対話の解説者です。観戦者向けに、各ターンの注目ポイント、交渉テクニック、ビジネス戦略の見どころを簡潔に解説してください。\nフレンドリーなトーンで、3-4文で解説してください。日本語で回答。`,
         },
         { role: "user", content: `テーマ: ${session.theme}\n\n${dialogueText}\n\n最新ターン(${input.turnNumber})について解説してください。` },
-      ], { maxTokens: 300, temperature: 0.7 });
+      ], { maxTokens: 300, temperature: 0.7, db: ctx.env.DB, userId: ctx.userId, purpose: "matching_analysis" });
 
       return { commentary: result.content, turnNumber: input.turnNumber };
     }),
@@ -349,7 +349,7 @@ JSONのみ出力してください。`;
       const result = await invokeLLM(llmConfig, [
         { role: "system", content: "あなたはビジネスマッチングの予測AI専門家です。過去のデータと人格プロファイルに基づいて正確な予測を行います。" },
         { role: "user", content: prompt },
-      ], { maxTokens: 1024, temperature: 0.4 });
+      ], { maxTokens: 1024, temperature: 0.4, db: ctx.env.DB, userId: ctx.userId, purpose: "matching_analysis" });
 
       const jsonMatch = result.content.match(/\{[\s\S]*\}/);
       if (jsonMatch) prediction = JSON.parse(jsonMatch[0]);
@@ -1509,7 +1509,7 @@ ${JSON.stringify(heatmapData.slice(0, 20))}
 JSON形式で返してください:
 {"clusters":[{"name":"クラスタ名","members":["友達名"],"characteristic":"特徴"}],"weaknesses":[{"dimension":"弱い次元","avgScore":数値,"affectedFriends":["友達名"],"reason":"原因"}],"suggestions":[{"title":"改善提案","description":"詳細","targetDimension":"対象次元","priority":"high|medium|low"}],"summary":"総合分析"}`;
 
-    const analysisResp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+    const analysisResp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }], { db: ctx.env.DB, userId: ctx.userId, purpose: "matching_analysis" });
     let analysis: any = {};
     try { analysis = JSON.parse(analysisResp.content); } catch { analysis = { clusters: [], weaknesses: [], suggestions: [], summary: "分析中" }; }
 
@@ -1698,7 +1698,7 @@ JSON形式で返してください:
   "risks": [{"risk": "リスク", "impact": "影響", "mitigation": "軽減策"}]
 }`;
 
-      const resp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }]);
+      const resp = await invokeLLM(llmConfig, [{ role: "user", content: prompt }], { db: ctx.env.DB, userId: ctx.userId, purpose: "matching_analysis" });
       let parsed: any = {};
       try { parsed = JSON.parse(resp.content); } catch {
         parsed = { summary: "要約生成中にエラーが発生しました", agreements: [], openIssues: [], nextSteps: [], risks: [] };

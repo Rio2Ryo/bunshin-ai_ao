@@ -4,6 +4,20 @@ import { router, protectedProcedure, generateCode } from "../trpc";
 import { ensureSchema } from "../db-helpers";
 import { cachedQuery, invalidateCache } from "../cache";
 
+/** Canonical plan limits — import from "./plan" wherever limits are needed */
+export const PLAN_LIMITS = {
+  free: { requestsPerMin: 60, matchingsPerMonth: 3, maxFriends: 5, chatMessagesPerDay: 50, maxKnowledgeEntries: 50, maxFileUploads: 10 },
+  premium: { requestsPerMin: 120, matchingsPerMonth: 30, maxFriends: 50, chatMessagesPerDay: 500, maxKnowledgeEntries: 500, maxFileUploads: 100 },
+  enterprise: { requestsPerMin: 600, matchingsPerMonth: -1, maxFriends: -1, chatMessagesPerDay: -1, maxKnowledgeEntries: -1, maxFileUploads: -1 },
+} as const;
+
+export type PlanName = keyof typeof PLAN_LIMITS;
+
+/** Get limits for a plan, defaulting to 'free' */
+export function getPlanLimits(plan?: string) {
+  return PLAN_LIMITS[(plan || "free") as PlanName] || PLAN_LIMITS.free;
+}
+
 export const planRouter = router({
   getCurrent: protectedProcedure.query(async ({ ctx }) => {
     await ensureSchema(ctx.env.DB);
@@ -14,11 +28,7 @@ export const planRouter = router({
     await ensureSchema(ctx.env.DB);
     const user = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
     const plan = user?.plan || "free";
-    const limits: Record<string, { requestsPerMin: number; matchingsPerMonth: number; maxFriends: number; chatMessagesPerDay: number }> = {
-      free: { requestsPerMin: 60, matchingsPerMonth: 3, maxFriends: 5, chatMessagesPerDay: 50 },
-      premium: { requestsPerMin: 120, matchingsPerMonth: 30, maxFriends: 50, chatMessagesPerDay: 500 },
-      enterprise: { requestsPerMin: 600, matchingsPerMonth: -1, maxFriends: -1, chatMessagesPerDay: -1 },
-    };
+    const limits = getPlanLimits(plan);
 
     // Query current usage
     const friends = await ctx.env.DB.prepare(
@@ -39,18 +49,14 @@ export const planRouter = router({
       matchingsThisMonth: usageRow?.matchingsThisMonth ?? 0,
     };
 
-    return { plan, limits: limits[plan] || limits.free, usage };
+    return { plan, limits, usage };
   }),
   getInfo: protectedProcedure.query(async ({ ctx }) => {
     await ensureSchema(ctx.env.DB);
     const user = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
     const plan = user?.plan || "free";
-    const PLAN_LIMITS: Record<string, { maxFriends: number; maxMatchingsPerMonth: number }> = {
-      free: { maxFriends: 5, maxMatchingsPerMonth: 3 },
-      premium: { maxFriends: 50, maxMatchingsPerMonth: 30 },
-      enterprise: { maxFriends: -1, maxMatchingsPerMonth: -1 },
-    };
-    return { plan, limits: PLAN_LIMITS[plan] || PLAN_LIMITS.free };
+    const limits = getPlanLimits(plan);
+    return { plan, limits: { maxFriends: limits.maxFriends, maxMatchingsPerMonth: limits.matchingsPerMonth } };
   }),
   getStats: protectedProcedure.query(async ({ ctx }) => {
     await ensureSchema(ctx.env.DB);
@@ -61,12 +67,8 @@ export const planRouter = router({
     const knowledge = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM knowledge_base WHERE twinId IN (SELECT id FROM digital_twins WHERE userId=?)`).bind(ctx.userId).first<any>();
     const files = await ctx.env.DB.prepare(`SELECT COUNT(*) as c FROM uploaded_files WHERE userId=?`).bind(ctx.userId).first<any>();
 
-    const PLAN_LIMITS: Record<string, { maxFriends: number; maxMatchingsPerMonth: number; maxKnowledgeEntries: number; maxFileUploads: number }> = {
-      free: { maxFriends: 5, maxMatchingsPerMonth: 3, maxKnowledgeEntries: 50, maxFileUploads: 10 },
-      premium: { maxFriends: 50, maxMatchingsPerMonth: 30, maxKnowledgeEntries: 500, maxFileUploads: 100 },
-      enterprise: { maxFriends: -1, maxMatchingsPerMonth: -1, maxKnowledgeEntries: -1, maxFileUploads: -1 },
-    };
-    const limits = PLAN_LIMITS[plan] || PLAN_LIMITS.free;
+    const planLimits = getPlanLimits(plan);
+    const limits = { maxFriends: planLimits.maxFriends, maxMatchingsPerMonth: planLimits.matchingsPerMonth, maxKnowledgeEntries: planLimits.maxKnowledgeEntries, maxFileUploads: planLimits.maxFileUploads };
 
     return {
       plan,

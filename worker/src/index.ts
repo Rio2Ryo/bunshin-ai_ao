@@ -37,7 +37,7 @@ import { questsRouter, growthRouter } from "./routers/quests";
 import { cardsRouter } from "./routers/cards";
 import { clawdbotRouter } from "./routers/integrations";
 import { lineRouter, handleLineWebhook } from "./routers/line";
-import { planRouter, stripeRouter } from "./routers/plan";
+import { planRouter, stripeRouter, getPlanLimits } from "./routers/plan";
 import { discoverRouter, userRouter } from "./routers/discover";
 import { aiProviderRouter, adminAiProviderRouter } from "./routers/ai-provider";
 import { analyticsRouter, trustRouter, onboardingRouter } from "./routers/analytics";
@@ -1400,11 +1400,28 @@ async function handleScheduled(env: Env, cronSchedule?: string): Promise<void> {
       const friendTwin = await db.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(schedule.friendId).first<any>();
       if (!myTwin || !friendTwin) continue;
 
+      // Check plan limit before creating auto-matching
+      const userRow = await db.prepare(`SELECT plan FROM users WHERE id=?`).bind(schedule.userId).first<any>();
+      const limits = getPlanLimits(userRow?.plan);
+      if (limits.matchingsPerMonth !== -1) {
+        const usageRow = await db.prepare(`SELECT matchingsThisMonth FROM usage_tracking WHERE userId=?`).bind(schedule.userId).first<any>();
+        if ((usageRow?.matchingsThisMonth ?? 0) >= limits.matchingsPerMonth) {
+          console.log(`[Scheduler] Skipping schedule ${schedule.id}: user ${schedule.userId} reached monthly limit (${limits.matchingsPerMonth})`);
+          continue;
+        }
+      }
+
       // Create matching session
       const sessionRes = await db.prepare(
         `INSERT INTO matching_sessions (initiatorUserId, twin1Id, twin2Id, theme, status, settings) VALUES (?,?,?,?,'running',?)`
       ).bind(schedule.userId, myTwin.id, friendTwin.id, schedule.theme, toJson({ autoScheduled: true, scheduleId: schedule.id })).run();
       const sessionId = Number(sessionRes.meta.last_row_id);
+
+      // Increment matching usage counter for auto-scheduled matchings
+      await db.batch([
+        db.prepare(`INSERT OR IGNORE INTO usage_tracking (userId, matchingsThisMonth) VALUES (?, 0)`).bind(schedule.userId),
+        db.prepare(`UPDATE usage_tracking SET matchingsThisMonth = matchingsThisMonth + 1, updatedAt = datetime('now') WHERE userId = ?`).bind(schedule.userId),
+      ]);
 
       // Get LLM config
       const llmConfig = await getUserLLMConfig(db, schedule.userId, "matching", env);

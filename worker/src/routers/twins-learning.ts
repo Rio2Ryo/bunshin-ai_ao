@@ -40,7 +40,7 @@ export const twinsLearningRouter = router({
 {"openness": 数値, "conscientiousness": 数値, "extraversion": 数値, "agreeableness": 数値, "neuroticism": 数値}`,
     }];
     try {
-      const result = await invokeLLM(llmConfig, messages, { maxTokens: 256 });
+      const result = await invokeLLM(llmConfig, messages, { maxTokens: 256, db: ctx.env.DB, userId: ctx.userId, purpose: "twin_learning" });
       const jsonMatch = result.content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const traits = JSON.parse(jsonMatch[0]);
@@ -77,7 +77,7 @@ JSON形式のみ出力:
 {"riskTolerance": 数値, "decisionSpeed": 数値, "socialConformity": 数値, "emotionalWeight": 数値, "analyticalWeight": 数値}`,
     }];
     try {
-      const result = await invokeLLM(llmConfig, messages, { maxTokens: 256 });
+      const result = await invokeLLM(llmConfig, messages, { maxTokens: 256, db: ctx.env.DB, userId: ctx.userId, purpose: "twin_learning" });
       const jsonMatch = result.content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const thresholds = JSON.parse(jsonMatch[0]);
@@ -146,7 +146,7 @@ JSON形式のみ出力:
 
 以下のJSON形式で評価してください:
 {"virtueScore": 0-100の数値, "mineScore": 0-100の数値, "evaluation": "簡潔な評価コメント"}`,
-        }], { maxTokens: 256 });
+        }], { maxTokens: 256, db: ctx.env.DB, userId: ctx.userId, purpose: "twin_learning" });
 
         const jsonMatch = result.content.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
@@ -233,7 +233,7 @@ JSON形式のみ出力:
 相手の回答: ${resp.userResponse || "不明"}
 
 JSON形式で評価: {"virtueScore": 0-100, "mineScore": 0-100, "comment": "コメント"}`,
-          }], { maxTokens: 256 });
+          }], { maxTokens: 256, db: ctx.env.DB, userId: ctx.userId, purpose: "twin_learning" });
           const jsonMatch = result.content.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
             const eval_ = JSON.parse(jsonMatch[0]);
@@ -304,7 +304,7 @@ JSON形式で評価: {"virtueScore": 0-100, "mineScore": 0-100, "comment": "コ�
   "strengths": ["強み1", "強み2", "強み3"],
   "growthAreas": ["成長領域1", "成長領域2"]
 }`,
-      }], { maxTokens: 1024 });
+      }], { maxTokens: 1024, db: ctx.env.DB, userId: ctx.userId, purpose: "twin_learning" });
 
       const jsonMatch = result.content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
@@ -362,7 +362,7 @@ ${isLastQuestion ? `
       }
 
       try {
-        const result = await invokeLLM(llmConfig, messages, { maxTokens: 512 });
+        const result = await invokeLLM(llmConfig, messages, { maxTokens: 512, db: ctx.env.DB, userId: ctx.userId, purpose: "twin_learning" });
         const content = result.content;
 
         // Check for completion
@@ -429,7 +429,7 @@ ${isLastQuestion ? `
       }
 
       try {
-        const result = await invokeLLM(llmConfig, messages, { maxTokens: 1024 });
+        const result = await invokeLLM(llmConfig, messages, { maxTokens: 1024, db: ctx.env.DB, userId: ctx.userId, purpose: "twin_learning" });
         const content = result.content;
 
         const mbtiMatch = content.match(/---MBTI_RESULT---([\s\S]*?)---END_MBTI_RESULT---/);
@@ -496,7 +496,7 @@ ${isLastQuestion ? `
       }
 
       try {
-        const result = await invokeLLM(llmConfig, messages, { maxTokens: 512 });
+        const result = await invokeLLM(llmConfig, messages, { maxTokens: 512, db: ctx.env.DB, userId: ctx.userId, purpose: "twin_learning" });
         const newIndex = input.userResponse ? currentIndex + 1 : currentIndex;
         return {
           message: result.content,

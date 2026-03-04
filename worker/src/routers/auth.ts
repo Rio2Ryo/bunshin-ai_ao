@@ -128,8 +128,19 @@ Step 5完了時に以下を出力:
         await ensureSchema(ctx.env.DB);
         const user = await ctx.env.DB.prepare(`SELECT id, openId, name, email, passwordHash, loginMethod, role, plan, friendCode, createdAt, updatedAt, lastSignedIn, onboardingCompleted, isNpc, onboardingStep, tutorialCompleted, tosAcceptedAt, tosVersion, emailVerified FROM users WHERE email=?`).bind(input.email).first<any>();
         if (!user || !user.passwordHash) throw new TRPCError({ code: "UNAUTHORIZED", message: "メールアドレスまたはパスワードが正しくありません" });
+
+        // Check for account lockout (5 consecutive failed attempts in last 30 minutes)
+        const recentFails = await ctx.env.DB.prepare(
+          `SELECT COUNT(*) as cnt FROM login_attempts WHERE userId=? AND success=0 AND attemptAt > datetime('now', '-30 minutes')`
+        ).bind(user.id).first<any>();
+        if ((recentFails?.cnt ?? 0) >= 5) {
+          throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "ログイン試行回数が上限に達しました。30分後に再試行してください。" });
+        }
+
         const valid = await verifyPassword(input.password, user.passwordHash);
         if (!valid) {
+          // Record failed attempt
+          await ctx.env.DB.prepare(`INSERT INTO login_attempts (userId, success, ipAddress) VALUES (?, 0, ?)`).bind(user.id, null).run();
           await logAudit(ctx.env.DB, 'auth.login.failed', user.id, 'user', user.id, { email: input.email, reason: 'wrong_password' });
           throw new TRPCError({ code: "UNAUTHORIZED", message: "メールアドレスまたはパスワードが正しくありません" });
         }
@@ -137,6 +148,13 @@ Step 5完了時に以下を出力:
         if (user.emailVerified === 0) {
           throw new TRPCError({ code: "FORBIDDEN", message: "メールアドレスが未認証です。受信トレイを確認してください。" });
         }
+
+        // Record successful login and clear failed attempts
+        await ctx.env.DB.batch([
+          ctx.env.DB.prepare(`INSERT INTO login_attempts (userId, success) VALUES (?, 1)`).bind(user.id),
+          ctx.env.DB.prepare(`DELETE FROM login_attempts WHERE userId=? AND success=0`).bind(user.id),
+        ]);
+
         await ctx.env.DB.prepare(`UPDATE users SET lastSignedIn=datetime('now') WHERE id=?`).bind(user.id).run();
         const { token, sessionId } = await createSessionToken(user.id, ctx.env);
         await ctx.env.DB.prepare(
@@ -420,7 +438,7 @@ Step 5完了時に以下を出力:
           db.prepare(`DELETE FROM content_reports WHERE reporterUserId=?`).bind(userId),
         ]);
 
-        // Batch 3f: Trust, usage, notifications, tokens, sessions
+        // Batch 3f: Trust, usage, notifications, tokens, sessions, login attempts, LLM usage
         await safeBatch([
           db.prepare(`DELETE FROM trust_score_history WHERE userId=?`).bind(userId),
           db.prepare(`DELETE FROM trust_scores WHERE userId=?`).bind(userId),
@@ -429,6 +447,8 @@ Step 5完了時に以下を出力:
           db.prepare(`DELETE FROM password_reset_tokens WHERE userId=?`).bind(userId),
           db.prepare(`DELETE FROM email_verification_tokens WHERE userId=?`).bind(userId),
           db.prepare(`DELETE FROM sessions WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM login_attempts WHERE userId=?`).bind(userId),
+          db.prepare(`DELETE FROM llm_usage WHERE userId=?`).bind(userId),
         ]);
 
         // Batch 3g: Notification preferences, blocks, matching extensions

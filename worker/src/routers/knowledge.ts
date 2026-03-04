@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, publicProcedure, protectedProcedure, type Env, type Context } from "../trpc";
 import { ensureSchema, parseJson, toJson, now, getMyTwin } from "../db-helpers";
+import { getPlanLimits } from "./plan";
 
 export const knowledgeRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
@@ -17,6 +18,17 @@ export const knowledgeRouter = router({
       await ensureSchema(ctx.env.DB);
       const twin = await getMyTwin(ctx.env.DB, ctx.userId);
       if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIを作成してください" });
+
+      // Check plan limit for knowledge entries
+      const userRow = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      const limits = getPlanLimits(userRow?.plan);
+      if (limits.maxKnowledgeEntries !== -1) {
+        const countRow = await ctx.env.DB.prepare(`SELECT COUNT(*) as cnt FROM knowledge_base WHERE twinId=?`).bind(twin.id).first<any>();
+        if ((countRow?.cnt ?? 0) >= limits.maxKnowledgeEntries) {
+          throw new TRPCError({ code: "FORBIDDEN", message: `ナレッジエントリの上限（${limits.maxKnowledgeEntries}件）に達しました。プランをアップグレードしてください。` });
+        }
+      }
+
       const res = await ctx.env.DB.prepare(`INSERT INTO knowledge_base (twinId, sourceType, sourceId, title, content, summary, metadata) VALUES (?,?,?,?,?,?,?)`).bind(twin.id, input.sourceType, input.sourceId ?? null, input.title ?? null, input.content ?? null, input.summary ?? null, toJson(input.metadata)).run();
       return { id: Number(res.meta.last_row_id) };
     }),
@@ -44,6 +56,17 @@ export const filesRouter = router({
     .input(z.object({ filename: z.string(), content: z.string(), mimeType: z.string() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
+
+      // Check plan limit for file uploads
+      const userRow = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
+      const limits = getPlanLimits(userRow?.plan);
+      if (limits.maxFileUploads !== -1) {
+        const countRow = await ctx.env.DB.prepare(`SELECT COUNT(*) as cnt FROM uploaded_files WHERE userId=?`).bind(ctx.userId).first<any>();
+        if ((countRow?.cnt ?? 0) >= limits.maxFileUploads) {
+          throw new TRPCError({ code: "FORBIDDEN", message: `ファイルアップロードの上限（${limits.maxFileUploads}件）に達しました。プランをアップグレードしてください。` });
+        }
+      }
+
       const twin = await getMyTwin(ctx.env.DB, ctx.userId);
       const fileKey = `twins/${ctx.userId}/${Date.now()}-${input.filename}`;
       const url = `/assets/${fileKey}`;

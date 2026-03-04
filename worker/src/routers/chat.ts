@@ -138,7 +138,7 @@ export const chatRouter = router({
 
         try {
           const llmMaxTokens = isOnboarding ? 512 : 2048;
-          const result = await invokeLLM(llmConfig, messages, { maxTokens: llmMaxTokens });
+          const result = await invokeLLM(llmConfig, messages, { maxTokens: llmMaxTokens, db: ctx.env.DB, userId: ctx.userId, purpose: "chat" });
           response = result.content;
         } catch (error: any) {
           response = "";

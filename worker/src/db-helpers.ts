@@ -2251,6 +2251,26 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actorId ON audit_logs(actorId);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
+CREATE TABLE IF NOT EXISTS login_attempts (
+  userId INTEGER NOT NULL,
+  attemptAt TEXT NOT NULL DEFAULT (datetime('now')),
+  success INTEGER NOT NULL DEFAULT 0,
+  ipAddress TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_login_attempts_userId ON login_attempts(userId);
+CREATE TABLE IF NOT EXISTS llm_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  purpose TEXT,
+  promptTokens INTEGER NOT NULL DEFAULT 0,
+  completionTokens INTEGER NOT NULL DEFAULT 0,
+  durationMs INTEGER,
+  createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_userId ON llm_usage(userId);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_createdAt ON llm_usage(createdAt);
 `;
 
 let schemaReady = false;

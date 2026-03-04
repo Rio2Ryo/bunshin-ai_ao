@@ -5,6 +5,7 @@ import { ensureSchema, parseJson, toJson, now, getMyTwin, normalizeTwin, addTrus
 import { invokeLLM, getUserLLMConfig } from "../llm";
 import { createNotification, notifyMatchingComplete, notifyMatchingInvite, sendMatchingReportEmail } from "../notifications";
 import { updateMatchingStreakForUser, searchWithTavily, generateSearchQueries, formatSearchContext, type TavilyResponse } from "./matching-shared";
+import { getPlanLimits } from "./plan";
 
 export const matchingCoreRouter = router({
   sessions: protectedProcedure.query(async ({ ctx }) => {
@@ -192,8 +193,8 @@ export const matchingCoreRouter = router({
       // Check plan limits
       const userRow = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
       const userPlan = userRow?.plan || "free";
-      const monthlyLimits: Record<string, number> = { free: 3, premium: 30, enterprise: -1 };
-      const maxMatchings = monthlyLimits[userPlan] ?? 3;
+      const limits = getPlanLimits(userPlan);
+      const maxMatchings = limits.matchingsPerMonth;
       if (maxMatchings !== -1) {
         const usageRow = await ctx.env.DB.prepare(`SELECT matchingsThisMonth FROM usage_tracking WHERE userId=?`).bind(ctx.userId).first<any>();
         if ((usageRow?.matchingsThisMonth ?? 0) >= maxMatchings) {
@@ -345,7 +346,7 @@ export const matchingCoreRouter = router({
         let provider = "";
         let model = "";
         try {
-          const result = await invokeLLM(llmConfig, messages, { maxTokens: 512, temperature: 0.8 });
+          const result = await invokeLLM(llmConfig, messages, { maxTokens: 512, temperature: 0.8, db: ctx.env.DB, userId: ctx.userId, purpose: "matching" });
           content = result.content.replace(new RegExp(`^${speaker.name}:\\s*`, "i"), "").trim();
           provider = result.provider;
           model = result.model;
@@ -459,7 +460,7 @@ JSONのみ出力し、他の説明は不要です。`;
         const analysisResult = await invokeLLM(llmConfig, [
           { role: "system", content: "あなたはビジネスマッチングの専門アナリストです。" },
           { role: "user", content: analysisPrompt },
-        ], { maxTokens: 4096, temperature: 0.5 });
+        ], { maxTokens: 4096, temperature: 0.5, db: ctx.env.DB, userId: ctx.userId, purpose: "matching" });
 
         // Parse JSON from response
         let analysis: any;
@@ -588,8 +589,8 @@ JSONのみ出力し、他の説明は不要です。`;
       // Check plan limits (same as matching.create)
       const userRow = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
       const userPlan = userRow?.plan || "free";
-      const monthlyLimits: Record<string, number> = { free: 3, premium: 30, enterprise: -1 };
-      const maxMatchings = monthlyLimits[userPlan] ?? 3;
+      const limits = getPlanLimits(userPlan);
+      const maxMatchings = limits.matchingsPerMonth;
       if (maxMatchings !== -1) {
         const usageRow = await ctx.env.DB.prepare(`SELECT matchingsThisMonth FROM usage_tracking WHERE userId=?`).bind(ctx.userId).first<any>();
         if ((usageRow?.matchingsThisMonth ?? 0) >= maxMatchings) {
@@ -673,7 +674,7 @@ JSONのみ出力し、他の説明は不要です。`;
               { role: "system" as const, content: `あなたは「${speakerName}」です。性格: ${speaker.personality || "プロフェッショナル"}。テーマ「${session.theme}」について対話してください。${searchSuffix}` },
               ...(context ? [{ role: "user" as const, content: `これまでの対話:\n${context}\n\n${speakerName}として次の発言をしてください。` }] : [{ role: "user" as const, content: `テーマ「${session.theme}」について最初の発言をしてください。` }]),
             ];
-            const result = await invokeLLM(llmConfig, msgs, { maxTokens: 512, temperature: 0.8 });
+            const result = await invokeLLM(llmConfig, msgs, { maxTokens: 512, temperature: 0.8, db: ctx.env.DB, userId: ctx.userId, purpose: "matching" });
             if (result.content) content = result.content;
           }
         } catch { /* use fallback */ }
@@ -723,7 +724,7 @@ JSONのみ出力し、他の説明は不要です。`;
 
       try {
         if (llmConfig) {
-          const result = await invokeLLM(llmConfig, [{ role: "system", content: "あなたはビジネスマッチング分析の専門家です。JSON形式で回答してください。" }, { role: "user", content: analysisPrompt }], { maxTokens: 2048 });
+          const result = await invokeLLM(llmConfig, [{ role: "system", content: "あなたはビジネスマッチング分析の専門家です。JSON形式で回答してください。" }, { role: "user", content: analysisPrompt }], { maxTokens: 2048, db: ctx.env.DB, userId: ctx.userId, purpose: "matching" });
           if (result.content) {
             const jsonMatch = result.content.match(/\{[\s\S]*\}/);
             if (jsonMatch) analysis = JSON.parse(jsonMatch[0]);
@@ -1120,8 +1121,8 @@ ${dialogueHtml || "<p>対話がまだ行われていません</p>"}
       // Plan limits
       const userRow = await ctx.env.DB.prepare(`SELECT plan FROM users WHERE id=?`).bind(ctx.userId).first<any>();
       const userPlan = userRow?.plan || "free";
-      const monthlyLimits: Record<string, number> = { free: 3, premium: 30, enterprise: -1 };
-      const maxMatchings = monthlyLimits[userPlan] ?? 3;
+      const limits = getPlanLimits(userPlan);
+      const maxMatchings = limits.matchingsPerMonth;
       if (maxMatchings !== -1) {
         const usageRow = await ctx.env.DB.prepare(`SELECT matchingsThisMonth FROM usage_tracking WHERE userId=?`).bind(ctx.userId).first<any>();
         if ((usageRow?.matchingsThisMonth ?? 0) >= maxMatchings) {
@@ -1217,7 +1218,7 @@ ${dialogueHtml || "<p>対話がまだ行われていません</p>"}
 
         try {
           if (llmConfig) {
-            const result = await invokeLLM(llmConfig, messages, { maxTokens: 400, temperature: 0.8 });
+            const result = await invokeLLM(llmConfig, messages, { maxTokens: 400, temperature: 0.8, db: ctx.env.DB, userId: ctx.userId, purpose: "matching" });
             if (result.content && result.content.length >= 10) {
               content = result.content.replace(new RegExp(`^${speaker.twinName}:\\s*`, "i"), "").trim();
               provider = result.provider;
@@ -1278,7 +1279,7 @@ JSONのみ出力してください。`;
           const analysisResult = await invokeLLM(llmConfig, [
             { role: "system", content: "あなたはグループビジネスマッチングの専門アナリストです。" },
             { role: "user", content: analysisPrompt },
-          ], { maxTokens: 4096, temperature: 0.5 });
+          ], { maxTokens: 4096, temperature: 0.5, db: ctx.env.DB, userId: ctx.userId, purpose: "matching" });
 
           let analysis: any;
           try {
