@@ -266,6 +266,42 @@ Step 5完了時に以下を出力:
           } catch { /* ignore Stripe errors during deletion */ }
         }
 
+        // Clean up R2 files (avatars, uploads, card images)
+        const r2 = ctx.env.ASSETS;
+        if (r2) {
+          try {
+            // Delete avatar
+            const profile = await ctx.env.DB.prepare(`SELECT avatarUrl FROM user_profiles WHERE userId=?`).bind(userId).first<any>();
+            if (profile?.avatarUrl?.startsWith("/assets/")) {
+              const key = profile.avatarUrl.replace(/^\/assets\//, "");
+              try { await r2.delete(key); } catch {}
+            }
+          } catch {}
+
+          try {
+            // Delete uploaded files
+            const files = await ctx.env.DB.prepare(`SELECT r2Key FROM uploaded_files WHERE userId=?`).bind(userId).all<any>();
+            for (const f of files.results ?? []) {
+              if (f.r2Key) {
+                try { await r2.delete(f.r2Key); } catch {}
+              }
+            }
+          } catch {}
+
+          try {
+            // Delete card images
+            const cards = await ctx.env.DB.prepare(`SELECT frontImageUrl, backImageUrl FROM cards WHERE userId=?`).bind(userId).all<any>();
+            for (const card of cards.results ?? []) {
+              for (const url of [card.frontImageUrl, card.backImageUrl]) {
+                if (url?.startsWith("/assets/")) {
+                  const key = url.replace(/^\/assets\//, "");
+                  try { await r2.delete(key); } catch {}
+                }
+              }
+            }
+          } catch {}
+        }
+
         // Delete all user data using parameterized queries
         // Twin-related tables (only if twin exists)
         if (twinId) {

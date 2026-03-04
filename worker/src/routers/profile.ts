@@ -98,13 +98,19 @@ export const profileRouter = router({
       const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
       const key = `avatars/${ctx.userId}_${Date.now()}.${ext}`;
 
+      // Delete old avatar from R2 if it exists
+      const existingProfile = await ctx.env.DB.prepare(`SELECT id, avatarUrl FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+      if (existingProfile?.avatarUrl && existingProfile.avatarUrl.startsWith("/assets/avatars/")) {
+        const oldKey = existingProfile.avatarUrl.replace(/^\/assets\//, "");
+        try { await r2.delete(oldKey); } catch { /* old file may not exist */ }
+      }
+
       await r2.put(key, binaryData, { httpMetadata: { contentType } });
 
       const avatarUrl = `/assets/${key}`;
 
       // Upsert profile with avatarUrl
-      const existing = await ctx.env.DB.prepare(`SELECT id FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
-      if (existing) {
+      if (existingProfile) {
         await ctx.env.DB.prepare(`UPDATE user_profiles SET avatarUrl=?, updatedAt=datetime('now') WHERE userId=?`).bind(avatarUrl, ctx.userId).run();
       } else {
         await ctx.env.DB.prepare(`INSERT INTO user_profiles (userId, avatarUrl) VALUES (?,?)`).bind(ctx.userId, avatarUrl).run();

@@ -209,6 +209,52 @@ export const adminRouter = router({
         dailyActive: dailyActive.results ?? [],
       };
     }),
+
+    // R2 storage statistics
+    getStorageStats: protectedProcedure.use(async ({ ctx, next }) => {
+      if (ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "管理者権限が必要です" });
+      return next();
+    }).query(async ({ ctx }) => {
+      await ensureSchema(ctx.env.DB);
+      const r2 = ctx.env.ASSETS;
+
+      // Count files by prefix from DB
+      const avatarCount = (await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as c FROM user_profiles WHERE avatarUrl IS NOT NULL AND avatarUrl != ''`
+      ).first<any>())?.c ?? 0;
+
+      const uploadCount = (await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as c FROM uploaded_files`
+      ).first<any>())?.c ?? 0;
+
+      const cardImageCount = (await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as c FROM cards WHERE frontImageUrl IS NOT NULL OR backImageUrl IS NOT NULL`
+      ).first<any>())?.c ?? 0;
+
+      // R2 bucket listing (sample up to 100 objects per prefix for size estimation)
+      let r2Stats = { totalObjects: 0, sampleSizeBytes: 0 };
+      if (r2) {
+        try {
+          const prefixes = ["avatars/", "uploads/", "cards/"];
+          for (const prefix of prefixes) {
+            const listed = await r2.list({ prefix, limit: 100 });
+            r2Stats.totalObjects += listed.objects.length;
+            for (const obj of listed.objects) {
+              r2Stats.sampleSizeBytes += obj.size;
+            }
+          }
+        } catch {}
+      }
+
+      return {
+        dbCounts: { avatars: avatarCount, uploads: uploadCount, cardImages: cardImageCount },
+        r2: {
+          totalSampledObjects: r2Stats.totalObjects,
+          estimatedSizeBytes: r2Stats.sampleSizeBytes,
+          estimatedSizeMB: Math.round(r2Stats.sampleSizeBytes / (1024 * 1024) * 100) / 100,
+        },
+      };
+    }),
 });
 
 export const reportRouter = router({

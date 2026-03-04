@@ -1597,6 +1597,48 @@ async function handleScheduled(env: Env, cronSchedule?: string): Promise<void> {
       } catch { /* individual threshold check failure */ }
     }
   } catch { /* ignore */ }
+
+  // Monthly R2 orphan cleanup (runs on 1st of month)
+  const isMonthly = cronSchedule === "0 0 1 * *" || cronSchedule === "0 3 1 * *";
+  if (isMonthly || !cronSchedule) {
+    const r2 = env.ASSETS;
+    if (r2) {
+      try {
+        // Clean orphaned avatars: R2 objects in avatars/ not referenced by any user_profiles.avatarUrl
+        const avatarList = await r2.list({ prefix: "avatars/", limit: 500 });
+        for (const obj of avatarList.objects) {
+          const url = `/assets/${obj.key}`;
+          const ref = await db.prepare(`SELECT id FROM user_profiles WHERE avatarUrl=?`).bind(url).first<any>();
+          if (!ref) {
+            try { await r2.delete(obj.key); } catch {}
+          }
+        }
+      } catch {}
+
+      try {
+        // Clean orphaned uploads: R2 objects in uploads/ not referenced by uploaded_files.r2Key
+        const uploadList = await r2.list({ prefix: "uploads/", limit: 500 });
+        for (const obj of uploadList.objects) {
+          const ref = await db.prepare(`SELECT id FROM uploaded_files WHERE r2Key=?`).bind(obj.key).first<any>();
+          if (!ref) {
+            try { await r2.delete(obj.key); } catch {}
+          }
+        }
+      } catch {}
+
+      try {
+        // Clean orphaned card images: R2 objects in cards/ not referenced by cards table
+        const cardList = await r2.list({ prefix: "cards/", limit: 500 });
+        for (const obj of cardList.objects) {
+          const url = `/assets/${obj.key}`;
+          const ref = await db.prepare(`SELECT id FROM cards WHERE frontImageUrl=? OR backImageUrl=?`).bind(url, url).first<any>();
+          if (!ref) {
+            try { await r2.delete(obj.key); } catch {}
+          }
+        }
+      } catch {}
+    }
+  }
 }
 
 export default {
