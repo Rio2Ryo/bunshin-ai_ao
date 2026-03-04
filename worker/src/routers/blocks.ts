@@ -48,7 +48,7 @@ export const blocksRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
     await ensureSchema(ctx.env.DB);
     const rows = await ctx.env.DB.prepare(
-      `SELECT ub.blockedUserId, ub.reason, ub.createdAt, u.name, u.email
+      `SELECT ub.blockedUserId, ub.reason, ub.createdAt, u.name
        FROM user_blocks ub JOIN users u ON u.id = ub.blockedUserId
        WHERE ub.userId=? ORDER BY ub.createdAt DESC`
     ).bind(ctx.userId).all<any>();

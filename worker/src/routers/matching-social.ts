@@ -468,7 +468,7 @@ JSON形式で出力: {"personalityUpdate": "新しい性格設定テキスト", 
       const participants = await ctx.env.DB
         .prepare(`
           SELECT cp.userId, cp.score, cp.sessionId, cp.joinedAt, cp.submittedAt, cp.pointsAwarded,
-                 u.email, up.displayName, up.avatarUrl
+                 u.name, up.displayName, up.avatarUrl
           FROM challenge_participants cp
           LEFT JOIN users u ON u.id = cp.userId
           LEFT JOIN user_profiles up ON up.userId = cp.userId
@@ -481,7 +481,7 @@ JSON形式で出力: {"personalityUpdate": "新しい性格設定テキスト", 
       const leaderboard = (participants.results || []).map((p: any, idx: number) => ({
         rank: p.score != null ? idx + 1 : null,
         userId: p.userId,
-        name: p.displayName || p.email || "Unknown",
+        name: p.displayName || p.name || "Unknown",
         avatarUrl: p.avatarUrl || null,
         score: p.score,
         sessionId: p.sessionId,

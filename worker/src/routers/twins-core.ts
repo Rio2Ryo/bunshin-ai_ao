@@ -136,12 +136,12 @@ export const twinsCoreRouter = router({
     .query(async ({ ctx }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB
-        .prepare(`SELECT * FROM digital_twins WHERE isPublic=1 AND userId != ? LIMIT 20`)
+        .prepare(`SELECT id, userId, name, description, personality, isPublic, tags, bigFiveTraits, mbtiType, avatarUrl, publicBio, createdAt, updatedAt FROM digital_twins WHERE isPublic=1 AND userId != ? LIMIT 20`)
         .bind(ctx.userId)
         .all<any>();
       const results = [];
       for (const row of rows.results ?? []) {
-        const user = await ctx.env.DB.prepare(`SELECT id, openId, name, email, loginMethod, role, plan, friendCode, createdAt, updatedAt, lastSignedIn, onboardingCompleted, isNpc, onboardingStep, tutorialCompleted, tosAcceptedAt, tosVersion, emailVerified FROM users WHERE id=?`).bind(row.userId).first<any>();
+        const user = await ctx.env.DB.prepare(`SELECT id, name, friendCode FROM users WHERE id=?`).bind(row.userId).first<any>();
         results.push({ twin: normalizeTwin(row), user });
       }
       return results;
@@ -151,11 +151,11 @@ export const twinsCoreRouter = router({
     .query(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       const row = await ctx.env.DB
-        .prepare(`SELECT * FROM digital_twins WHERE id=? AND isPublic=1 LIMIT 1`)
+        .prepare(`SELECT id, userId, name, description, personality, isPublic, tags, bigFiveTraits, mbtiType, avatarUrl, publicBio, createdAt, updatedAt FROM digital_twins WHERE id=? AND isPublic=1 LIMIT 1`)
         .bind(input.twinId)
         .first<any>();
       if (!row) return null;
-      const user = await ctx.env.DB.prepare(`SELECT id, openId, name, email, loginMethod, role, plan, friendCode, createdAt, updatedAt, lastSignedIn, onboardingCompleted, isNpc, onboardingStep, tutorialCompleted, tosAcceptedAt, tosVersion, emailVerified FROM users WHERE id=?`).bind(row.userId).first<any>();
+      const user = await ctx.env.DB.prepare(`SELECT id, name, friendCode FROM users WHERE id=?`).bind(row.userId).first<any>();
       return { twin: normalizeTwin(row), user };
     }),
 });

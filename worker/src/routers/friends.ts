@@ -10,7 +10,7 @@ export const friendsRouter = router({
     await ensureSchema(ctx.env.DB);
     const rows = await ctx.env.DB
       .prepare(`SELECT f.id as fshipId, f.status as fshipStatus, f.createdAt as fshipCreatedAt,
-        u.id as fId, u.name as fName, u.email as fEmail, u.friendCode as fFriendCode, u.isNpc as fIsNpc,
+        u.id as fId, u.name as fName, u.friendCode as fFriendCode, u.isNpc as fIsNpc,
         dt.id as twinId, dt.name as twinName, dt.description as twinDesc, dt.personality as twinPersonality,
         dt.isPublic as twinIsPublic, dt.tags as twinTags, dt.systemPrompt as twinSystemPrompt,
         dt.bigFiveTraits as twinBigFive, dt.mbtiType as twinMbti
@@ -22,7 +22,7 @@ export const friendsRouter = router({
       .all<any>();
     return (rows.results ?? []).map(r => ({
       friendship: { id: r.fshipId, status: r.fshipStatus, createdAt: r.fshipCreatedAt },
-      friend: { id: r.fId, name: r.fName, email: r.fEmail, friendCode: r.fFriendCode, isNpc: r.fIsNpc === 1 },
+      friend: { id: r.fId, name: r.fName, friendCode: r.fFriendCode, isNpc: r.fIsNpc === 1 },
       twin: r.twinId ? normalizeTwin({
         id: r.twinId, name: r.twinName, description: r.twinDesc, personality: r.twinPersonality,
         isPublic: r.twinIsPublic, tags: r.twinTags, systemPrompt: r.twinSystemPrompt,
@@ -33,19 +33,19 @@ export const friendsRouter = router({
   pendingRequests: protectedProcedure.query(async ({ ctx }) => {
     await ensureSchema(ctx.env.DB);
     const rows = await ctx.env.DB
-      .prepare(`SELECT f.*, u.name as senderName, u.email as senderEmail FROM friendships f JOIN users u ON u.id=f.userId WHERE f.friendId=? AND f.status='pending'`)
+      .prepare(`SELECT f.id, f.userId, f.friendId, f.status, f.createdAt, u.name as senderName FROM friendships f JOIN users u ON u.id=f.userId WHERE f.friendId=? AND f.status='pending'`)
       .bind(ctx.userId)
       .all<any>();
     return (rows.results ?? []).map(r => ({
       id: r.id, userId: r.userId, senderName: r.senderName, createdAt: r.createdAt,
       friendship: { id: r.id, status: r.status, createdAt: r.createdAt },
-      sender: { id: r.userId, name: r.senderName, email: r.senderEmail },
+      sender: { id: r.userId, name: r.senderName },
     }));
   }),
   sentRequests: protectedProcedure.query(async ({ ctx }) => {
     await ensureSchema(ctx.env.DB);
     const rows = await ctx.env.DB
-      .prepare(`SELECT f.*, u.name as recipientName FROM friendships f JOIN users u ON u.id=f.friendId WHERE f.userId=? AND f.status='pending'`)
+      .prepare(`SELECT f.id, f.friendId, f.createdAt, u.name as recipientName FROM friendships f JOIN users u ON u.id=f.friendId WHERE f.userId=? AND f.status='pending'`)
       .bind(ctx.userId)
       .all<any>();
     return (rows.results ?? []).map(r => ({ id: r.id, friendId: r.friendId, recipientName: r.recipientName, createdAt: r.createdAt }));
@@ -55,7 +55,7 @@ export const friendsRouter = router({
     .query(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       const rows = await ctx.env.DB
-        .prepare(`SELECT id, name, email, friendCode FROM users WHERE id!=? AND (name LIKE ? OR friendCode=?) AND id NOT IN (SELECT blockedUserId FROM user_blocks WHERE userId=?) AND id NOT IN (SELECT userId FROM user_blocks WHERE blockedUserId=?) LIMIT 20`)
+        .prepare(`SELECT id, name, friendCode FROM users WHERE id!=? AND (name LIKE ? OR friendCode=?) AND id NOT IN (SELECT blockedUserId FROM user_blocks WHERE userId=?) AND id NOT IN (SELECT userId FROM user_blocks WHERE blockedUserId=?) LIMIT 20`)
         .bind(ctx.userId, `%${input.query}%`, input.query.toUpperCase(), ctx.userId, ctx.userId)
         .all<any>();
       return rows.results ?? [];
@@ -79,7 +79,7 @@ export const friendsRouter = router({
         }
       }
 
-      const friend = await ctx.env.DB.prepare(`SELECT id, openId, name, email, loginMethod, role, plan, friendCode, createdAt, updatedAt, lastSignedIn, onboardingCompleted, isNpc, onboardingStep, tutorialCompleted, tosAcceptedAt, tosVersion, emailVerified FROM users WHERE friendCode=?`).bind(input.friendCode.toUpperCase()).first<any>();
+      const friend = await ctx.env.DB.prepare(`SELECT id, name, friendCode, isNpc FROM users WHERE friendCode=?`).bind(input.friendCode.toUpperCase()).first<any>();
       if (!friend) throw new TRPCError({ code: "NOT_FOUND", message: "ユーザーが見つかりません" });
       if (friend.id === ctx.userId) throw new TRPCError({ code: "BAD_REQUEST", message: "自分にはリクエストを送れません" });
       // ブロックチェック

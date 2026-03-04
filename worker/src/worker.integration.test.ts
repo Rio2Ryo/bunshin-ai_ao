@@ -1142,6 +1142,42 @@ describe("Error Logs", () => {
   });
 });
 
+describe("Email Leak Prevention", () => {
+  it("friends.searchUsers does not return email field", async () => {
+    const data = unwrap(await trpcQuery("friends.searchUsers", { query: "test" }));
+    expect(Array.isArray(data)).toBe(true);
+    // Even if results are empty, verify the query works
+    for (const user of data) {
+      expect(user.email).toBeUndefined();
+      expect(user.id).toBeDefined();
+    }
+  });
+
+  it("friends.list does not return friend email", async () => {
+    const data = unwrap(await trpcQuery("friends.list"));
+    expect(Array.isArray(data)).toBe(true);
+    for (const item of data) {
+      expect(item.friend.email).toBeUndefined();
+    }
+  });
+
+  it("friends.pendingRequests does not return sender email", async () => {
+    const data = unwrap(await trpcQuery("friends.pendingRequests"));
+    expect(Array.isArray(data)).toBe(true);
+    for (const item of data) {
+      expect(item.sender.email).toBeUndefined();
+    }
+  });
+
+  it("blocks.list does not return email", async () => {
+    const data = unwrap(await trpcQuery("blocks.list"));
+    expect(Array.isArray(data)).toBe(true);
+    for (const item of data) {
+      expect(item.email).toBeUndefined();
+    }
+  });
+});
+
 describe("Twin Reset (end of test)", () => {
   it("myTwin.reset deletes the twin", async () => {
     const data = unwrap(await trpcMutate("myTwin.reset"));
