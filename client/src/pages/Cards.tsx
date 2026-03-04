@@ -326,10 +326,12 @@ function CardItem({
       <CardContent>
         {card.frontImageUrl && (
           <div className="mb-3 rounded-lg overflow-hidden bg-muted aspect-[1.6/1]">
-            <img 
-              src={card.frontImageUrl} 
+            <img
+              src={card.frontImageUrl}
               alt={card.title}
               className="w-full h-full object-cover"
+              loading="lazy"
+              decoding="async"
             />
           </div>
         )}
@@ -535,10 +537,11 @@ function AddCardDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess:
             >
               {previewUrl ? (
                 <div className="space-y-4">
-                  <img 
-                    src={previewUrl} 
-                    alt="Preview" 
+                  <img
+                    src={previewUrl}
+                    alt="Preview"
                     className="max-h-48 mx-auto rounded-lg"
+                    decoding="async"
                   />
                   <p className="text-sm text-muted-foreground">{selectedFile?.name}</p>
                 </div>
@@ -589,10 +592,12 @@ function AddCardDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess:
           {/* 画像プレビュー */}
           {analysisResult.imageUrl && (
             <div className="rounded-lg overflow-hidden bg-muted">
-              <img 
-                src={analysisResult.imageUrl} 
-                alt="Card" 
+              <img
+                src={analysisResult.imageUrl}
+                alt="Card"
                 className="w-full max-h-48 object-contain"
+                loading="lazy"
+                decoding="async"
               />
             </div>
           )}
@@ -780,10 +785,12 @@ function CardDetailDialog({
               {/* 画像 */}
               {card.frontImageUrl && (
                 <div className="rounded-lg overflow-hidden bg-muted">
-                  <img 
-                    src={card.frontImageUrl} 
+                  <img
+                    src={card.frontImageUrl}
                     alt={card.title}
                     className="w-full max-h-64 object-contain"
+                    loading="lazy"
+                    decoding="async"
                   />
                 </div>
               )}

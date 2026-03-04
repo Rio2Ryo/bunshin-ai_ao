@@ -187,7 +187,7 @@ export default function Profile() {
               <div className="space-y-2">
                 <div className="flex items-center gap-3">
                   {profile?.avatarUrl ? (
-                    <img src={`${(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "")}${profile.avatarUrl}`} alt="" className="h-10 w-10 rounded-full object-cover border" />
+                    <img src={`${(import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "")}${profile.avatarUrl}`} alt="アバター" className="h-10 w-10 rounded-full object-cover border" loading="lazy" decoding="async" />
                   ) : (
                     <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center border text-sm font-medium text-muted-foreground">
                       {formData.displayName?.charAt(0) || user?.name?.charAt(0) || "?"}

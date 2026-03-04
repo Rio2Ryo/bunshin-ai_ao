@@ -52,7 +52,7 @@ export default function TwinEmbedCard() {
             <div className="border rounded-xl p-5 max-w-[380px] bg-white dark:bg-zinc-950">
               <div className="flex items-center gap-3 mb-3">
                 {data.avatarUrl ? (
-                  <img src={data.avatarUrl} className="w-12 h-12 rounded-full object-cover" alt="" />
+                  <img src={data.avatarUrl} className="w-12 h-12 rounded-full object-cover" alt="アバター" loading="lazy" decoding="async" />
                 ) : (
                   <div className="w-12 h-12 rounded-full bg-muted" />
                 )}

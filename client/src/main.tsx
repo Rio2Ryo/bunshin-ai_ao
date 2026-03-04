@@ -72,6 +72,20 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js')
       .then((registration) => {
         console.log('[PWA] Service Worker registered:', registration.scope);
+
+        // Check for updates periodically (every 60 minutes)
+        setInterval(() => registration.update(), 60 * 60 * 1000);
+
+        // Notify when a new SW is available
+        registration.addEventListener('updatefound', () => {
+          const newWorker = registration.installing;
+          if (!newWorker) return;
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
+              console.log('[PWA] New version available — reload for updates');
+            }
+          });
+        });
       })
       .catch((error) => {
         console.log('[PWA] Service Worker registration failed:', error);

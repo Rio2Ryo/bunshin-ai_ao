@@ -383,7 +383,7 @@ export default function Challenges() {
                         </div>
                         <div className="col-span-5 flex items-center gap-2">
                           {entry.avatarUrl ? (
-                            <img src={entry.avatarUrl} alt="" className="h-7 w-7 rounded-full object-cover" />
+                            <img src={entry.avatarUrl} alt="アバター" className="h-7 w-7 rounded-full object-cover" loading="lazy" decoding="async" />
                           ) : (
                             <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center text-xs font-medium">
                               {(entry.name ?? "?")[0]}

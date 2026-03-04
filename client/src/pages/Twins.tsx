@@ -565,7 +565,7 @@ export default function MyTwin() {
               <CardContent>
                 <div className="flex items-center gap-4">
                   {twin?.avatarUrl ? (
-                    <img src={twin.avatarUrl} alt="ツインアバター" className="w-24 h-24 rounded-full object-cover border-2 border-primary/20" />
+                    <img src={twin.avatarUrl} alt="ツインアバター" className="w-24 h-24 rounded-full object-cover border-2 border-primary/20" loading="lazy" decoding="async" />
                   ) : (
                     <div className="w-24 h-24 rounded-full bg-muted flex items-center justify-center">
                       <Image className="h-8 w-8 text-muted-foreground" />

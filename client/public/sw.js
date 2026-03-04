@@ -1,24 +1,38 @@
 // Service Worker for 分身AI PWA
-const CACHE_NAME = 'bunshin-ai-v5';
-const API_CACHE_NAME = 'bunshin-ai-api-v2';
+const CACHE_VERSION = '6';
+const CACHE_NAME = `bunshin-ai-v${CACHE_VERSION}`;
+const API_CACHE_NAME = `bunshin-ai-api-v${CACHE_VERSION}`;
 const API_CACHE_MAX_ENTRIES = 100;
 const API_CACHE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+const API_ORIGIN_PATTERN = /bunshin-ai-api.*\.workers\.dev/;
 
-// キャッシュする静的アセット（SPAシェル含む）
-const STATIC_ASSETS = [
-  '/',
-  '/offline.html',
-  '/manifest.json',
-  '/icons/icon-192x192.png',
-  '/icons/icon-512x512.png',
-  '/icons/apple-touch-icon.png'
+// Build manifest (injected by vite build plugin) or fallback static list
+const PRECACHE_MANIFEST = self.__WB_MANIFEST || [
+  { url: '/', revision: CACHE_VERSION },
+  { url: '/offline.html', revision: CACHE_VERSION },
+  { url: '/manifest.json', revision: CACHE_VERSION },
+  { url: '/icons/icon-192x192.png', revision: CACHE_VERSION },
+  { url: '/icons/icon-512x512.png', revision: CACHE_VERSION },
+  { url: '/icons/apple-touch-icon.png', revision: CACHE_VERSION },
 ];
+
+// Helper: check if a URL is an API request (same-origin or cross-origin)
+function isApiRequest(url) {
+  // Same-origin API calls (dev mode)
+  if (url.pathname.startsWith('/api/')) return true;
+  // Cross-origin API calls (production: workers.dev)
+  if (API_ORIGIN_PATTERN.test(url.hostname) && url.pathname.startsWith('/api/')) return true;
+  return false;
+}
 
 // インストール時にキャッシュを作成
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS).catch((err) => {
+      const urls = PRECACHE_MANIFEST.map((entry) =>
+        typeof entry === 'string' ? entry : entry.url
+      );
+      return cache.addAll(urls).catch((err) => {
         console.warn('[SW] Some static assets failed to cache:', err);
       });
     })
@@ -54,13 +68,13 @@ self.addEventListener('fetch', (event) => {
   if (!url.protocol.startsWith('http')) return;
 
   // tRPC APIクエリ（GET）: stale-while-revalidate + APIキャッシュ
-  if (url.pathname.startsWith('/api/trpc') && request.method === 'GET') {
-    event.respondWith(apiStaleWhileRevalidate(request));
+  if (isApiRequest(url) && url.pathname.includes('/api/trpc') && request.method === 'GET') {
+    event.respondWith(apiStaleWhileRevalidate(request, event));
     return;
   }
 
   // その他のAPI呼び出し: ネットワーク優先（5秒タイムアウトでキャッシュフォールバック）
-  if (url.pathname.startsWith('/api/')) {
+  if (isApiRequest(url)) {
     event.respondWith(networkFirstWithTimeout(request, 5000));
     return;
   }
@@ -120,7 +134,8 @@ async function handleNavigate(event) {
 
 // tRPC API専用: stale-while-revalidate + 専用APIキャッシュ
 // キャッシュがあれば即返却、バックグラウンドでネットワークから更新
-async function apiStaleWhileRevalidate(request) {
+// cache age check: expired cache waits for network, fresh cache returns immediately
+async function apiStaleWhileRevalidate(request, event) {
   const cache = await caches.open(API_CACHE_NAME);
   const cachedResponse = await cache.match(request);
 
@@ -141,10 +156,21 @@ async function apiStaleWhileRevalidate(request) {
     return networkResponse;
   }).catch(() => null);
 
-  // キャッシュがあれば即返却、なければネットワーク待ち
   if (cachedResponse) {
-    // バックグラウンドで更新（結果は使わない）
-    fetchPromise;
+    // Check cache age
+    const cachedAt = Number(cachedResponse.headers.get('sw-cached-at') || 0);
+    const isExpired = Date.now() - cachedAt > API_CACHE_MAX_AGE_MS;
+
+    if (isExpired) {
+      // Cache expired — wait for network
+      const networkResponse = await fetchPromise;
+      if (networkResponse) return networkResponse;
+      // Network failed — return stale cache as last resort
+      return cachedResponse;
+    }
+
+    // Cache still fresh — return immediately, update in background
+    event.waitUntil(fetchPromise);
     return cachedResponse;
   }
 
