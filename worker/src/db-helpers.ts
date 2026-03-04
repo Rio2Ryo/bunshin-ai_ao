@@ -579,6 +579,17 @@ CREATE TABLE IF NOT EXISTS auto_matching_schedules (
 );
 CREATE INDEX IF NOT EXISTS idx_auto_matching_userId ON auto_matching_schedules(userId);
 
+CREATE TABLE IF NOT EXISTS notification_preferences (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId INTEGER NOT NULL,
+  notificationType TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  frequency TEXT NOT NULL DEFAULT 'immediate',
+  updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(userId, notificationType)
+);
+CREATE INDEX IF NOT EXISTS idx_notification_preferences_userId ON notification_preferences(userId);
+
 CREATE TABLE IF NOT EXISTS notification_settings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   userId INTEGER NOT NULL UNIQUE,
@@ -2215,6 +2226,9 @@ CREATE TABLE IF NOT EXISTS error_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_error_logs_created ON error_logs(createdAt);
+
+ALTER TABLE users ADD COLUMN subscriptionStatus TEXT;
+ALTER TABLE users ADD COLUMN paymentFailedAt TEXT;
 `;
 
 let schemaReady = false;
@@ -2399,6 +2413,25 @@ export async function addTrustAction(
   ).bind(userId, action, delta, newScore, description).run();
 
   return newScore;
+}
+
+/**
+ * Record an activity for the friend activity timeline.
+ * Silently fails to avoid blocking the calling operation.
+ */
+export async function recordFriendActivity(
+  db: D1Database,
+  userId: number,
+  activityType: string,
+  title: string,
+  description?: string,
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await db.prepare(
+      `INSERT INTO friend_activities (userId, activityType, title, description, metadata) VALUES (?, ?, ?, ?, ?)`
+    ).bind(userId, activityType, title, description || null, metadata ? JSON.stringify(metadata) : "{}").run();
+  } catch { /* non-critical — do not block caller */ }
 }
 
 // ============ Twin helpers ============

@@ -550,4 +550,61 @@ export const notificationRouter = router({
         settings: settings || { slackWebhookUrl: null, lineNotify: 1, emailNotify: 0, matchingComplete: 1, scheduledMatching: 1 },
       };
     }),
+
+  // --- Per-type notification preferences ---
+  getPreferences: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const rows = await ctx.env.DB.prepare(
+      `SELECT notificationType, enabled, frequency FROM notification_preferences WHERE userId=?`
+    ).bind(ctx.userId).all<any>();
+    const prefs: Record<string, { enabled: boolean; frequency: string }> = {};
+    for (const r of rows.results ?? []) {
+      prefs[r.notificationType] = { enabled: !!r.enabled, frequency: r.frequency };
+    }
+    // Return all known types with defaults for missing ones
+    const ALL_TYPES = [
+      { key: "matching_complete", label: "マッチング完了", description: "マッチング対話完了時の通知" },
+      { key: "matching_invite", label: "マッチング招待", description: "マッチング対話への招待通知" },
+      { key: "matching_request", label: "マッチングリクエスト", description: "マッチングリクエスト受信通知" },
+      { key: "matching_accepted", label: "マッチング承認", description: "マッチングリクエスト承認通知" },
+      { key: "matching_summary", label: "マッチングサマリー", description: "マッチング分析サマリー通知" },
+      { key: "friend_request", label: "友達リクエスト", description: "友達リクエスト受信通知" },
+      { key: "friend_accepted", label: "友達承認", description: "友達リクエスト承認通知" },
+      { key: "quality_alert", label: "品質アラート", description: "対話品質に関するアラート" },
+      { key: "weekly_review", label: "ウィークリーレビュー", description: "週次レビュー・振り返り通知" },
+      { key: "twin_forked", label: "ツインフォーク", description: "ツインがフォークされた通知" },
+      { key: "fork_feedback", label: "フォークフィードバック", description: "フォークへのフィードバック通知" },
+    ];
+    return ALL_TYPES.map(t => ({
+      ...t,
+      enabled: prefs[t.key]?.enabled ?? true,
+      frequency: prefs[t.key]?.frequency ?? "immediate",
+    }));
+  }),
+
+  updatePreference: protectedProcedure
+    .input(z.object({
+      notificationType: z.string().min(1),
+      enabled: z.boolean().optional(),
+      frequency: z.enum(["immediate", "daily", "weekly"]).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+      const existing = await ctx.env.DB.prepare(
+        `SELECT id, enabled, frequency FROM notification_preferences WHERE userId=? AND notificationType=?`
+      ).bind(ctx.userId, input.notificationType).first<any>();
+      if (existing) {
+        const sets: string[] = ["updatedAt=datetime('now')"];
+        const vals: any[] = [];
+        if (input.enabled !== undefined) { sets.push("enabled=?"); vals.push(input.enabled ? 1 : 0); }
+        if (input.frequency !== undefined) { sets.push("frequency=?"); vals.push(input.frequency); }
+        vals.push(existing.id);
+        await ctx.env.DB.prepare(`UPDATE notification_preferences SET ${sets.join(",")} WHERE id=?`).bind(...vals).run();
+      } else {
+        await ctx.env.DB.prepare(
+          `INSERT INTO notification_preferences (userId, notificationType, enabled, frequency) VALUES (?,?,?,?)`
+        ).bind(ctx.userId, input.notificationType, input.enabled !== undefined ? (input.enabled ? 1 : 0) : 1, input.frequency ?? "immediate").run();
+      }
+      return { success: true };
+    }),
 });

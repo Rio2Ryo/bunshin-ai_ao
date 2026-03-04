@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, type Env, type Context } from "../trpc";
-import { ensureSchema, parseJson, toJson, getMyTwin, normalizeTwin } from "../db-helpers";
+import { ensureSchema, parseJson, toJson, getMyTwin, normalizeTwin, recordFriendActivity } from "../db-helpers";
 import { invokeLLM, getUserLLMConfig } from "../llm";
 import { createNotification } from "../notifications";
 
@@ -104,6 +104,14 @@ export const friendsRouter = router({
         const accepterName = ctx.user?.name || "ユーザー";
         await createNotification(ctx.env.DB, req.userId, "friend_accepted", "友達リクエスト承認", `${accepterName}さんが友達リクエストを承認しました`, { link: "/friends" });
       }
+
+      // Record friend activity for both users
+      const userName = ctx.user?.name || "ユーザー";
+      await recordFriendActivity(ctx.env.DB, ctx.userId, "friend_add", `${userName}が新しい友達とつながりました`);
+      if (req?.userId) {
+        await recordFriendActivity(ctx.env.DB, req.userId, "friend_add", "新しい友達とつながりました");
+      }
+
       return { success: true };
     }),
   rejectRequest: protectedProcedure

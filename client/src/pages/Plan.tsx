@@ -5,9 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
-import { Crown, Users, MessageSquare, Database, FileUp, Zap, Check, Sparkles, CreditCard, Settings, AlertTriangle, Shield } from "lucide-react";
+import { Crown, Users, MessageSquare, Database, FileUp, Zap, Check, Sparkles, CreditCard, Settings, AlertTriangle, Shield, Pause, Gift } from "lucide-react";
 import { toast } from "sonner";
 import { useState, useEffect } from "react";
 import { useSearch } from "wouter";
@@ -46,7 +47,26 @@ export default function Plan() {
 
   const { data: stats, isLoading, refetch } = trpc.plan.getStats.useQuery();
   const { data: subscription } = trpc.plan.getSubscription.useQuery();
-  
+  const { data: dunningStatus } = trpc.plan.getDunningStatus.useQuery();
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [cancelStep, setCancelStep] = useState<"reason" | "offer" | "confirm">("reason");
+  const [cancelReason, setCancelReason] = useState("");
+
+  const cancelMutation = trpc.plan.cancelSubscription.useMutation({
+    onSuccess: (data) => {
+      toast.success(`解約予約が完了しました。${new Date(data.cancelAt).toLocaleDateString("ja-JP")}まで現プランをご利用いただけます。`);
+      setShowCancelDialog(false);
+      setCancelStep("reason");
+      refetch();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const handleCancelFlow = () => {
+    setCancelStep("reason");
+    setShowCancelDialog(true);
+  };
+
   const checkoutMutation = trpc.plan.createCheckoutSession.useMutation({
     onSuccess: (data) => {
       if (data.url) {
@@ -153,6 +173,11 @@ export default function Plan() {
                     管理
                   </Button>
                 )}
+                {currentPlan !== "free" && !subscription?.cancelAtPeriodEnd && (
+                  <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={handleCancelFlow}>
+                    解約
+                  </Button>
+                )}
               </div>
             </div>
             {subscription && (
@@ -166,6 +191,22 @@ export default function Plan() {
                     次回更新日: {new Date(subscription.currentPeriodEnd).toLocaleDateString("ja-JP")}
                   </span>
                 )}
+              </div>
+            )}
+            {dunningStatus && (
+              <div className="mt-4 p-3 rounded-lg border border-red-500/50 bg-red-950/30 flex items-center gap-3">
+                <AlertTriangle className="h-5 w-5 text-red-400 shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-red-400">決済失敗</p>
+                  <p className="text-xs text-red-400/70">
+                    {dunningStatus.daysRemaining > 0
+                      ? `支払い方法を${dunningStatus.daysRemaining}日以内に更新してください`
+                      : "猶予期間が終了しました。今すぐ更新してください"}
+                  </p>
+                </div>
+                <Button size="sm" className="bg-red-600 hover:bg-red-700" onClick={() => portalMutation.mutate()}>
+                  支払い更新
+                </Button>
               </div>
             )}
           </CardHeader>
@@ -374,6 +415,107 @@ export default function Plan() {
               決済はStripeで安全に処理されます
             </p>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cancel / Retention Dialog */}
+      <Dialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
+        <DialogContent className="bg-gray-900 border-gray-700">
+          {cancelStep === "reason" && (
+            <>
+              <DialogHeader>
+                <DialogTitle>解約の理由を教えてください</DialogTitle>
+                <DialogDescription>サービス改善のため、よろしければ理由をお聞かせください</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3 mt-4">
+                {["料金が高い", "使用頻度が低い", "必要な機能がない", "他のサービスに乗り換え", "その他"].map((reason) => (
+                  <button
+                    key={reason}
+                    onClick={() => { setCancelReason(reason); setCancelStep("offer"); }}
+                    className={`w-full text-left p-3 rounded-lg border transition-colors ${
+                      cancelReason === reason ? "border-cyan-500 bg-cyan-500/10" : "border-gray-700 hover:border-gray-600"
+                    }`}
+                  >
+                    {reason}
+                  </button>
+                ))}
+                <Textarea
+                  placeholder="詳しい理由（任意）"
+                  className="mt-2"
+                  value={cancelReason.startsWith("詳細:") ? cancelReason.slice(3) : ""}
+                  onChange={(e) => setCancelReason(`詳細:${e.target.value}`)}
+                />
+              </div>
+            </>
+          )}
+          {cancelStep === "offer" && (
+            <>
+              <DialogHeader>
+                <DialogTitle>特別オファー</DialogTitle>
+                <DialogDescription>解約の前に、こちらのオプションはいかがですか？</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3 mt-4">
+                <button
+                  onClick={() => {
+                    toast.info("割引クーポンは次回更新時に自動適用されます（開発中）");
+                    setShowCancelDialog(false);
+                  }}
+                  className="w-full p-4 rounded-lg border border-green-500/30 bg-green-950/20 hover:bg-green-950/30 text-left transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <Gift className="h-5 w-5 text-green-400" />
+                    <div>
+                      <p className="font-semibold text-green-400">次月50%割引</p>
+                      <p className="text-xs text-gray-400">来月のお支払いが半額になります</p>
+                    </div>
+                  </div>
+                </button>
+                <button
+                  onClick={() => {
+                    toast.info("一時停止機能は開発中です。現時点ではサブスクリプション管理から操作可能です。");
+                    setShowCancelDialog(false);
+                  }}
+                  className="w-full p-4 rounded-lg border border-yellow-500/30 bg-yellow-950/20 hover:bg-yellow-950/30 text-left transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <Pause className="h-5 w-5 text-yellow-400" />
+                    <div>
+                      <p className="font-semibold text-yellow-400">1ヶ月一時停止</p>
+                      <p className="text-xs text-gray-400">データを保持したまま1ヶ月休止できます</p>
+                    </div>
+                  </div>
+                </button>
+                <button
+                  onClick={() => setCancelStep("confirm")}
+                  className="w-full p-3 rounded-lg border border-gray-700 hover:border-gray-600 text-left text-sm text-muted-foreground transition-colors"
+                >
+                  それでも解約する
+                </button>
+              </div>
+            </>
+          )}
+          {cancelStep === "confirm" && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="text-red-400">本当に解約しますか？</DialogTitle>
+                <DialogDescription>
+                  解約すると現在の請求期間末にフリープランに変更されます。データは保持されますが、プレミアム機能は使用できなくなります。
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter className="mt-4 flex gap-2">
+                <Button variant="outline" onClick={() => setShowCancelDialog(false)}>
+                  キャンセル
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => cancelMutation.mutate()}
+                  disabled={cancelMutation.isPending}
+                >
+                  {cancelMutation.isPending ? "処理中..." : "解約を確定する"}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </DashboardLayout>

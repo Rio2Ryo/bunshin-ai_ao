@@ -14,7 +14,7 @@ import {
 } from "./trpc";
 import { ensureSchema, toJson, parseJson, getMyTwin, normalizeTwin, addTrustAction } from "./db-helpers";
 import { invokeLLM, getUserLLMConfig } from "./llm";
-import { notifyMatchingComplete, createNotification } from "./notifications";
+import { notifyMatchingComplete, createNotification, sendPaymentFailedEmail, sendReengagementEmail, sendWeeklyDigestEmail, sendWebPush } from "./notifications";
 import { requestLogger } from "./middleware";
 
 // Re-export Durable Object classes (required by Cloudflare Workers runtime)
@@ -1192,7 +1192,7 @@ api.post("/api/stripe/webhook", async (c) => {
       const subscriptionId = session?.subscription;
       if (userId) {
         await env.DB.prepare(
-          `UPDATE users SET plan=?, stripeCustomerId=?, stripeSubscriptionId=?, updatedAt=datetime('now') WHERE id=?`
+          `UPDATE users SET plan=?, stripeCustomerId=?, stripeSubscriptionId=?, subscriptionStatus='active', paymentFailedAt=NULL, updatedAt=datetime('now') WHERE id=?`
         ).bind(plan, customerId, subscriptionId, parseInt(userId)).run();
       }
       break;
@@ -1202,7 +1202,7 @@ api.post("/api/stripe/webhook", async (c) => {
       const customerId = sub?.customer;
       if (customerId) {
         await env.DB.prepare(
-          `UPDATE users SET plan='free', stripeSubscriptionId=NULL, updatedAt=datetime('now') WHERE stripeCustomerId=?`
+          `UPDATE users SET plan='free', stripeSubscriptionId=NULL, subscriptionStatus='canceled', paymentFailedAt=NULL, updatedAt=datetime('now') WHERE stripeCustomerId=?`
         ).bind(customerId).run();
       }
       break;
@@ -1212,11 +1212,45 @@ api.post("/api/stripe/webhook", async (c) => {
       const customerId = sub?.customer;
       if (customerId && sub?.status === "active") {
         await env.DB.prepare(
-          `UPDATE users SET stripeSubscriptionId=?, updatedAt=datetime('now') WHERE stripeCustomerId=?`
+          `UPDATE users SET stripeSubscriptionId=?, subscriptionStatus='active', paymentFailedAt=NULL, updatedAt=datetime('now') WHERE stripeCustomerId=?`
         ).bind(sub.id, customerId).run();
+      } else if (customerId && sub?.status === "past_due") {
+        await env.DB.prepare(
+          `UPDATE users SET subscriptionStatus='past_due', paymentFailedAt=COALESCE(paymentFailedAt, datetime('now')), updatedAt=datetime('now') WHERE stripeCustomerId=?`
+        ).bind(customerId).run();
       } else if (customerId && (sub?.status === "canceled" || sub?.status === "unpaid")) {
         await env.DB.prepare(
-          `UPDATE users SET plan='free', stripeSubscriptionId=NULL, updatedAt=datetime('now') WHERE stripeCustomerId=?`
+          `UPDATE users SET plan='free', stripeSubscriptionId=NULL, subscriptionStatus=?, paymentFailedAt=NULL, updatedAt=datetime('now') WHERE stripeCustomerId=?`
+        ).bind(sub.status, customerId).run();
+      }
+      break;
+    }
+    case "invoice.payment_failed": {
+      const invoice = event.data?.object;
+      const customerId = invoice?.customer;
+      if (customerId) {
+        const user = await env.DB.prepare(
+          `SELECT id, email, name FROM users WHERE stripeCustomerId=?`
+        ).bind(customerId).first<any>();
+        if (user) {
+          await env.DB.prepare(
+            `UPDATE users SET subscriptionStatus='past_due', paymentFailedAt=COALESCE(paymentFailedAt, datetime('now')), updatedAt=datetime('now') WHERE id=?`
+          ).bind(user.id).run();
+          // Send dunning email
+          await sendPaymentFailedEmail(env.DB, user.id, env);
+          // In-app notification
+          const { createNotification } = await import("./notifications");
+          await createNotification(env.DB, user.id, 'payment_failed', '決済失敗', 'お支払いの更新が必要です。サブスクリプション管理から支払い方法を更新してください。', { link: '/plan' });
+        }
+      }
+      break;
+    }
+    case "invoice.paid": {
+      const invoice = event.data?.object;
+      const customerId = invoice?.customer;
+      if (customerId) {
+        await env.DB.prepare(
+          `UPDATE users SET subscriptionStatus='active', paymentFailedAt=NULL, updatedAt=datetime('now') WHERE stripeCustomerId=?`
         ).bind(customerId).run();
       }
       break;
@@ -1331,7 +1365,7 @@ api.get("/api/line/webhook", (c) => {
 
 // ============ Scheduled (Cron) Handler ============
 
-async function handleScheduled(env: Env): Promise<void> {
+async function handleScheduled(env: Env, cronSchedule?: string): Promise<void> {
   const db = env.DB;
   await ensureSchema(db);
 
@@ -1436,11 +1470,138 @@ async function handleScheduled(env: Env): Promise<void> {
       console.error(`[Scheduler] Failed for schedule ${schedule.id}:`, err);
     }
   }
+
+  // ============ Lifecycle Engagement Automation ============
+
+  // 1. Re-engagement email: users inactive for 7+ days
+  try {
+    const dormantUsers = await db.prepare(
+      `SELECT id, email, name FROM users
+       WHERE email IS NOT NULL
+         AND lastSignedIn < datetime('now', '-7 days')
+         AND id NOT IN (
+           SELECT userId FROM notifications
+           WHERE type='reengagement' AND createdAt > datetime('now', '-30 days')
+         )
+       LIMIT 50`
+    ).all<any>();
+
+    for (const u of dormantUsers.results ?? []) {
+      try {
+        await sendReengagementEmail(u.email, u.name || "ユーザー", env);
+        await createNotification(db, u.id, "reengagement", "お帰りをお待ちしています", "しばらくログインされていません。新しいつながりが待っています。", { link: "/dashboard" });
+      } catch { /* individual send failure */ }
+    }
+  } catch { /* ignore */ }
+
+  // 2. Weekly activity digest (Monday only)
+  const isWeekly = cronSchedule === "0 9 * * 1";
+  if (isWeekly) {
+    try {
+      const activeUsers = await db.prepare(
+        `SELECT id, email, name FROM users WHERE email IS NOT NULL AND role != 'npc' LIMIT 200`
+      ).all<any>();
+
+      for (const u of activeUsers.results ?? []) {
+        try {
+          const weekAgo = "datetime('now', '-7 days')";
+          const matchCount = await db.prepare(
+            `SELECT COUNT(*) as c FROM matching_sessions WHERE initiatorUserId=? AND createdAt > datetime('now', '-7 days')`
+          ).bind(u.id).first<any>();
+          const msgCount = await db.prepare(
+            `SELECT COUNT(*) as c FROM chat_messages WHERE userId=? AND createdAt > datetime('now', '-7 days')`
+          ).bind(u.id).first<any>();
+          const friendCount = await db.prepare(
+            `SELECT COUNT(*) as c FROM friendships WHERE (userId=? OR friendId=?) AND status='accepted' AND updatedAt > datetime('now', '-7 days')`
+          ).bind(u.id, u.id).first<any>();
+          const topScore = await db.prepare(
+            `SELECT MAX(r.compatibilityScore) as s FROM matching_results r JOIN matching_sessions ms ON ms.id=r.sessionId WHERE ms.initiatorUserId=? AND r.createdAt > datetime('now', '-7 days')`
+          ).bind(u.id).first<any>();
+
+          const stats = {
+            matchings: matchCount?.c ?? 0,
+            messages: msgCount?.c ?? 0,
+            newFriends: friendCount?.c ?? 0,
+            topScore: topScore?.s ?? null,
+          };
+
+          if (stats.matchings > 0 || stats.messages > 0 || stats.newFriends > 0) {
+            await sendWeeklyDigestEmail(u.email, u.name || "ユーザー", stats, env);
+          }
+        } catch { /* individual user digest failure */ }
+      }
+    } catch { /* ignore */ }
+  }
+
+  // 3. Daily briefing push notification
+  try {
+    const briefingUsers = await db.prepare(
+      `SELECT db.userId, db.content, db.recommendations
+       FROM daily_briefings db
+       JOIN push_subscriptions ps ON ps.userId = db.userId
+       WHERE db.briefingDate = date('now') AND db.isDismissed = 0
+       GROUP BY db.userId
+       LIMIT 100`
+    ).all<any>();
+
+    for (const b of briefingUsers.results ?? []) {
+      try {
+        const preview = (b.content || "").slice(0, 100);
+        await sendWebPush(db, b.userId, {
+          title: "今日のブリーフィング",
+          body: preview || "今日のブリーフィングが準備できました",
+          url: "/daily-briefing",
+        }, env);
+      } catch { /* individual push failure */ }
+    }
+  } catch { /* ignore */ }
+
+  // 4. Plan limit 80% threshold upgrade CTA
+  try {
+    const PLAN_THRESHOLDS: Record<string, { matchings: number }> = {
+      free: { matchings: 3 },
+      premium: { matchings: 30 },
+    };
+
+    const usageRows = await db.prepare(
+      `SELECT ut.userId, ut.matchingsThisMonth, u.plan, u.email, u.name
+       FROM usage_tracking ut
+       JOIN users u ON u.id = ut.userId
+       WHERE u.plan IN ('free', 'premium')
+         AND ut.userId NOT IN (
+           SELECT userId FROM notifications
+           WHERE type='usage_threshold' AND createdAt > datetime('now', '-30 days')
+         )`
+    ).all<any>();
+
+    for (const row of usageRows.results ?? []) {
+      try {
+        const limit = PLAN_THRESHOLDS[row.plan]?.matchings;
+        if (!limit) continue;
+        const usage = row.matchingsThisMonth ?? 0;
+        const pct = (usage / limit) * 100;
+        if (pct >= 80) {
+          const remaining = Math.max(0, limit - usage);
+          await createNotification(
+            db, row.userId, "usage_threshold",
+            "プラン上限に近づいています",
+            `今月のマッチング残り${remaining}回です。アップグレードで制限を解除できます。`,
+            { link: "/plan", usage, limit, percentage: Math.round(pct) }
+          );
+          await sendWebPush(db, row.userId, {
+            title: "プラン上限に近づいています",
+            body: `マッチング残り${remaining}回 — アップグレードで無制限に`,
+            url: "/plan",
+          }, env);
+        }
+      } catch { /* individual threshold check failure */ }
+    }
+  } catch { /* ignore */ }
 }
 
 export default {
   fetch: api.fetch,
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(handleScheduled(env));
+    ctx.waitUntil(handleScheduled(env, event.cron));
   },
 };

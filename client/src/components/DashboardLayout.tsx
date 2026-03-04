@@ -23,8 +23,8 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useRealtimeNotifications } from "@/hooks/useRealtimeNotifications";
 import { useWebPush } from "@/hooks/useWebPush";
 import { toast } from "sonner";
-import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare, FileCheck, History, Mic, TrendingUp, MessageCircleHeart, CalendarDays, FlaskRound, Star, Gauge, Scale, BookHeart, Calendar, Captions, Goal, Grid3x3, BookText, HelpCircle, MessageSquarePlus, TestTubes, Tags, CalendarRange, Wand2, PenLine, Library, Gamepad2, FileBarChart, ScrollText, Repeat2, ArrowLeftRight, GraduationCap, Waves, Plug, Binoculars, BookMarked, Drama, MapPin, Handshake, SlidersHorizontal, GitFork, Eye, Sun, Bookmark, ListTodo, LayoutTemplate, Flame, FolderArchive, Code2, HeartPulse } from "lucide-react";
-import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { LayoutDashboard, LogOut, PanelLeft, Users, Bot, MessageSquare, Settings2, Zap, User, UserPlus, Crown, Globe, Link2, Cpu, Brain, MessageCircle, Sparkles, CreditCard, Shield, Heart, MoreHorizontal, BarChart3, BookOpen, Languages, Loader2, Lightbulb, ShieldAlert, Store, Bell, BellRing, Activity, X, CalendarClock, LayoutGrid, FlaskConical, Target, Swords, Rss, TreePine, GitBranch, Trophy, Map, ClipboardList, Award, Network, FileText, Database, GitCompare, FileCheck, History, Mic, TrendingUp, MessageCircleHeart, CalendarDays, FlaskRound, Star, Gauge, Scale, BookHeart, Calendar, Captions, Goal, Grid3x3, BookText, HelpCircle, MessageSquarePlus, TestTubes, Tags, CalendarRange, Wand2, PenLine, Library, Gamepad2, FileBarChart, ScrollText, Repeat2, ArrowLeftRight, GraduationCap, Waves, Plug, Binoculars, BookMarked, Drama, MapPin, Handshake, SlidersHorizontal, GitFork, Eye, Sun, Bookmark, ListTodo, LayoutTemplate, Flame, FolderArchive, Code2, HeartPulse, Search, AlertTriangle, ChevronRight, Crosshair, Smile, Flag, Hash, Diff, Landmark, ShieldCheck, Compass, Waypoints } from "lucide-react";
+import { CSSProperties, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Badge } from "./ui/badge";
@@ -32,6 +32,8 @@ import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { trpc } from "@/lib/trpc";
 import { useTranslation } from "@/contexts/LanguageContext";
+import { CommandPalette } from "@/components/CommandPalette";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Sheet,
   SheetContent,
@@ -41,7 +43,8 @@ import {
 } from "@/components/ui/sheet";
 
 type MenuItem = { icon: React.ElementType; label: string; path: string };
-type MenuGroup = { label: string; items: MenuItem[] };
+type SubGroup = { label: string; items: MenuItem[] };
+type MenuGroup = { label: string; items?: MenuItem[]; subGroups?: SubGroup[] };
 
 // 管理者専用メニュー (includes items hidden from regular users)
 const adminMenuItems: MenuItem[] = [
@@ -167,7 +170,34 @@ function DashboardLayoutContent({
   const markAllReadMut = trpc.notification.markAllRead.useMutation({ onSuccess: () => utils.notification.list.invalidate() });
   const markReadMut = trpc.notification.markRead.useMutation({ onSuccess: () => utils.notification.list.invalidate() });
   const deleteNotifMut = trpc.notification.delete.useMutation({ onSuccess: () => utils.notification.list.invalidate() });
+  const { data: dunningStatus } = trpc.plan.getDunningStatus.useQuery(undefined, { staleTime: 120_000 });
   const unreadCount = notifData?.unreadCount ?? 0;
+
+  // Command palette (Cmd+K / Ctrl+K)
+  const [cmdOpen, setCmdOpen] = useState(false);
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setCmdOpen((prev) => !prev);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  const [openSubGroups, setOpenSubGroups] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem("sidebar-open-subgroups");
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
+  useEffect(() => {
+    localStorage.setItem("sidebar-open-subgroups", JSON.stringify(openSubGroups));
+  }, [openSubGroups]);
+  const toggleSubGroup = useCallback((key: string) => {
+    setOpenSubGroups(prev => ({ ...prev, [key]: prev[key] === false }));
+  }, []);
 
   // Real-time notifications via SSE
   const webPush = useWebPush();
@@ -204,120 +234,155 @@ function DashboardLayoutContent({
         { icon: BarChart3, label: t("nav.analytics"), path: "/analytics" },
         { icon: Rss, label: language === "en" ? "Feed" : "フィード", path: "/feed" },
         { icon: BellRing, label: "通知管理", path: "/notifications" },
+        { icon: SlidersHorizontal, label: "通知プリファレンス", path: "/notification-preferences" },
       ],
     },
     {
       label: language === "en" ? "Connect" : "つながる",
-      items: [
-        { icon: Globe, label: t("nav.discover"), path: "/discover" },
-        { icon: UserPlus, label: t("nav.friends"), path: "/friends" },
-        { icon: Users, label: t("nav.matching"), path: "/matching" },
-        { icon: CalendarClock, label: language === "en" ? "Scheduler" : "スケジューラー", path: "/scheduler" },
-        { icon: LayoutGrid, label: language === "en" ? "Workspace" : "ワークスペース", path: "/workspaces" },
-        { icon: Lightbulb, label: t("nav.recommendations"), path: "/recommendations" },
-        { icon: Heart, label: t("nav.intimacy"), path: "/intimacy" },
-        { icon: Lightbulb, label: "インサイト", path: "/matching/insights" },
-        { icon: Swords, label: language === "en" ? "Negotiation" : "ネゴ練習", path: "/negotiation" },
-        { icon: Heart, label: language === "en" ? "Emotions" : "感情分析", path: "/emotions" },
-        { icon: Map, label: language === "en" ? "Strategy" : "戦略プランナー", path: "/strategy" },
-        { icon: ClipboardList, label: language === "en" ? "Outcomes" : "成果トラッカー", path: "/outcomes" },
-        { icon: Award, label: language === "en" ? "Quality" : "品質評価", path: "/quality" },
-        { icon: FileText, label: language === "en" ? "Digest" : "ダイジェスト", path: "/digest" },
-        { icon: BookOpen, label: language === "en" ? "Playbooks" : "プレイブック", path: "/playbooks" },
-        { icon: MessageCircle, label: language === "en" ? "Conv. Style" : "会話スタイル", path: "/conversation-style" },
-        { icon: Network, label: language === "en" ? "Network" : "ネットワーク", path: "/network" },
-        { icon: TrendingUp, label: language === "en" ? "ROI" : "ROI分析", path: "/roi" },
-        { icon: CalendarDays, label: language === "en" ? "Calendar" : "カレンダー", path: "/calendar" },
-        { icon: Scale, label: language === "en" ? "Debate" : "ディベート", path: "/debate" },
-        { icon: Calendar, label: language === "en" ? "Events" : "イベント", path: "/events" },
-        { icon: Grid3x3, label: language === "en" ? "Heatmap" : "ヒートマップ", path: "/heatmap" },
-        { icon: BookText, label: language === "en" ? "Storyboard" : "ストーリーボード", path: "/storyboard" },
-        { icon: MessageSquarePlus, label: language === "en" ? "Facilitator" : "AIファシリ", path: "/facilitator" },
-        { icon: Tags, label: language === "en" ? "Tags" : "セッションタグ", path: "/session-tags" },
-        { icon: Wand2, label: language === "en" ? "Theme Suggest" : "テーマ推薦", path: "/theme-recommender" },
-        { icon: Library, label: language === "en" ? "Patterns" : "成功パターン", path: "/success-patterns" },
-        { icon: Gamepad2, label: language === "en" ? "Scenario" : "交渉シナリオ", path: "/interactive-scenario" },
-        { icon: Languages, label: language === "en" ? "Translate Chat" : "翻訳チャット", path: "/translation-chat" },
-        { icon: ScrollText, label: language === "en" ? "Summary" : "AI要約", path: "/matching-summary" },
-        { icon: ArrowLeftRight, label: language === "en" ? "Compare" : "比較タイムライン", path: "/comparison-timeline" },
-        { icon: Waves, label: language === "en" ? "Emotion Flow" : "感情フロー", path: "/emotion-flow" },
-        { icon: Binoculars, label: language === "en" ? "Multi-View" : "マルチ視点", path: "/multi-perspective" },
-        { icon: Swords, label: language === "en" ? "Team Battle" : "チーム対抗戦", path: "/team-battle" },
-        { icon: ShieldAlert, label: language === "en" ? "Risk" : "リスク診断", path: "/risk-assessment" },
-        { icon: MapPin, label: language === "en" ? "Impact Map" : "インパクトマップ", path: "/impact-map" },
-        { icon: Tags, label: language === "en" ? "Strategy Tags" : "戦略タグ", path: "/strategy-annotation" },
-        { icon: Gauge, label: language === "en" ? "Quality Meter" : "品質メーター", path: "/quality-meter" },
-        { icon: Handshake, label: language === "en" ? "Consensus" : "合意形成", path: "/consensus" },
-        { icon: Globe, label: language === "en" ? "Cross-Culture" : "異文化分析", path: "/cross-culture" },
-        { icon: Eye, label: language === "en" ? "Second Opinion" : "セカンドオピニオン", path: "/second-opinion" },
-        { icon: Shield, label: language === "en" ? "Trust Progress" : "信頼構築", path: "/trust-progress" },
-        { icon: Zap, label: language === "en" ? "Brainstorm" : "ブレスト", path: "/brainstorm" },
-        { icon: Mic, label: language === "en" ? "Voice Notes" : "音声ノート", path: "/voice-notes" },
-        { icon: Sun, label: language === "en" ? "Briefing" : "ブリーフィング", path: "/daily-briefing" },
-        { icon: Bookmark, label: language === "en" ? "Bookmarks" : "ブックマーク", path: "/bookmarks" },
-        { icon: ArrowLeftRight, label: language === "en" ? "Compare" : "セッション比較", path: "/compare-report" },
-        { icon: ListTodo, label: language === "en" ? "Action Plans" : "アクションプラン", path: "/action-plans" },
-        { icon: FolderArchive, label: language === "en" ? "Archive" : "アーカイブ", path: "/session-archive" },
-        { icon: Flame, label: language === "en" ? "Streaks" : "ストリーク", path: "/streaks" },
-        { icon: Activity, label: language === "en" ? "Friend Activity" : "友達タイムライン", path: "/friend-activity" },
+      subGroups: [
+        {
+          label: language === "en" ? "Matching" : "マッチング系",
+          items: [
+            { icon: Users, label: t("nav.matching"), path: "/matching" },
+            { icon: Crosshair, label: "インサイト", path: "/matching/insights" },
+            { icon: Swords, label: language === "en" ? "Negotiation" : "ネゴ練習", path: "/negotiation" },
+            { icon: Scale, label: language === "en" ? "Debate" : "ディベート", path: "/debate" },
+            { icon: MessageSquarePlus, label: language === "en" ? "Facilitator" : "AIファシリ", path: "/facilitator" },
+            { icon: Flag, label: language === "en" ? "Team Battle" : "チーム対抗戦", path: "/team-battle" },
+            { icon: Gamepad2, label: language === "en" ? "Scenario" : "交渉シナリオ", path: "/interactive-scenario" },
+            { icon: Wand2, label: language === "en" ? "Theme Suggest" : "テーマ推薦", path: "/theme-recommender" },
+            { icon: ScrollText, label: language === "en" ? "Summary" : "AI要約", path: "/matching-summary" },
+            { icon: Flame, label: language === "en" ? "Streaks" : "ストリーク", path: "/streaks" },
+          ],
+        },
+        {
+          label: language === "en" ? "Analysis" : "分析系",
+          items: [
+            { icon: Map, label: language === "en" ? "Strategy" : "戦略プランナー", path: "/strategy" },
+            { icon: ClipboardList, label: language === "en" ? "Outcomes" : "成果トラッカー", path: "/outcomes" },
+            { icon: Award, label: language === "en" ? "Quality" : "品質評価", path: "/quality" },
+            { icon: TrendingUp, label: language === "en" ? "ROI" : "ROI分析", path: "/roi" },
+            { icon: Grid3x3, label: language === "en" ? "Heatmap" : "ヒートマップ", path: "/heatmap" },
+            { icon: Gauge, label: language === "en" ? "Quality Meter" : "品質メーター", path: "/quality-meter" },
+            { icon: ShieldAlert, label: language === "en" ? "Risk" : "リスク診断", path: "/risk-assessment" },
+            { icon: Smile, label: language === "en" ? "Emotions" : "感情分析", path: "/emotions" },
+            { icon: Waves, label: language === "en" ? "Emotion Flow" : "感情フロー", path: "/emotion-flow" },
+            { icon: ArrowLeftRight, label: language === "en" ? "Compare" : "比較タイムライン", path: "/comparison-timeline" },
+            { icon: Diff, label: language === "en" ? "Compare" : "セッション比較", path: "/compare-report" },
+            { icon: BookText, label: language === "en" ? "Storyboard" : "ストーリーボード", path: "/storyboard" },
+            { icon: Tags, label: language === "en" ? "Tags" : "セッションタグ", path: "/session-tags" },
+            { icon: Hash, label: language === "en" ? "Strategy Tags" : "戦略タグ", path: "/strategy-annotation" },
+            { icon: Library, label: language === "en" ? "Patterns" : "成功パターン", path: "/success-patterns" },
+            { icon: Binoculars, label: language === "en" ? "Multi-View" : "マルチ視点", path: "/multi-perspective" },
+            { icon: Network, label: language === "en" ? "Network" : "ネットワーク", path: "/network" },
+            { icon: MessageCircle, label: language === "en" ? "Conv. Style" : "会話スタイル", path: "/conversation-style" },
+            { icon: MapPin, label: language === "en" ? "Impact Map" : "インパクトマップ", path: "/impact-map" },
+          ],
+        },
+        {
+          label: language === "en" ? "Collaboration" : "コラボ系",
+          items: [
+            { icon: Globe, label: t("nav.discover"), path: "/discover" },
+            { icon: UserPlus, label: t("nav.friends"), path: "/friends" },
+            { icon: Heart, label: t("nav.intimacy"), path: "/intimacy" },
+            { icon: CalendarClock, label: language === "en" ? "Scheduler" : "スケジューラー", path: "/scheduler" },
+            { icon: LayoutGrid, label: language === "en" ? "Workspace" : "ワークスペース", path: "/workspaces" },
+            { icon: Lightbulb, label: t("nav.recommendations"), path: "/recommendations" },
+            { icon: FileText, label: language === "en" ? "Digest" : "ダイジェスト", path: "/digest" },
+            { icon: BookOpen, label: language === "en" ? "Playbooks" : "プレイブック", path: "/playbooks" },
+            { icon: CalendarDays, label: language === "en" ? "Calendar" : "カレンダー", path: "/calendar" },
+            { icon: Calendar, label: language === "en" ? "Events" : "イベント", path: "/events" },
+            { icon: Handshake, label: language === "en" ? "Consensus" : "合意形成", path: "/consensus" },
+            { icon: Landmark, label: language === "en" ? "Cross-Culture" : "異文化分析", path: "/cross-culture" },
+            { icon: Eye, label: language === "en" ? "Second Opinion" : "セカンドオピニオン", path: "/second-opinion" },
+            { icon: ShieldCheck, label: language === "en" ? "Trust Progress" : "信頼構築", path: "/trust-progress" },
+            { icon: Zap, label: language === "en" ? "Brainstorm" : "ブレスト", path: "/brainstorm" },
+            { icon: Mic, label: language === "en" ? "Voice Notes" : "音声ノート", path: "/voice-notes" },
+            { icon: Sun, label: language === "en" ? "Briefing" : "ブリーフィング", path: "/daily-briefing" },
+            { icon: Bookmark, label: language === "en" ? "Bookmarks" : "ブックマーク", path: "/bookmarks" },
+            { icon: ListTodo, label: language === "en" ? "Action Plans" : "アクションプラン", path: "/action-plans" },
+            { icon: FolderArchive, label: language === "en" ? "Archive" : "アーカイブ", path: "/session-archive" },
+            { icon: Activity, label: language === "en" ? "Friend Activity" : "友達タイムライン", path: "/friend-activity" },
+            { icon: Languages, label: language === "en" ? "Translate Chat" : "翻訳チャット", path: "/translation-chat" },
+          ],
+        },
       ],
     },
     {
       label: language === "en" ? "More" : "もっと",
-      items: [
-        { icon: Store, label: t("nav.marketplace"), path: "/marketplace" },
-        { icon: Sparkles, label: t("nav.growth"), path: "/growth" },
-        { icon: MessageCircle, label: t("nav.line"), path: "/line-link" },
-        { icon: CreditCard, label: t("nav.cards"), path: "/cards" },
-        { icon: Crown, label: t("nav.plan"), path: "/plan" },
-        { icon: Brain, label: language === "en" ? "Personality" : "人格診断", path: "/personality" },
-        { icon: Brain, label: language === "en" ? "AI Mentor" : "AIメンター", path: "/mentor" },
-        { icon: FlaskConical, label: language === "en" ? "A/B Test" : "A/Bテスト", path: "/ab-test" },
-        { icon: Target, label: language === "en" ? "Predictions" : "AI予測", path: "/predictions" },
-        { icon: BookOpen, label: language === "en" ? "Scenarios" : "シナリオ", path: "/scenarios" },
-        { icon: Swords, label: language === "en" ? "Tournament" : "トーナメント", path: "/tournament" },
-        { icon: TreePine, label: language === "en" ? "Skill Tree" : "スキルツリー", path: "/skill-tree" },
-        { icon: GitBranch, label: language === "en" ? "Evolution" : "進化マップ", path: "/evolution" },
-        { icon: Trophy, label: language === "en" ? "Challenges" : "チャレンジ", path: "/challenges" },
-        { icon: Users, label: language === "en" ? "Collab" : "ツイン共同", path: "/collaboration" },
-        { icon: Network, label: language === "en" ? "Knowledge Graph" : "ナレッジグラフ", path: "/knowledge-graph" },
-        { icon: Database, label: language === "en" ? "Memory Bank" : "メモリーバンク", path: "/memory-bank" },
-        { icon: GitCompare, label: language === "en" ? "Scenarios" : "シナリオ比較", path: "/scenario-compare" },
-        { icon: LayoutGrid, label: language === "en" ? "Widgets" : "ウィジェット", path: "/widgets" },
-        { icon: FileCheck, label: language === "en" ? "Minutes" : "議事録", path: "/minutes" },
-        { icon: History, label: language === "en" ? "Versions" : "バージョン", path: "/versions" },
-        { icon: Mic, label: language === "en" ? "Voice Replay" : "音声リプレイ", path: "/voice-replay" },
-        { icon: MessageCircleHeart, label: language === "en" ? "Coaching" : "コーチング", path: "/coaching" },
-        { icon: FlaskRound, label: language === "en" ? "Sandbox" : "サンドボックス", path: "/sandbox" },
-        { icon: Star, label: language === "en" ? "Peer Review" : "相互評価", path: "/peer-review" },
-        { icon: Gauge, label: language === "en" ? "Benchmark" : "ベンチマーク", path: "/benchmark" },
-        { icon: BookHeart, label: language === "en" ? "Emotion Journal" : "感情ジャーナル", path: "/emotion-journal" },
-        { icon: Captions, label: language === "en" ? "Commentary" : "リプレイ解説", path: "/replay-commentary" },
-        { icon: Goal, label: language === "en" ? "Goals" : "ツイン目標", path: "/goals" },
-        { icon: HelpCircle, label: language === "en" ? "Quiz" : "ナレッジクイズ", path: "/quiz" },
-        { icon: TestTubes, label: language === "en" ? "Persona Test" : "ペルソナテスト", path: "/persona-ab-test" },
-        { icon: CalendarRange, label: language === "en" ? "Weekly Review" : "週次レビュー", path: "/weekly-review" },
-        { icon: PenLine, label: language === "en" ? "Style Learning" : "対話スタイル", path: "/dialogue-style" },
-        { icon: FileBarChart, label: language === "en" ? "Report" : "人格レポート", path: "/personality-report" },
-        { icon: Repeat2, label: language === "en" ? "Context Rules" : "コンテキスト切替", path: "/context-switcher" },
-        { icon: GraduationCap, label: language === "en" ? "Curriculum" : "学習カリキュラム", path: "/learning-curriculum" },
-        { icon: Plug, label: language === "en" ? "Connectors" : "外部コネクター", path: "/external-connectors" },
-        { icon: BookMarked, label: language === "en" ? "Journal" : "学習ジャーナル", path: "/learning-journal" },
-        { icon: Drama, label: language === "en" ? "Roleplay" : "ロールプレイ", path: "/roleplay-training" },
-        { icon: GitFork, label: language === "en" ? "Clone/Fork" : "クローン", path: "/twin-clone" },
-        { icon: MessageSquare, label: language === "en" ? "Rehearsal" : "リハーサル", path: "/rehearsal" },
-        { icon: SlidersHorizontal, label: language === "en" ? "Calibration" : "感情調整", path: "/emotion-calibration" },
-        { icon: Network, label: language === "en" ? "Knowledge Graph Builder" : "知識グラフ", path: "/knowledge-graph-builder" },
-        { icon: Mic, label: language === "en" ? "Multimodal" : "マルチモーダル", path: "/multimodal-input" },
-        { icon: HelpCircle, label: language === "en" ? "Twin FAQ" : "ツインFAQ", path: "/twin-faq" },
-        { icon: LayoutTemplate, label: language === "en" ? "Gallery" : "テンプレート", path: "/twin-gallery" },
-        { icon: Code2, label: language === "en" ? "Embed Card" : "埋め込みカード", path: "/twin-embed" },
-        { icon: HeartPulse, label: language === "en" ? "Twin Health" : "ヘルスチェック", path: "/twin-health" },
+      subGroups: [
+        {
+          label: language === "en" ? "Twin" : "ツイン系",
+          items: [
+            { icon: Brain, label: language === "en" ? "Personality" : "人格診断", path: "/personality" },
+            { icon: Compass, label: language === "en" ? "AI Mentor" : "AIメンター", path: "/mentor" },
+            { icon: TreePine, label: language === "en" ? "Skill Tree" : "スキルツリー", path: "/skill-tree" },
+            { icon: GitBranch, label: language === "en" ? "Evolution" : "進化マップ", path: "/evolution" },
+            { icon: Trophy, label: language === "en" ? "Challenges" : "チャレンジ", path: "/challenges" },
+            { icon: Users, label: language === "en" ? "Collab" : "ツイン共同", path: "/collaboration" },
+            { icon: GitFork, label: language === "en" ? "Clone/Fork" : "クローン", path: "/twin-clone" },
+            { icon: MessageSquare, label: language === "en" ? "Rehearsal" : "リハーサル", path: "/rehearsal" },
+            { icon: HelpCircle, label: language === "en" ? "Twin FAQ" : "ツインFAQ", path: "/twin-faq" },
+            { icon: LayoutTemplate, label: language === "en" ? "Gallery" : "テンプレート", path: "/twin-gallery" },
+            { icon: Code2, label: language === "en" ? "Embed Card" : "埋め込みカード", path: "/twin-embed" },
+            { icon: HeartPulse, label: language === "en" ? "Twin Health" : "ヘルスチェック", path: "/twin-health" },
+            { icon: ArrowLeftRight, label: language === "en" ? "Twin Compare" : "ツイン比較", path: "/twin-compare" },
+            { icon: Goal, label: language === "en" ? "Goals" : "ツイン目標", path: "/goals" },
+          ],
+        },
+        {
+          label: language === "en" ? "Learning" : "学習系",
+          items: [
+            { icon: MessageCircleHeart, label: language === "en" ? "Coaching" : "コーチング", path: "/coaching" },
+            { icon: GraduationCap, label: language === "en" ? "Curriculum" : "学習カリキュラム", path: "/learning-curriculum" },
+            { icon: BookMarked, label: language === "en" ? "Journal" : "学習ジャーナル", path: "/learning-journal" },
+            { icon: Drama, label: language === "en" ? "Roleplay" : "ロールプレイ", path: "/roleplay-training" },
+            { icon: Network, label: language === "en" ? "Knowledge Graph" : "ナレッジグラフ", path: "/knowledge-graph" },
+            { icon: Waypoints, label: language === "en" ? "Knowledge Builder" : "知識グラフ", path: "/knowledge-graph-builder" },
+            { icon: Database, label: language === "en" ? "Memory Bank" : "メモリーバンク", path: "/memory-bank" },
+            { icon: HelpCircle, label: language === "en" ? "Quiz" : "ナレッジクイズ", path: "/quiz" },
+            { icon: PenLine, label: language === "en" ? "Style Learning" : "対話スタイル", path: "/dialogue-style" },
+            { icon: FileBarChart, label: language === "en" ? "Report" : "人格レポート", path: "/personality-report" },
+            { icon: TestTubes, label: language === "en" ? "Persona Test" : "ペルソナテスト", path: "/persona-ab-test" },
+            { icon: FlaskRound, label: language === "en" ? "Sandbox" : "サンドボックス", path: "/sandbox" },
+            { icon: BookHeart, label: language === "en" ? "Emotion Journal" : "感情ジャーナル", path: "/emotion-journal" },
+            { icon: Captions, label: language === "en" ? "Commentary" : "リプレイ解説", path: "/replay-commentary" },
+            { icon: CalendarRange, label: language === "en" ? "Weekly Review" : "週次レビュー", path: "/weekly-review" },
+            { icon: SlidersHorizontal, label: language === "en" ? "Calibration" : "感情調整", path: "/emotion-calibration" },
+          ],
+        },
+        {
+          label: language === "en" ? "Settings" : "設定系",
+          items: [
+            { icon: Store, label: t("nav.marketplace"), path: "/marketplace" },
+            { icon: Sparkles, label: t("nav.growth"), path: "/growth" },
+            { icon: MessageCircle, label: t("nav.line"), path: "/line-link" },
+            { icon: CreditCard, label: t("nav.cards"), path: "/cards" },
+            { icon: Crown, label: t("nav.plan"), path: "/plan" },
+            { icon: FlaskConical, label: language === "en" ? "A/B Test" : "A/Bテスト", path: "/ab-test" },
+            { icon: Target, label: language === "en" ? "Predictions" : "AI予測", path: "/predictions" },
+            { icon: BookOpen, label: language === "en" ? "Scenarios" : "シナリオ", path: "/scenarios" },
+            { icon: Swords, label: language === "en" ? "Tournament" : "トーナメント", path: "/tournament" },
+            { icon: GitCompare, label: language === "en" ? "Scenarios" : "シナリオ比較", path: "/scenario-compare" },
+            { icon: LayoutGrid, label: language === "en" ? "Widgets" : "ウィジェット", path: "/widgets" },
+            { icon: FileCheck, label: language === "en" ? "Minutes" : "議事録", path: "/minutes" },
+            { icon: History, label: language === "en" ? "Versions" : "バージョン", path: "/versions" },
+            { icon: Mic, label: language === "en" ? "Voice Replay" : "音声リプレイ", path: "/voice-replay" },
+            { icon: Star, label: language === "en" ? "Peer Review" : "相互評価", path: "/peer-review" },
+            { icon: Gauge, label: language === "en" ? "Benchmark" : "ベンチマーク", path: "/benchmark" },
+            { icon: Repeat2, label: language === "en" ? "Context Rules" : "コンテキスト切替", path: "/context-switcher" },
+            { icon: Plug, label: language === "en" ? "Connectors" : "外部コネクター", path: "/external-connectors" },
+            { icon: Mic, label: language === "en" ? "Multimodal" : "マルチモーダル", path: "/multimodal-input" },
+          ],
+        },
       ],
     },
   ], [t, language]);
 
-  const translatedMenuItems = useMemo(() => translatedMenuGroups.flatMap(g => g.items), [translatedMenuGroups]);
+  const translatedMenuItems = useMemo(() =>
+    translatedMenuGroups.flatMap(g => g.items ?? g.subGroups?.flatMap(sg => sg.items) ?? []),
+    [translatedMenuGroups]
+  );
 
   const translatedBottomNavItems: MenuItem[] = useMemo(() => [
     { icon: LayoutDashboard, label: t("nav.home"), path: "/dashboard" },
@@ -389,11 +454,22 @@ function DashboardLayoutContent({
                 <PanelLeft className="h-4 w-4 text-muted-foreground" />
               </button>
               {!isCollapsed ? (
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-semibold tracking-tight truncate text-gradient">
-                    分身AI
-                  </span>
-                </div>
+                <>
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className="font-semibold tracking-tight truncate text-gradient">
+                      分身AI
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setCmdOpen(true)}
+                    className="h-7 flex items-center gap-1.5 px-2 text-xs text-muted-foreground hover:bg-accent rounded-md border border-border/50 transition-colors shrink-0"
+                    aria-label="ページ検索 (Ctrl+K)"
+                  >
+                    <Search className="h-3.5 w-3.5" />
+                    <span className="hidden lg:inline">検索</span>
+                    <kbd className="hidden lg:inline text-[10px] bg-muted px-1 rounded">⌘K</kbd>
+                  </button>
+                </>
               ) : null}
             </div>
           </SidebarHeader>
@@ -412,7 +488,7 @@ function DashboardLayoutContent({
                       <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{group.label}</span>
                     </div>
                   )}
-                  {group.items.map(item => {
+                  {group.items?.map(item => {
                     const isActive = location === item.path || (item.path === "/chat" && location.startsWith("/chat/"));
                     const isTrustItem = item.path === "/trust";
                     const isMatchingItem = item.path === "/matching";
@@ -422,27 +498,63 @@ function DashboardLayoutContent({
                           isActive={isActive}
                           onClick={() => setLocation(item.path)}
                           tooltip={isTrustItem && trustData ? `${item.label}: ${trustData.score}pt` : isMatchingItem && pendingRequestCount > 0 ? `${item.label} (${pendingRequestCount}件)` : item.label}
-                          className={`h-10 transition-all font-normal`}
+                          className="h-10 transition-all font-normal"
                         >
-                          <item.icon
-                            className={`h-4 w-4 ${isActive ? "text-primary" : ""}`}
-                          />
+                          <item.icon className={`h-4 w-4 ${isActive ? "text-primary" : ""}`} />
                           <span className="flex-1">{item.label}</span>
                           {isTrustItem && trustData && !isCollapsed && (
-                            <Badge variant="secondary" className="ml-auto text-[10px] px-1.5 py-0 h-5">
-                              {trustData.score}
-                            </Badge>
+                            <Badge variant="secondary" className="ml-auto text-[10px] px-1.5 py-0 h-5">{trustData.score}</Badge>
                           )}
                           {isMatchingItem && pendingRequestCount > 0 && !isCollapsed && (
-                            <Badge variant="destructive" className="ml-auto text-[10px] px-1.5 py-0 h-5">
-                              {pendingRequestCount}
-                            </Badge>
+                            <Badge variant="destructive" className="ml-auto text-[10px] px-1.5 py-0 h-5">{pendingRequestCount}</Badge>
                           )}
                           {isMatchingItem && pendingRequestCount > 0 && isCollapsed && (
                             <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-destructive" />
                           )}
                         </SidebarMenuButton>
                       </SidebarMenuItem>
+                    );
+                  })}
+                  {group.subGroups?.map(sub => {
+                    const subKey = `${group.label}-${sub.label}`;
+                    const isSubOpen = openSubGroups[subKey] !== false;
+                    return (
+                      <Collapsible key={subKey} open={isSubOpen} onOpenChange={() => toggleSubGroup(subKey)}>
+                        {!isCollapsed && (
+                          <CollapsibleTrigger asChild>
+                            <button className="flex items-center gap-1 w-full px-3 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+                              <ChevronRight className={`h-3 w-3 transition-transform duration-200 ${isSubOpen ? 'rotate-90' : ''}`} />
+                              <span>{sub.label}</span>
+                              <span className="ml-auto text-[10px] opacity-50">{sub.items.length}</span>
+                            </button>
+                          </CollapsibleTrigger>
+                        )}
+                        <CollapsibleContent>
+                          {sub.items.map(item => {
+                            const isActive = location === item.path;
+                            const isMatchingItem = item.path === "/matching";
+                            return (
+                              <SidebarMenuItem key={item.path}>
+                                <SidebarMenuButton
+                                  isActive={isActive}
+                                  onClick={() => setLocation(item.path)}
+                                  tooltip={isMatchingItem && pendingRequestCount > 0 ? `${item.label} (${pendingRequestCount}件)` : item.label}
+                                  className="h-10 transition-all font-normal"
+                                >
+                                  <item.icon className={`h-4 w-4 ${isActive ? "text-primary" : ""}`} />
+                                  <span className="flex-1">{item.label}</span>
+                                  {isMatchingItem && pendingRequestCount > 0 && !isCollapsed && (
+                                    <Badge variant="destructive" className="ml-auto text-[10px] px-1.5 py-0 h-5">{pendingRequestCount}</Badge>
+                                  )}
+                                  {isMatchingItem && pendingRequestCount > 0 && isCollapsed && (
+                                    <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-destructive" />
+                                  )}
+                                </SidebarMenuButton>
+                              </SidebarMenuItem>
+                            );
+                          })}
+                        </CollapsibleContent>
+                      </Collapsible>
                     );
                   })}
                 </div>
@@ -646,6 +758,9 @@ function DashboardLayoutContent({
               {activeMenuItem?.label ?? "分身AI"}
             </span>
             <div className="flex items-center gap-1">
+              <button onClick={() => setCmdOpen(true)} className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-accent" aria-label="ページ検索">
+                <Search className="h-5 w-5 text-muted-foreground" />
+              </button>
               {unreadCount > 0 && (
                 <button onClick={() => setLocation('/dashboard')} className="relative h-8 w-8 flex items-center justify-center rounded-lg hover:bg-accent" aria-label={`通知（${unreadCount}件未読）`}>
                   <Bell className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
@@ -688,7 +803,32 @@ function DashboardLayoutContent({
             </div>
           </div>
         )}
-        <main id="main-content" className={`flex-1 p-4 ${isMobile ? "pb-20" : ""}`}>{children}</main>
+        <main id="main-content" className={`flex-1 p-4 ${isMobile ? "pb-20" : ""}`}>
+          {dunningStatus && (
+            <div className="mb-4 rounded-lg border border-red-500/50 bg-red-950/30 p-4 flex items-center gap-3" role="alert">
+              <div className="p-2 rounded-full bg-red-500/10 shrink-0">
+                <AlertTriangle className="h-5 w-5 text-red-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-red-400">お支払いの更新が必要です</p>
+                <p className="text-xs text-red-400/70">
+                  {dunningStatus.daysRemaining > 0
+                    ? `決済に問題が発生しています。${dunningStatus.daysRemaining}日以内に支払い方法を更新してください。`
+                    : "猶予期間が終了しました。お支払い方法を今すぐ更新してください。"}
+                </p>
+              </div>
+              <Link href="/plan">
+                <Button size="sm" className="bg-red-600 hover:bg-red-700 text-white gap-1.5 shrink-0">
+                  <CreditCard className="h-3.5 w-3.5" />
+                  支払いを更新
+                </Button>
+              </Link>
+            </div>
+          )}
+          <Suspense fallback={<div className="flex items-center justify-center h-64"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>}>
+            {children}
+          </Suspense>
+        </main>
         {/* Mobile Bottom Navigation */}
         {isMobile && (
           <MobileBottomNav
@@ -697,40 +837,59 @@ function DashboardLayoutContent({
             pendingRequestCount={pendingRequestCount}
             user={user}
             bottomNavItems={translatedBottomNavItems}
-            menuItems={translatedMenuItems}
+            menuGroups={translatedMenuGroups}
           />
         )}
       </SidebarInset>
+      <CommandPalette open={cmdOpen} onOpenChange={setCmdOpen} />
     </>
   );
 }
 
-/** Mobile bottom navigation bar */
 function MobileBottomNav({
   location,
   setLocation,
   pendingRequestCount,
   user,
   bottomNavItems,
-  menuItems,
+  menuGroups,
 }: {
   location: string;
   setLocation: (path: string) => void;
   pendingRequestCount: number;
   user: any;
   bottomNavItems: MenuItem[];
-  menuItems: MenuItem[];
+  menuGroups: MenuGroup[];
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
+  const [moreSearch, setMoreSearch] = useState("");
   const { t } = useTranslation();
 
   const isActive = (path: string) =>
     location === path || (path === "/chat" && location.startsWith("/chat/"));
 
-  // Items NOT in bottom nav (shown in the "more" sheet)
-  const moreItems = menuItems.filter(
-    (item) => !bottomNavItems.some((b) => b.path === item.path)
+  const bottomPaths = useMemo(() => new Set(bottomNavItems.map(b => b.path)), [bottomNavItems]);
+
+  const moreCategories = useMemo(() =>
+    menuGroups.flatMap(g => {
+      if (g.subGroups) {
+        return g.subGroups.map(sg => ({
+          label: sg.label,
+          items: sg.items.filter(item => !bottomPaths.has(item.path)),
+        }));
+      }
+      return [{ label: g.label, items: (g.items ?? []).filter(item => !bottomPaths.has(item.path)) }];
+    }).filter(cat => cat.items.length > 0),
+    [menuGroups, bottomPaths]
   );
+
+  const filteredCategories = useMemo(() => {
+    if (!moreSearch.trim()) return moreCategories;
+    const q = moreSearch.toLowerCase();
+    return moreCategories
+      .map(cat => ({ ...cat, items: cat.items.filter(item => item.label.toLowerCase().includes(q)) }))
+      .filter(cat => cat.items.length > 0);
+  }, [moreCategories, moreSearch]);
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 bg-background/95 backdrop-blur border-t safe-area-bottom" role="navigation" aria-label="モバイルナビゲーション">
@@ -755,8 +914,7 @@ function MobileBottomNav({
             </button>
           );
         })}
-        {/* More button */}
-        <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
+        <Sheet open={moreOpen} onOpenChange={(open) => { setMoreOpen(open); if (!open) setMoreSearch(""); }}>
           <SheetTrigger asChild>
             <button className="flex flex-col items-center justify-center gap-0.5 flex-1 h-full text-muted-foreground active:scale-95 transition-transform" aria-label="その他のメニュー">
               <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
@@ -767,27 +925,46 @@ function MobileBottomNav({
             <SheetHeader>
               <SheetTitle>{t("nav.menu")}</SheetTitle>
             </SheetHeader>
-            <div className="grid grid-cols-4 gap-3 py-4 overflow-y-auto">
-              {moreItems.map((item) => {
-                const active = isActive(item.path);
-                return (
-                  <button
-                    key={item.path}
-                    onClick={() => {
-                      setLocation(item.path);
-                      setMoreOpen(false);
-                    }}
-                    className={`flex flex-col items-center gap-1.5 p-3 rounded-xl transition-colors active:scale-95 ${
-                      active ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"
-                    }`}
-                    aria-label={item.label}
-                    aria-current={active ? "page" : undefined}
-                  >
-                    <item.icon className="h-5 w-5" aria-hidden="true" />
-                    <span className="text-[11px] leading-tight text-center">{item.label}</span>
-                  </button>
-                );
-              })}
+            <div className="px-1 py-2">
+              <input
+                type="text"
+                placeholder="検索..."
+                value={moreSearch}
+                onChange={(e) => setMoreSearch(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+            <div className="overflow-y-auto max-h-[50vh] pb-4">
+              {filteredCategories.map((cat, ci) => (
+                <div key={cat.label}>
+                  {ci > 0 && <div className="my-2 mx-2 h-px bg-border" />}
+                  <div className="px-3 py-1">
+                    <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{cat.label}</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 px-1">
+                    {cat.items.map((item) => {
+                      const active = isActive(item.path);
+                      return (
+                        <button
+                          key={item.path}
+                          onClick={() => { setLocation(item.path); setMoreOpen(false); }}
+                          className={`flex flex-col items-center gap-1.5 p-3 rounded-xl transition-colors active:scale-95 ${
+                            active ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"
+                          }`}
+                          aria-label={item.label}
+                          aria-current={active ? "page" : undefined}
+                        >
+                          <item.icon className="h-5 w-5" aria-hidden="true" />
+                          <span className="text-[11px] leading-tight text-center">{item.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              {filteredCategories.length === 0 && (
+                <div className="text-center py-8 text-sm text-muted-foreground">該当するページがありません</div>
+              )}
             </div>
           </SheetContent>
         </Sheet>

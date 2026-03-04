@@ -9,6 +9,7 @@ import {
   normalizeTwin,
   getCumulativeWaveform,
   getOtherPerspectiveWaveform,
+  recordFriendActivity,
 } from "../db-helpers";
 import { invokeLLM, getUserLLMConfig } from "../llm";
 import { createNotification } from "../notifications";
@@ -87,6 +88,13 @@ export const twinsRouter = router({
           await ctx.env.DB.prepare(`INSERT OR IGNORE INTO twin_visibility_rules (twinId, viewerUserId) VALUES (?,?)`).bind(twin.id, viewerId).run();
         }
       }
+
+      // Record friend activity for twin update
+      if (sets.length > 0) {
+        const twinName = input.name || twin.name || "分身AI";
+        await recordFriendActivity(ctx.env.DB, ctx.userId, "twin_update", `${twinName}を更新しました`);
+      }
+
       return { success: true };
     }),
 
@@ -5111,5 +5119,140 @@ ${reportData.mbti ? `<div class="card"><h2>MBTI</h2><p>${typeof reportData.mbti 
       },
     };
   }),
+
+  twinComparison: protectedProcedure
+    .input(z.object({ friendId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      await ensureSchema(ctx.env.DB);
+
+      // Get my twin
+      const myTwin = await getMyTwin(ctx.env.DB, ctx.userId);
+      if (!myTwin) throw new TRPCError({ code: "NOT_FOUND", message: "自分のツインが見つかりません" });
+
+      // Get friend's twin
+      const friendTwin = await ctx.env.DB.prepare(
+        `SELECT dt.*, up.displayName, up.company, up.avatarUrl FROM digital_twins dt LEFT JOIN user_profiles up ON up.userId=dt.userId WHERE dt.userId=?`
+      ).bind(input.friendId).first<any>();
+      if (!friendTwin) throw new TRPCError({ code: "NOT_FOUND", message: "友達のツインが見つかりません" });
+
+      // Verify friendship
+      const friendship = await ctx.env.DB.prepare(
+        `SELECT id FROM friendships WHERE ((userId=? AND friendId=?) OR (userId=? AND friendId=?)) AND status='accepted'`
+      ).bind(ctx.userId, input.friendId, input.friendId, ctx.userId).first<any>();
+      if (!friendship) throw new TRPCError({ code: "FORBIDDEN", message: "友達関係がありません" });
+
+      // Helper: compute personality completeness (0-100)
+      function personalityCompleteness(twin: any): number {
+        let score = 0;
+        if ((twin.personality || "").length > 30) score += 20;
+        if ((twin.description || "").length > 20) score += 15;
+        if ((twin.systemPrompt || "").length > 50) score += 15;
+        const bf = parseJson<any>(twin.bigFiveTraits);
+        if (bf && Object.keys(bf).length >= 5) score += 25;
+        if (twin.mbtiType && twin.mbtiType.length === 4) score += 15;
+        if ((twin.tags || "").split(",").filter(Boolean).length >= 3) score += 10;
+        return Math.min(score, 100);
+      }
+
+      // Helper: get Big Five trait or default
+      function getBigFive(twin: any, trait: string): number {
+        const bf = parseJson<any>(twin.bigFiveTraits);
+        return bf?.[trait] ?? 50;
+      }
+
+      // Get knowledge counts
+      const myKnowledge = await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as cnt FROM knowledge_base WHERE userId=?`
+      ).bind(ctx.userId).first<any>();
+      const friendKnowledge = await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as cnt FROM knowledge_base WHERE userId=?`
+      ).bind(input.friendId).first<any>();
+
+      // Get matching counts
+      const myMatching = await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as cnt FROM matching_sessions WHERE initiatorUserId=? AND status='completed'`
+      ).bind(ctx.userId).first<any>();
+      const friendMatching = await ctx.env.DB.prepare(
+        `SELECT COUNT(*) as cnt FROM matching_sessions WHERE initiatorUserId=? AND status='completed'`
+      ).bind(input.friendId).first<any>();
+
+      // Normalize knowledge (cap at 20 -> 100)
+      function normalizeKnowledge(cnt: number): number {
+        return Math.min(Math.round((cnt / 20) * 100), 100);
+      }
+
+      // Normalize matching (cap at 30 -> 100)
+      function normalizeMatching(cnt: number): number {
+        return Math.min(Math.round((cnt / 30) * 100), 100);
+      }
+
+      // Build 6-axis data
+      const axes = [
+        { key: "personality", label: "人格設定" },
+        { key: "knowledge", label: "ナレッジ" },
+        { key: "matching", label: "マッチング実績" },
+        { key: "openness", label: "創造性" },
+        { key: "extraversion", label: "外向性" },
+        { key: "agreeableness", label: "協調性" },
+      ];
+
+      const myScores: Record<string, number> = {
+        personality: personalityCompleteness(myTwin),
+        knowledge: normalizeKnowledge(myKnowledge?.cnt ?? 0),
+        matching: normalizeMatching(myMatching?.cnt ?? 0),
+        openness: getBigFive(myTwin, "openness"),
+        extraversion: getBigFive(myTwin, "extraversion"),
+        agreeableness: getBigFive(myTwin, "agreeableness"),
+      };
+
+      const friendScores: Record<string, number> = {
+        personality: personalityCompleteness(friendTwin),
+        knowledge: normalizeKnowledge(friendKnowledge?.cnt ?? 0),
+        matching: normalizeMatching(friendMatching?.cnt ?? 0),
+        openness: getBigFive(friendTwin, "openness"),
+        extraversion: getBigFive(friendTwin, "extraversion"),
+        agreeableness: getBigFive(friendTwin, "agreeableness"),
+      };
+
+      // Compute diff highlights
+      const diffs = axes.map(a => ({
+        key: a.key,
+        label: a.label,
+        myScore: myScores[a.key],
+        friendScore: friendScores[a.key],
+        diff: myScores[a.key] - friendScores[a.key],
+      }));
+
+      // Predicted compatibility: average closeness across all axes (100 = identical)
+      const totalDiff = diffs.reduce((sum, d) => sum + Math.abs(d.diff), 0);
+      const avgDiff = totalDiff / diffs.length;
+      const compatibilityScore = Math.round(Math.max(0, 100 - avgDiff));
+
+      // Check if there's a real matching result between these two
+      const existingMatch = await ctx.env.DB.prepare(
+        `SELECT mr.compatibilityScore FROM matching_results mr JOIN matching_sessions ms ON ms.id=mr.sessionId WHERE ((ms.twin1Id=? AND ms.twin2Id=?) OR (ms.twin1Id=? AND ms.twin2Id=?)) AND ms.status='completed' ORDER BY ms.completedAt DESC LIMIT 1`
+      ).bind(myTwin.id, friendTwin.id, friendTwin.id, myTwin.id).first<any>();
+
+      return {
+        myTwin: {
+          id: myTwin.id,
+          name: myTwin.name,
+          avatarUrl: null as string | null,
+          scores: myScores,
+        },
+        friendTwin: {
+          id: friendTwin.id,
+          name: friendTwin.name,
+          displayName: friendTwin.displayName || null,
+          avatarUrl: friendTwin.avatarUrl || null,
+          company: friendTwin.company || null,
+          scores: friendScores,
+        },
+        axes,
+        diffs,
+        compatibilityScore,
+        actualMatchScore: existingMatch ? parseFloat(existingMatch.compatibilityScore) : null,
+      };
+    }),
 
 });

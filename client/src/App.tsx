@@ -71,6 +71,7 @@ const Tournament = lazy(() => import("./pages/Tournament"));
 const Feed = lazy(() => import("./pages/Feed"));
 const SkillTree = lazy(() => import("./pages/SkillTree"));
 const NotificationDashboard = lazy(() => import("./pages/NotificationDashboard"));
+const NotificationPreferences = lazy(() => import("./pages/NotificationPreferences"));
 const MatchingInsights = lazy(() => import("./pages/MatchingInsights"));
 const NegotiationSimulator = lazy(() => import("./pages/NegotiationSimulator"));
 const EmotionDashboard = lazy(() => import("./pages/EmotionDashboard"));
@@ -151,6 +152,7 @@ const TwinEmbedCard = lazy(() => import("./pages/TwinEmbedCard"));
 const MatchingStreaks = lazy(() => import("./pages/MatchingStreaks"));
 const FriendActivity = lazy(() => import("./pages/FriendActivity"));
 const TwinHealth = lazy(() => import("./pages/TwinHealth"));
+const TwinCompare = lazy(() => import("./pages/TwinCompare"));
 
 function PageLoader() {
   return (
@@ -227,6 +229,7 @@ function Router() {
         <Route path="/feed" component={Feed} />
         <Route path="/skill-tree" component={SkillTree} />
         <Route path="/notifications" component={NotificationDashboard} />
+        <Route path="/notification-preferences" component={NotificationPreferences} />
         <Route path="/negotiation" component={NegotiationSimulator} />
         <Route path="/emotions" component={EmotionDashboard} />
         <Route path="/evolution" component={TwinEvolution} />
@@ -306,6 +309,7 @@ function Router() {
         <Route path="/streaks" component={MatchingStreaks} />
         <Route path="/friend-activity" component={FriendActivity} />
         <Route path="/twin-health" component={TwinHealth} />
+        <Route path="/twin-compare" component={TwinCompare} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
       </Switch>

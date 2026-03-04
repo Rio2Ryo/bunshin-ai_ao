@@ -87,13 +87,14 @@ export const planRouter = router({
 
     return cachedQuery(`plan:subscription:${ctx.userId}`, 300, async () => {
       try {
-        const res = await fetch(`https://api.stripe.com/v1/subscriptions?customer=${user.stripeCustomerId}&status=active&limit=1`, {
+        const res = await fetch(`https://api.stripe.com/v1/subscriptions?customer=${user.stripeCustomerId}&limit=5`, {
           headers: { Authorization: `Bearer ${ctx.env.STRIPE_SECRET_KEY}` },
         });
         const data = await res.json() as any;
-        const sub = data.data?.[0];
+        const sub = data.data?.find((s: any) => s.status === "active" || s.status === "past_due");
         if (!sub) return null;
         return {
+          status: sub.status as string,
           cancelAtPeriodEnd: sub.cancel_at_period_end as boolean,
           currentPeriodEnd: new Date(sub.current_period_end * 1000).toISOString(),
         };
@@ -101,6 +102,29 @@ export const planRouter = router({
         return null;
       }
     });
+  }),
+  getDunningStatus: protectedProcedure.query(async ({ ctx }) => {
+    await ensureSchema(ctx.env.DB);
+    const user = await ctx.env.DB.prepare(
+      `SELECT plan, subscriptionStatus, paymentFailedAt, stripeCustomerId FROM users WHERE id=?`
+    ).bind(ctx.userId).first<any>();
+    if (!user) return null;
+    if (user.subscriptionStatus !== "past_due" || !user.paymentFailedAt) return null;
+
+    const failedAt = new Date(user.paymentFailedAt);
+    const now = new Date();
+    const daysSinceFailure = Math.floor((now.getTime() - failedAt.getTime()) / (1000 * 60 * 60 * 24));
+    const gracePeriodDays = 7;
+    const daysRemaining = Math.max(gracePeriodDays - daysSinceFailure, 0);
+
+    return {
+      status: "past_due" as const,
+      plan: user.plan as string,
+      paymentFailedAt: user.paymentFailedAt as string,
+      daysSinceFailure,
+      daysRemaining,
+      hasPortal: !!user.stripeCustomerId,
+    };
   }),
   createCheckoutSession: protectedProcedure
     .input(z.object({ planId: z.string().optional(), plan: z.string().optional(), billingCycle: z.string().optional(), interval: z.string().optional() }))
@@ -279,13 +303,13 @@ export const stripeRouter = router({
     const user = await ctx.env.DB.prepare(`SELECT stripeCustomerId FROM users WHERE id=?`).bind(ctx.userId).first<any>();
     if (!user?.stripeCustomerId) return null;
     try {
-      const res = await fetch(`https://api.stripe.com/v1/subscriptions?customer=${user.stripeCustomerId}&status=active&limit=1`, {
+      const res = await fetch(`https://api.stripe.com/v1/subscriptions?customer=${user.stripeCustomerId}&limit=5`, {
         headers: { Authorization: `Bearer ${ctx.env.STRIPE_SECRET_KEY}` },
       });
       const data = await res.json() as any;
-      const sub = data.data?.[0];
+      const sub = data.data?.find((s: any) => s.status === "active" || s.status === "past_due");
       if (!sub) return null;
-      return { cancelAtPeriodEnd: sub.cancel_at_period_end, currentPeriodEnd: new Date(sub.current_period_end * 1000).toISOString() };
+      return { status: sub.status, cancelAtPeriodEnd: sub.cancel_at_period_end, currentPeriodEnd: new Date(sub.current_period_end * 1000).toISOString() };
     } catch { return null; }
   }),
 });

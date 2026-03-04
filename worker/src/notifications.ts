@@ -35,9 +35,21 @@ export async function sendLineNotification(db: D1Database, userId: number, messa
   } catch { return false; }
 }
 
-/** Create in-app notification */
+/** Check if a notification type is enabled for a user (per-type preferences) */
+async function isNotificationEnabled(db: D1Database, userId: number, type: string): Promise<boolean> {
+  try {
+    const pref = await db.prepare(
+      `SELECT enabled FROM notification_preferences WHERE userId=? AND notificationType=?`
+    ).bind(userId, type).first<any>();
+    // If no preference row exists, default to enabled
+    return pref ? !!pref.enabled : true;
+  } catch { return true; }
+}
+
+/** Create in-app notification (respects per-type preferences) */
 export async function createNotification(db: D1Database, userId: number, type: string, title: string, message: string, data?: Record<string, unknown>): Promise<void> {
   try {
+    if (!(await isNotificationEnabled(db, userId, type))) return;
     await db.prepare(`INSERT INTO notifications (userId, type, title, message, data) VALUES (?,?,?,?,?)`).bind(userId, type, title, message, data ? JSON.stringify(data) : null).run();
   } catch { /* ignore notification errors */ }
 }
@@ -220,6 +232,168 @@ export async function sendMatchingReportEmail(
           content: Buffer.from(reportHtml).toString("base64"),
           content_type: "text/html",
         }],
+      }),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
+/** Send payment failure dunning email via Resend API */
+export async function sendPaymentFailedEmail(
+  db: D1Database,
+  userId: number,
+  env: Env,
+): Promise<boolean> {
+  if (!env.RESEND_API_KEY) return false;
+  try {
+    const user = await db.prepare(`SELECT email, name FROM users WHERE id=?`).bind(userId).first<any>();
+    if (!user?.email) return false;
+
+    const fromEmail = env.RESEND_FROM_EMAIL || "noreply@bunshin-ai.pages.dev";
+    const frontendUrl = env.FRONTEND_URL || "https://bunshin-ai.pages.dev";
+
+    const emailHtml = `
+<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"></head><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+<div style="background:linear-gradient(135deg,#ef4444,#f97316);padding:24px;border-radius:12px 12px 0 0;color:#fff;text-align:center">
+  <h1 style="margin:0;font-size:24px">お支払いの更新が必要です</h1>
+</div>
+<div style="background:#f8fafc;padding:24px;border:1px solid #e5e7eb;border-top:0">
+  <p style="color:#374151">${user.name || "ユーザー"}さん、</p>
+  <p style="color:#374151">サブスクリプションのお支払いに問題が発生しました。サービスを継続してご利用いただくため、お支払い方法の更新をお願いいたします。</p>
+  <p style="color:#6b7280;font-size:14px">7日以内に更新されない場合、プランがフリープランに変更されます。</p>
+  <div style="text-align:center;margin:24px 0">
+    <a href="${frontendUrl}/plan" style="background:#ef4444;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">支払い方法を更新する</a>
+  </div>
+</div>
+<div style="padding:16px;text-align:center;color:#9ca3af;font-size:12px">
+  分身AI | <a href="${frontendUrl}" style="color:#6366f1">bunshin-ai.pages.dev</a>
+</div>
+</body></html>`;
+
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: `分身AI <${fromEmail}>`,
+        to: [user.email],
+        subject: "【分身AI】お支払いの更新が必要です",
+        html: emailHtml,
+      }),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
+/** Send re-engagement email to dormant users via Resend API */
+export async function sendReengagementEmail(
+  email: string,
+  name: string,
+  env: Env,
+): Promise<boolean> {
+  if (!env.RESEND_API_KEY) return false;
+  try {
+    const fromEmail = env.RESEND_FROM_EMAIL || "noreply@bunshin-ai.pages.dev";
+    const frontendUrl = env.FRONTEND_URL || "https://bunshin-ai.pages.dev";
+
+    const emailHtml = `
+<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"></head><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+<div style="background:linear-gradient(135deg,#06b6d4,#3b82f6);padding:24px;border-radius:12px 12px 0 0;color:#fff;text-align:center">
+  <h1 style="margin:0;font-size:24px">お帰りをお待ちしています</h1>
+  <p style="margin:8px 0 0;opacity:0.9">分身AIで新しいつながりが待っています</p>
+</div>
+<div style="background:#f8fafc;padding:24px;border:1px solid #e5e7eb;border-top:0">
+  <p style="color:#374151">${name || "ユーザー"}さん、しばらくログインされていないようです。</p>
+  <p style="color:#374151">あなたのデジタルツインが新しいマッチング相手を待っています。最近追加された新機能もぜひお試しください：</p>
+  <ul style="color:#6b7280;font-size:14px;line-height:1.8">
+    <li>AIブレインストーミング機能</li>
+    <li>週次レビュー＆インサイト</li>
+    <li>感情フロー分析</li>
+  </ul>
+  <div style="text-align:center;margin:24px 0">
+    <a href="${frontendUrl}/dashboard" style="background:#3b82f6;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">ダッシュボードを開く</a>
+  </div>
+</div>
+<div style="padding:16px;text-align:center;color:#9ca3af;font-size:12px">
+  分身AI | <a href="${frontendUrl}" style="color:#6366f1">bunshin-ai.pages.dev</a>
+  <br><span style="font-size:11px">このメールの配信停止は<a href="${frontendUrl}/notification-preferences" style="color:#6366f1">通知設定</a>から変更できます</span>
+</div>
+</body></html>`;
+
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: `分身AI <${fromEmail}>`,
+        to: [email],
+        subject: "【分身AI】お帰りをお待ちしています — 新しいつながりが待っています",
+        html: emailHtml,
+      }),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
+/** Send weekly activity digest email via Resend API */
+export async function sendWeeklyDigestEmail(
+  email: string,
+  name: string,
+  stats: { matchings: number; messages: number; newFriends: number; topScore: number | null },
+  env: Env,
+): Promise<boolean> {
+  if (!env.RESEND_API_KEY) return false;
+  try {
+    const fromEmail = env.RESEND_FROM_EMAIL || "noreply@bunshin-ai.pages.dev";
+    const frontendUrl = env.FRONTEND_URL || "https://bunshin-ai.pages.dev";
+
+    const statRows = [
+      { label: "マッチング実施", value: `${stats.matchings}回` },
+      { label: "メッセージ送信", value: `${stats.messages}通` },
+      { label: "新しい友達", value: `${stats.newFriends}人` },
+      ...(stats.topScore != null ? [{ label: "最高スコア", value: `${stats.topScore}%` }] : []),
+    ];
+    const statsHtml = statRows.map(s =>
+      `<tr><td style="padding:8px 12px;color:#374151">${s.label}</td><td style="padding:8px 12px;text-align:right;font-weight:bold;color:#6366f1">${s.value}</td></tr>`
+    ).join("");
+
+    const emailHtml = `
+<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"></head><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+<div style="background:linear-gradient(135deg,#8b5cf6,#6366f1);padding:24px;border-radius:12px 12px 0 0;color:#fff;text-align:center">
+  <h1 style="margin:0;font-size:24px">週次アクティビティダイジェスト</h1>
+  <p style="margin:8px 0 0;opacity:0.9">今週のあなたの活動サマリー</p>
+</div>
+<div style="background:#f8fafc;padding:24px;border:1px solid #e5e7eb;border-top:0">
+  <p style="color:#374151">${name || "ユーザー"}さん、今週もお疲れ様でした！</p>
+  <table style="width:100%;border-collapse:collapse;margin:16px 0;background:#fff;border-radius:8px;overflow:hidden;border:1px solid #e5e7eb">
+    ${statsHtml}
+  </table>
+  ${stats.matchings === 0 ? '<p style="color:#6b7280;font-size:14px">今週はまだマッチングを実施していません。新しいつながりを探してみませんか？</p>' : '<p style="color:#6b7280;font-size:14px">詳しいインサイトはダッシュボードでご確認いただけます。</p>'}
+  <div style="text-align:center;margin:24px 0">
+    <a href="${frontendUrl}/analytics" style="background:#6366f1;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">分析を見る</a>
+  </div>
+</div>
+<div style="padding:16px;text-align:center;color:#9ca3af;font-size:12px">
+  分身AI | <a href="${frontendUrl}" style="color:#6366f1">bunshin-ai.pages.dev</a>
+  <br><span style="font-size:11px">このメールの配信停止は<a href="${frontendUrl}/notification-preferences" style="color:#6366f1">通知設定</a>から変更できます</span>
+</div>
+</body></html>`;
+
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: `分身AI <${fromEmail}>`,
+        to: [email],
+        subject: `【分身AI】今週のダイジェスト: マッチング${stats.matchings}回・メッセージ${stats.messages}通`,
+        html: emailHtml,
       }),
     });
     return res.ok;
