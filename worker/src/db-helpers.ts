@@ -892,6 +892,12 @@ CREATE TABLE IF NOT EXISTS second_opinions (
   UNIQUE(sessionId, userId)
 );
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  version TEXT NOT NULL UNIQUE,
+  appliedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 `;
 
 // Migrations to run after schema creation (ALTER TABLE etc.)
@@ -2229,6 +2235,401 @@ CREATE INDEX IF NOT EXISTS idx_error_logs_created ON error_logs(createdAt);
 
 ALTER TABLE users ADD COLUMN subscriptionStatus TEXT;
 ALTER TABLE users ADD COLUMN paymentFailedAt TEXT;
+
+-- Note: SQLite doesn't support ALTER TABLE ADD CONSTRAINT, but we can enforce via triggers
+-- For new inserts we use CHECK constraints on the table definition.
+-- Since tables already exist, we add validation via INSERT/UPDATE triggers.
+
+CREATE TRIGGER IF NOT EXISTS trg_users_plan_check
+BEFORE INSERT ON users
+FOR EACH ROW
+WHEN NEW.plan IS NOT NULL AND NEW.plan NOT IN ('free', 'premium', 'enterprise')
+BEGIN
+  SELECT RAISE(ABORT, 'Invalid plan value');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_users_plan_check_update
+BEFORE UPDATE OF plan ON users
+FOR EACH ROW
+WHEN NEW.plan IS NOT NULL AND NEW.plan NOT IN ('free', 'premium', 'enterprise')
+BEGIN
+  SELECT RAISE(ABORT, 'Invalid plan value');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_users_role_check
+BEFORE INSERT ON users
+FOR EACH ROW
+WHEN NEW.role IS NOT NULL AND NEW.role NOT IN ('user', 'admin')
+BEGIN
+  SELECT RAISE(ABORT, 'Invalid role value');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_users_role_check_update
+BEFORE UPDATE OF role ON users
+FOR EACH ROW
+WHEN NEW.role IS NOT NULL AND NEW.role NOT IN ('user', 'admin')
+BEGIN
+  SELECT RAISE(ABORT, 'Invalid role value');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_friendships_status_check
+BEFORE INSERT ON friendships
+FOR EACH ROW
+WHEN NEW.status NOT IN ('pending', 'accepted', 'rejected', 'blocked')
+BEGIN
+  SELECT RAISE(ABORT, 'Invalid friendship status');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_friendships_status_check_update
+BEFORE UPDATE OF status ON friendships
+FOR EACH ROW
+WHEN NEW.status NOT IN ('pending', 'accepted', 'rejected', 'blocked')
+BEGIN
+  SELECT RAISE(ABORT, 'Invalid friendship status');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_matching_sessions_status_check
+BEFORE INSERT ON matching_sessions
+FOR EACH ROW
+WHEN NEW.status NOT IN ('pending', 'in_progress', 'completed', 'failed', 'cancelled')
+BEGIN
+  SELECT RAISE(ABORT, 'Invalid matching session status');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_matching_sessions_status_check_update
+BEFORE UPDATE OF status ON matching_sessions
+FOR EACH ROW
+WHEN NEW.status NOT IN ('pending', 'in_progress', 'completed', 'failed', 'cancelled')
+BEGIN
+  SELECT RAISE(ABORT, 'Invalid matching session status');
+END;
+`;
+
+// ============ Missing Indexes ============
+// Adds indexes on FK / lookup columns not already covered by existing indexes or UNIQUE constraints.
+// Convention: idx_tablename_column or idx_tablename_col1_col2 for composites.
+const INDEX_SQL = `
+-- SCHEMA_SQL tables --
+
+-- chat_sessions: missing twinId (userId already indexed)
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_twinId ON chat_sessions(twinId);
+
+-- intimacy_scores: missing friendId (userId already indexed)
+CREATE INDEX IF NOT EXISTS idx_intimacy_friendId ON intimacy_scores(friendId);
+CREATE INDEX IF NOT EXISTS idx_intimacy_userId_friendId ON intimacy_scores(userId, friendId);
+
+-- line_connections: missing userId
+CREATE INDEX IF NOT EXISTS idx_line_connections_userId ON line_connections(userId);
+
+-- point_redemptions: missing userId, status
+CREATE INDEX IF NOT EXISTS idx_point_redemptions_userId ON point_redemptions(userId);
+CREATE INDEX IF NOT EXISTS idx_point_redemptions_status ON point_redemptions(status);
+
+-- twin_skill_levels: missing twinId, userId
+CREATE INDEX IF NOT EXISTS idx_twin_skill_levels_twinId ON twin_skill_levels(twinId);
+CREATE INDEX IF NOT EXISTS idx_twin_skill_levels_userId ON twin_skill_levels(userId);
+
+-- twin_milestones: missing twinId, userId
+CREATE INDEX IF NOT EXISTS idx_twin_milestones_twinId ON twin_milestones(twinId);
+CREATE INDEX IF NOT EXISTS idx_twin_milestones_userId ON twin_milestones(userId);
+
+-- conversation_learning: userId is UNIQUE, but twinId is not indexed
+CREATE INDEX IF NOT EXISTS idx_conversation_learning_twinId ON conversation_learning(twinId);
+
+-- ai_provider_settings: missing userId
+CREATE INDEX IF NOT EXISTS idx_ai_provider_settings_userId ON ai_provider_settings(userId);
+
+-- persona_reviews: (templateId, userId) is UNIQUE — templateId covered, need userId alone
+CREATE INDEX IF NOT EXISTS idx_persona_reviews_userId ON persona_reviews(userId);
+
+-- moderation_actions: missing adminUserId
+CREATE INDEX IF NOT EXISTS idx_moderation_actions_adminUserId ON moderation_actions(adminUserId);
+
+-- content_reports: has status, missing reporterUserId
+CREATE INDEX IF NOT EXISTS idx_content_reports_reporter ON content_reports(reporterUserId);
+
+-- matching_session_participants: has sessionId, missing userId
+CREATE INDEX IF NOT EXISTS idx_msp_userId ON matching_session_participants(userId);
+
+-- matching_comments: has sessionId, missing userId
+CREATE INDEX IF NOT EXISTS idx_matching_comments_userId ON matching_comments(userId);
+
+-- value_scenario_responses: has userId, missing twinId
+CREATE INDEX IF NOT EXISTS idx_vsr_twinId ON value_scenario_responses(twinId);
+
+-- cumulative_waveforms: has userId, missing twinId
+CREATE INDEX IF NOT EXISTS idx_cum_waveforms_twinId ON cumulative_waveforms(twinId);
+
+-- other_perspective_waveforms: has userId, missing twinId
+CREATE INDEX IF NOT EXISTS idx_other_waveforms_twinId ON other_perspective_waveforms(twinId);
+
+-- auto_matching_schedules: has userId, missing friendId
+CREATE INDEX IF NOT EXISTS idx_auto_matching_friendId ON auto_matching_schedules(friendId);
+
+-- uploaded_files: has userId, missing twinId
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_twinId ON uploaded_files(twinId);
+
+-- matching_sessions: add status index for common WHERE status=X queries
+CREATE INDEX IF NOT EXISTS idx_matching_sessions_status ON matching_sessions(status);
+
+-- friendships: add status index for WHERE status='accepted' queries
+CREATE INDEX IF NOT EXISTS idx_friendships_status ON friendships(status);
+
+-- error_logs: missing userId
+CREATE INDEX IF NOT EXISTS idx_error_logs_userId ON error_logs(userId);
+
+-- MIGRATIONS_SQL tables --
+
+-- feed_likes: (feedItemId, userId) is UNIQUE — feedItemId covered, need userId alone
+CREATE INDEX IF NOT EXISTS idx_feed_likes_userId ON feed_likes(userId);
+
+-- matching_template_uses: missing templateId, userId
+CREATE INDEX IF NOT EXISTS idx_matching_template_uses_templateId ON matching_template_uses(templateId);
+CREATE INDEX IF NOT EXISTS idx_matching_template_uses_userId ON matching_template_uses(userId);
+
+-- twin_personas: missing twinId
+CREATE INDEX IF NOT EXISTS idx_twin_personas_twinId ON twin_personas(twinId);
+
+-- workspace_board_items: missing workspaceId, userId
+CREATE INDEX IF NOT EXISTS idx_ws_board_items_ws ON workspace_board_items(workspaceId);
+CREATE INDEX IF NOT EXISTS idx_ws_board_items_userId ON workspace_board_items(userId);
+
+-- negotiation_sessions: missing userId, status
+CREATE INDEX IF NOT EXISTS idx_negotiation_sessions_userId ON negotiation_sessions(userId);
+CREATE INDEX IF NOT EXISTS idx_negotiation_sessions_status ON negotiation_sessions(status);
+
+-- negotiation_turns: missing negotiationId
+CREATE INDEX IF NOT EXISTS idx_negotiation_turns_negotiationId ON negotiation_turns(negotiationId);
+
+-- twin_evolution_events: missing twinId, userId
+CREATE INDEX IF NOT EXISTS idx_twin_evolution_events_twinId ON twin_evolution_events(twinId);
+CREATE INDEX IF NOT EXISTS idx_twin_evolution_events_userId ON twin_evolution_events(userId);
+
+-- matching_challenges: missing creatorId, status
+CREATE INDEX IF NOT EXISTS idx_matching_challenges_creatorId ON matching_challenges(creatorId);
+CREATE INDEX IF NOT EXISTS idx_matching_challenges_status ON matching_challenges(status);
+
+-- challenge_participants: (challengeId, userId) is UNIQUE — need userId alone
+CREATE INDEX IF NOT EXISTS idx_challenge_participants_userId ON challenge_participants(userId);
+
+-- matching_strategies: missing userId, friendId
+CREATE INDEX IF NOT EXISTS idx_matching_strategies_userId ON matching_strategies(userId);
+CREATE INDEX IF NOT EXISTS idx_matching_strategies_friendId ON matching_strategies(friendId);
+
+-- twin_collaborations: missing userId
+CREATE INDEX IF NOT EXISTS idx_twin_collaborations_userId ON twin_collaborations(userId);
+
+-- twin_collaboration_turns: missing collaborationId
+CREATE INDEX IF NOT EXISTS idx_twin_collab_turns_collaborationId ON twin_collaboration_turns(collaborationId);
+
+-- matching_action_items: missing sessionId, userId, status
+CREATE INDEX IF NOT EXISTS idx_matching_action_items_sessionId ON matching_action_items(sessionId);
+CREATE INDEX IF NOT EXISTS idx_matching_action_items_userId ON matching_action_items(userId);
+CREATE INDEX IF NOT EXISTS idx_matching_action_items_status ON matching_action_items(status);
+
+-- matching_outcomes: missing sessionId, userId
+CREATE INDEX IF NOT EXISTS idx_matching_outcomes_sessionId ON matching_outcomes(sessionId);
+CREATE INDEX IF NOT EXISTS idx_matching_outcomes_userId ON matching_outcomes(userId);
+
+-- matching_digests: missing userId
+CREATE INDEX IF NOT EXISTS idx_matching_digests_userId ON matching_digests(userId);
+
+-- matching_playbooks: missing userId
+CREATE INDEX IF NOT EXISTS idx_matching_playbooks_userId ON matching_playbooks(userId);
+
+-- twin_memories: missing twinId, userId
+CREATE INDEX IF NOT EXISTS idx_twin_memories_twinId ON twin_memories(twinId);
+CREATE INDEX IF NOT EXISTS idx_twin_memories_userId ON twin_memories(userId);
+
+-- scenario_comparisons: missing userId
+CREATE INDEX IF NOT EXISTS idx_scenario_comparisons_userId ON scenario_comparisons(userId);
+
+-- custom_widgets: missing userId
+CREATE INDEX IF NOT EXISTS idx_custom_widgets_userId ON custom_widgets(userId);
+
+-- twin_versions: missing twinId, userId
+CREATE INDEX IF NOT EXISTS idx_twin_versions_twinId ON twin_versions(twinId);
+CREATE INDEX IF NOT EXISTS idx_twin_versions_userId ON twin_versions(userId);
+
+-- roi_goals: missing userId
+CREATE INDEX IF NOT EXISTS idx_roi_goals_userId ON roi_goals(userId);
+
+-- twin_coaching_sessions: missing twinId, userId, status
+CREATE INDEX IF NOT EXISTS idx_twin_coaching_sessions_twinId ON twin_coaching_sessions(twinId);
+CREATE INDEX IF NOT EXISTS idx_twin_coaching_sessions_userId ON twin_coaching_sessions(userId);
+CREATE INDEX IF NOT EXISTS idx_twin_coaching_sessions_status ON twin_coaching_sessions(status);
+
+-- twin_coaching_messages: missing sessionId
+CREATE INDEX IF NOT EXISTS idx_twin_coaching_messages_sessionId ON twin_coaching_messages(sessionId);
+
+-- matching_calendar_events: missing userId, status
+CREATE INDEX IF NOT EXISTS idx_matching_calendar_events_userId ON matching_calendar_events(userId);
+CREATE INDEX IF NOT EXISTS idx_matching_calendar_events_status ON matching_calendar_events(status);
+
+-- matching_reminders: missing userId, eventId
+CREATE INDEX IF NOT EXISTS idx_matching_reminders_userId ON matching_reminders(userId);
+CREATE INDEX IF NOT EXISTS idx_matching_reminders_eventId ON matching_reminders(eventId);
+
+-- sandbox_sessions: missing userId, twinId
+CREATE INDEX IF NOT EXISTS idx_sandbox_sessions_userId ON sandbox_sessions(userId);
+CREATE INDEX IF NOT EXISTS idx_sandbox_sessions_twinId ON sandbox_sessions(twinId);
+
+-- twin_benchmarks: missing userId, twinId
+CREATE INDEX IF NOT EXISTS idx_twin_benchmarks_userId ON twin_benchmarks(userId);
+CREATE INDEX IF NOT EXISTS idx_twin_benchmarks_twinId ON twin_benchmarks(twinId);
+
+-- debate_sessions: missing userId
+CREATE INDEX IF NOT EXISTS idx_debate_sessions_userId ON debate_sessions(userId);
+
+-- emotion_journal_entries: missing userId, twinId
+CREATE INDEX IF NOT EXISTS idx_emotion_journal_entries_userId ON emotion_journal_entries(userId);
+CREATE INDEX IF NOT EXISTS idx_emotion_journal_entries_twinId ON emotion_journal_entries(twinId);
+
+-- emotion_alerts: missing userId
+CREATE INDEX IF NOT EXISTS idx_emotion_alerts_userId ON emotion_alerts(userId);
+
+-- community_events: missing organizerId, status
+CREATE INDEX IF NOT EXISTS idx_community_events_organizerId ON community_events(organizerId);
+CREATE INDEX IF NOT EXISTS idx_community_events_status ON community_events(status);
+
+-- twin_goals: missing userId, twinId
+CREATE INDEX IF NOT EXISTS idx_twin_goals_userId ON twin_goals(userId);
+CREATE INDEX IF NOT EXISTS idx_twin_goals_twinId ON twin_goals(twinId);
+
+-- matching_heatmap_analyses: missing userId
+CREATE INDEX IF NOT EXISTS idx_matching_heatmap_analyses_userId ON matching_heatmap_analyses(userId);
+
+-- storyboard_collections: missing userId
+CREATE INDEX IF NOT EXISTS idx_storyboard_collections_userId ON storyboard_collections(userId);
+
+-- knowledge_quizzes: missing userId, twinId
+CREATE INDEX IF NOT EXISTS idx_knowledge_quizzes_userId ON knowledge_quizzes(userId);
+CREATE INDEX IF NOT EXISTS idx_knowledge_quizzes_twinId ON knowledge_quizzes(twinId);
+
+-- quiz_attempts: missing userId, quizId
+CREATE INDEX IF NOT EXISTS idx_quiz_attempts_userId ON quiz_attempts(userId);
+CREATE INDEX IF NOT EXISTS idx_quiz_attempts_quizId ON quiz_attempts(quizId);
+
+-- facilitator_interventions: missing sessionId
+CREATE INDEX IF NOT EXISTS idx_facilitator_interventions_sessionId ON facilitator_interventions(sessionId);
+
+-- persona_ab_tests: missing userId, twinId
+CREATE INDEX IF NOT EXISTS idx_persona_ab_tests_userId ON persona_ab_tests(userId);
+CREATE INDEX IF NOT EXISTS idx_persona_ab_tests_twinId ON persona_ab_tests(twinId);
+
+-- session_tags: (sessionId, tag) is UNIQUE — need userId alone
+CREATE INDEX IF NOT EXISTS idx_session_tags_userId ON session_tags(userId);
+
+-- theme_recommendations: missing userId
+CREATE INDEX IF NOT EXISTS idx_theme_recommendations_userId ON theme_recommendations(userId);
+
+-- success_patterns: missing userId
+CREATE INDEX IF NOT EXISTS idx_success_patterns_userId ON success_patterns(userId);
+
+-- interactive_scenarios: missing userId, status
+CREATE INDEX IF NOT EXISTS idx_interactive_scenarios_userId ON interactive_scenarios(userId);
+CREATE INDEX IF NOT EXISTS idx_interactive_scenarios_status ON interactive_scenarios(status);
+
+-- translation_chat_messages: missing sessionId
+CREATE INDEX IF NOT EXISTS idx_translation_chat_messages_sessionId ON translation_chat_messages(sessionId);
+
+-- context_switch_rules: missing userId, twinId
+CREATE INDEX IF NOT EXISTS idx_context_switch_rules_userId ON context_switch_rules(userId);
+CREATE INDEX IF NOT EXISTS idx_context_switch_rules_twinId ON context_switch_rules(twinId);
+
+-- context_switch_logs: missing ruleId
+CREATE INDEX IF NOT EXISTS idx_context_switch_logs_ruleId ON context_switch_logs(ruleId);
+
+-- comparison_timelines: missing userId
+CREATE INDEX IF NOT EXISTS idx_comparison_timelines_userId ON comparison_timelines(userId);
+
+-- learning_curricula: missing twinId, userId
+CREATE INDEX IF NOT EXISTS idx_learning_curricula_twinId ON learning_curricula(twinId);
+CREATE INDEX IF NOT EXISTS idx_learning_curricula_userId ON learning_curricula(userId);
+
+-- curriculum_progress: (curriculumId, lessonIndex) is UNIQUE — curriculumId covered, add status index
+CREATE INDEX IF NOT EXISTS idx_curriculum_progress_status ON curriculum_progress(status);
+
+-- external_connectors: missing userId, twinId
+CREATE INDEX IF NOT EXISTS idx_external_connectors_userId ON external_connectors(userId);
+CREATE INDEX IF NOT EXISTS idx_external_connectors_twinId ON external_connectors(twinId);
+
+-- connector_sync_logs: missing connectorId, userId
+CREATE INDEX IF NOT EXISTS idx_connector_sync_logs_connectorId ON connector_sync_logs(connectorId);
+CREATE INDEX IF NOT EXISTS idx_connector_sync_logs_userId ON connector_sync_logs(userId);
+
+-- learning_journal_entries: missing twinId, userId
+CREATE INDEX IF NOT EXISTS idx_learning_journal_entries_twinId ON learning_journal_entries(twinId);
+CREATE INDEX IF NOT EXISTS idx_learning_journal_entries_userId ON learning_journal_entries(userId);
+
+-- journal_comments: missing journalEntryId
+CREATE INDEX IF NOT EXISTS idx_journal_comments_journalEntryId ON journal_comments(journalEntryId);
+
+-- team_battles: missing creatorUserId, status
+CREATE INDEX IF NOT EXISTS idx_team_battles_creatorUserId ON team_battles(creatorUserId);
+CREATE INDEX IF NOT EXISTS idx_team_battles_status ON team_battles(status);
+
+-- risk_assessments: missing userId, sessionId
+CREATE INDEX IF NOT EXISTS idx_risk_assessments_userId ON risk_assessments(userId);
+CREATE INDEX IF NOT EXISTS idx_risk_assessments_sessionId ON risk_assessments(sessionId);
+
+-- roleplay_sessions: missing twinId, userId
+CREATE INDEX IF NOT EXISTS idx_roleplay_sessions_twinId ON roleplay_sessions(twinId);
+CREATE INDEX IF NOT EXISTS idx_roleplay_sessions_userId ON roleplay_sessions(userId);
+
+-- impact_map_entries: missing userId, sessionId
+CREATE INDEX IF NOT EXISTS idx_impact_map_entries_userId ON impact_map_entries(userId);
+CREATE INDEX IF NOT EXISTS idx_impact_map_entries_sessionId ON impact_map_entries(sessionId);
+
+-- impact_map_reports: missing userId
+CREATE INDEX IF NOT EXISTS idx_impact_map_reports_userId ON impact_map_reports(userId);
+
+-- twin_clones: missing sourceTwinId, clonedByUserId
+CREATE INDEX IF NOT EXISTS idx_twin_clones_sourceTwinId ON twin_clones(sourceTwinId);
+CREATE INDEX IF NOT EXISTS idx_twin_clones_clonedByUserId ON twin_clones(clonedByUserId);
+
+-- rehearsal_sessions: missing userId, twinId
+CREATE INDEX IF NOT EXISTS idx_rehearsal_sessions_userId ON rehearsal_sessions(userId);
+CREATE INDEX IF NOT EXISTS idx_rehearsal_sessions_twinId ON rehearsal_sessions(twinId);
+
+-- emotion_calibration: missing userId, twinId
+CREATE INDEX IF NOT EXISTS idx_emotion_calibration_userId ON emotion_calibration(userId);
+CREATE INDEX IF NOT EXISTS idx_emotion_calibration_twinId ON emotion_calibration(twinId);
+
+-- multimodal_inputs: missing userId, twinId
+CREATE INDEX IF NOT EXISTS idx_multimodal_inputs_userId ON multimodal_inputs(userId);
+CREATE INDEX IF NOT EXISTS idx_multimodal_inputs_twinId ON multimodal_inputs(twinId);
+
+-- brainstorm_sessions: missing userId
+CREATE INDEX IF NOT EXISTS idx_brainstorm_sessions_userId ON brainstorm_sessions(userId);
+
+-- matching_voice_notes: missing sessionId, userId
+CREATE INDEX IF NOT EXISTS idx_matching_voice_notes_sessionId ON matching_voice_notes(sessionId);
+CREATE INDEX IF NOT EXISTS idx_matching_voice_notes_userId ON matching_voice_notes(userId);
+
+-- twin_faqs: missing twinId
+CREATE INDEX IF NOT EXISTS idx_twin_faqs_twinId ON twin_faqs(twinId);
+
+-- twin_templates: missing userId, twinId
+CREATE INDEX IF NOT EXISTS idx_twin_templates_userId ON twin_templates(userId);
+CREATE INDEX IF NOT EXISTS idx_twin_templates_twinId ON twin_templates(twinId);
+
+-- action_plans: missing sessionId, userId
+CREATE INDEX IF NOT EXISTS idx_action_plans_sessionId ON action_plans(sessionId);
+CREATE INDEX IF NOT EXISTS idx_action_plans_userId ON action_plans(userId);
+
+-- tournaments: missing createdBy, status
+CREATE INDEX IF NOT EXISTS idx_tournaments_createdBy ON tournaments(createdBy);
+CREATE INDEX IF NOT EXISTS idx_tournaments_status ON tournaments(status);
+
+-- tournament_matches: missing status
+CREATE INDEX IF NOT EXISTS idx_tournament_matches_status ON tournament_matches(status);
+
+-- cross_culture_analyses: (sessionId, userId) is UNIQUE — add userId alone for user lookups
+CREATE INDEX IF NOT EXISTS idx_cross_culture_analyses_userId ON cross_culture_analyses(userId);
+
+-- matching_predictions: missing friendId
+CREATE INDEX IF NOT EXISTS idx_matching_predictions_friendId ON matching_predictions(friendId);
 `;
 
 let schemaReady = false;
@@ -2237,40 +2638,89 @@ let schemaReady = false;
  * Split multi-statement SQL into individual statements and run them via batch().
  * D1's exec() can crash with metadata aggregation errors on large schemas,
  * so we use prepare().run() for each statement via batch().
+ * Handles BEGIN...END blocks (e.g. triggers) that contain inner semicolons.
  */
 function splitStatements(sql: string): string[] {
-  return sql
-    .split(";")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  const results: string[] = [];
+  let current = "";
+  let inBlock = false;
+
+  for (const part of sql.split(";")) {
+    const trimmed = part.trim();
+    if (!trimmed && !inBlock) continue;
+
+    if (inBlock) {
+      current += ";" + part;
+      // Check if this part closes the BEGIN block (END on its own line)
+      if (/\bEND\s*$/i.test(trimmed)) {
+        results.push(current.trim());
+        current = "";
+        inBlock = false;
+      }
+    } else if (/\bBEGIN\s*$/im.test(trimmed)) {
+      // This part opens a BEGIN block — accumulate until END
+      current = part.trim();
+      inBlock = true;
+    } else if (trimmed.length > 0) {
+      results.push(trimmed);
+    }
+  }
+
+  // If anything remains (shouldn't normally happen), push it
+  if (current.trim().length > 0) {
+    results.push(current.trim());
+  }
+
+  return results;
 }
 
 export async function ensureSchema(db: D1Database) {
   if (schemaReady) return;
+
+  // 1. Core schema (CREATE TABLE/INDEX IF NOT EXISTS — always safe to re-run)
   const stmts = splitStatements(SCHEMA_SQL);
-  // D1 batch() executes all prepared statements in a single round-trip
   await db.batch(stmts.map((s) => db.prepare(s)));
 
-  // Run migrations (ignore errors for already-applied migrations)
+  // 2. Migrations with tracking (ALTER TABLE etc. — only run once)
   const migrations = splitStatements(MIGRATIONS_SQL);
-  for (const m of migrations) {
+
+  // Get already-applied migration versions
+  let applied = new Set<string>();
+  try {
+    const rows = await db.prepare(`SELECT version FROM schema_migrations`).all<{ version: string }>();
+    for (const r of rows.results ?? []) applied.add(r.version);
+  } catch {
+    // Table might not exist yet on very first run — will be created by SCHEMA_SQL above
+  }
+
+  // Run only unapplied migrations
+  for (let i = 0; i < migrations.length; i++) {
+    const m = migrations[i];
+    const version = `m${String(i).padStart(4, "0")}`;
+    if (applied.has(version)) continue;
     try {
       await db.prepare(m).run();
+      await db.prepare(`INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)`).bind(version).run();
     } catch {
-      // Column already exists or migration already applied
+      // Column already exists or table already exists — record as applied anyway
+      try {
+        await db.prepare(`INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)`).bind(version).run();
+      } catch { /* ignore */ }
     }
   }
+
+  // 3. Indexes (CREATE INDEX IF NOT EXISTS — always safe to re-run)
+  const indexStmts = splitStatements(INDEX_SQL);
+  await db.batch(indexStmts.map((s) => db.prepare(s)));
 
   // Seed default redeemable products
   try {
     await db.batch([
-      db.prepare(`INSERT OR IGNORE INTO redeemable_products (id, name, description, pointsCost, category, isActive, sortOrder) VALUES (1, 'AIチャット追加枠 (10回)', '分身AIとの追加チャット枠', 100, 'デジタル', 1, 1)`),
-      db.prepare(`INSERT OR IGNORE INTO redeemable_products (id, name, description, pointsCost, category, isActive, sortOrder) VALUES (2, 'プレミアムマッチング分析', '詳細なマッチング分析レポート', 500, 'デジタル', 1, 2)`),
-      db.prepare(`INSERT OR IGNORE INTO redeemable_products (id, name, description, pointsCost, category, isActive, sortOrder) VALUES (3, 'Amazonギフトカード ¥500', 'Amazonギフトカード', 5000, 'ギフト', 1, 3)`),
+      db.prepare(`INSERT OR IGNORE INTO redeemable_products (id, name, description, pointCost, category, stockCount) VALUES (1, 'プレミアム1日体験', 'プレミアムプランを1日間体験できます', 100, 'plan_upgrade', 999)`),
+      db.prepare(`INSERT OR IGNORE INTO redeemable_products (id, name, description, pointCost, category, stockCount) VALUES (2, 'マッチング追加枠', '今月のマッチング回数を1回追加', 50, 'matching_boost', 999)`),
+      db.prepare(`INSERT OR IGNORE INTO redeemable_products (id, name, description, pointCost, category, stockCount) VALUES (3, 'カスタムテーマ', 'マッチング対話のカスタムテーマを作成', 30, 'customization', 999)`),
     ]);
-  } catch {
-    // Products already seeded or table not ready
-  }
+  } catch { /* seed failures are non-critical */ }
 
   schemaReady = true;
 }

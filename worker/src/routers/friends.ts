@@ -549,11 +549,24 @@ JSON形式で出力:
     const twin = await getMyTwin(ctx.env.DB, ctx.userId);
     if (!twin) return { friends: [] as any[] };
 
-    // Get all friends
-    const friendships = await ctx.env.DB.prepare(
-      `SELECT CASE WHEN userId=? THEN friendId ELSE userId END as fId
-       FROM friendships WHERE (userId=? OR friendId=?) AND status='accepted'`
-    ).bind(ctx.userId, ctx.userId, ctx.userId).all<any>();
+    // Single JOIN query: friends + users + twins + intimacy scores (replaces N+1 loop)
+    const rows = await ctx.env.DB.prepare(
+      `SELECT
+        CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END as fId,
+        u.name as friendName,
+        dt.id as friendTwinId,
+        dt.name as friendTwinName,
+        iscore.intimacyScore,
+        iscore.intimacyLevel,
+        iscore.predictionAccuracy,
+        iscore.totalPredictions,
+        iscore.totalMessageCount
+       FROM friendships f
+       JOIN users u ON u.id = CASE WHEN f.userId=? THEN f.friendId ELSE f.userId END
+       LEFT JOIN digital_twins dt ON dt.userId = u.id
+       LEFT JOIN intimacy_scores iscore ON iscore.userId=? AND iscore.friendId = u.id
+       WHERE (f.userId=? OR f.friendId=?) AND f.status='accepted'`
+    ).bind(ctx.userId, ctx.userId, ctx.userId, ctx.userId, ctx.userId).all<any>();
 
     // Get my self waveform
     const selfWave = await ctx.env.DB.prepare(
@@ -561,25 +574,44 @@ JSON形式で出力:
     ).bind(ctx.userId, twin.id).first<any>();
     const selfData = selfWave ? (parseJson<any>(selfWave.waveformData) ?? { virtue: 50, mine: 50 }) : null;
 
-    const friends: any[] = [];
-    for (const f of friendships.results ?? []) {
-      const friendUser = await ctx.env.DB.prepare(`SELECT id, name FROM users WHERE id=?`).bind(f.fId).first<any>();
-      const friendTwin = await ctx.env.DB.prepare(`SELECT id, name FROM digital_twins WHERE userId=? LIMIT 1`).bind(f.fId).first<any>();
-      const intimacy = await ctx.env.DB.prepare(`SELECT * FROM intimacy_scores WHERE userId=? AND friendId=?`).bind(ctx.userId, f.fId).first<any>();
-
-      // Get this friend's twin's perspective on me
-      let friendPerspective = null;
-      if (friendTwin) {
-        const avg = await ctx.env.DB.prepare(
-          `SELECT AVG(virtueScore) as v, AVG(mineScore) as m, COUNT(*) as c
-           FROM other_perspective_waveforms WHERE userId=? AND twinId=? AND evaluatorTwinId=?`
-        ).bind(ctx.userId, twin.id, friendTwin.id).first<any>();
-        if (avg && avg.c > 0) {
-          friendPerspective = { virtue: Math.round(avg.v ?? 50), mine: Math.round(avg.m ?? 50), evalCount: avg.c };
+    // Bulk query: all friends' twin perspectives on me (replaces per-friend perspective queries)
+    const friendTwinIds = (rows.results ?? []).map((r: any) => r.friendTwinId).filter(Boolean);
+    const perspectiveMap = new Map<string, { virtue: number; mine: number; evalCount: number }>();
+    if (friendTwinIds.length > 0) {
+      const placeholders = friendTwinIds.map(() => "?").join(",");
+      const perspRows = await ctx.env.DB.prepare(
+        `SELECT evaluatorTwinId, AVG(virtueScore) as v, AVG(mineScore) as m, COUNT(*) as c
+         FROM other_perspective_waveforms
+         WHERE userId=? AND twinId=? AND evaluatorTwinId IN (${placeholders})
+         GROUP BY evaluatorTwinId`
+      ).bind(ctx.userId, twin.id, ...friendTwinIds).all<any>();
+      for (const p of perspRows.results ?? []) {
+        if (p.c > 0) {
+          perspectiveMap.set(p.evaluatorTwinId, {
+            virtue: Math.round(p.v ?? 50),
+            mine: Math.round(p.m ?? 50),
+            evalCount: p.c,
+          });
         }
       }
+    }
 
-      // Calculate gap between self and this friend's perspective
+    // Intimacy level lookup table
+    const levels = [
+      { min: 0, level: "stranger", label: "見知らぬ人" },
+      { min: 20, level: "acquaintance", label: "知り合い" },
+      { min: 40, level: "friend", label: "友達" },
+      { min: 60, level: "close_friend", label: "親しい友人" },
+      { min: 80, level: "best_friend", label: "親友" },
+    ] as const;
+
+    // Build friends array from pre-fetched data
+    const friends = (rows.results ?? []).map((r: any) => {
+      const score = r.intimacyScore ?? 0;
+      const lvl = [...levels].reverse().find(l => score >= l.min) ?? levels[0];
+
+      const friendPerspective = r.friendTwinId ? (perspectiveMap.get(r.friendTwinId) ?? null) : null;
+
       let gap = null;
       if (selfData && friendPerspective) {
         gap = {
@@ -588,29 +620,20 @@ JSON形式で出力:
         };
       }
 
-      const levels = [
-        { min: 0, level: "stranger", label: "見知らぬ人" },
-        { min: 20, level: "acquaintance", label: "知り合い" },
-        { min: 40, level: "friend", label: "友達" },
-        { min: 60, level: "close_friend", label: "親しい友人" },
-        { min: 80, level: "best_friend", label: "親友" },
-      ] as const;
-      const lvl = [...levels].reverse().find(l => (intimacy?.intimacyScore ?? 0) >= l.min) ?? levels[0];
-
-      friends.push({
-        friendId: f.fId,
-        friendName: friendUser?.name || "不明",
-        twinName: friendTwin?.name || null,
-        intimacyScore: intimacy?.intimacyScore ?? 0,
-        intimacyLevel: intimacy?.intimacyLevel ?? "stranger",
+      return {
+        friendId: r.fId,
+        friendName: r.friendName || "不明",
+        twinName: r.friendTwinName || null,
+        intimacyScore: score,
+        intimacyLevel: r.intimacyLevel ?? "stranger",
         intimacyLevelLabel: lvl.label,
-        predictionAccuracy: intimacy?.predictionAccuracy ?? null,
-        totalPredictions: intimacy?.totalPredictions ?? 0,
-        totalMessageCount: intimacy?.totalMessageCount ?? 0,
+        predictionAccuracy: r.predictionAccuracy ?? null,
+        totalPredictions: r.totalPredictions ?? 0,
+        totalMessageCount: r.totalMessageCount ?? 0,
         friendPerspective,
         gap,
-      });
-    }
+      };
+    });
 
     // Sort by intimacy score descending
     friends.sort((a, b) => b.intimacyScore - a.intimacyScore);
