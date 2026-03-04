@@ -19,10 +19,12 @@
  */
 
 import type { Env } from "./trpc";
+import { ensureSchema } from "./db-helpers";
 
 export class WorkspaceRoom implements DurableObject {
   private ctx: DurableObjectState;
   private env: Env;
+  private schemaInitialized = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     this.ctx = ctx;
@@ -52,7 +54,19 @@ export class WorkspaceRoom implements DurableObject {
     // Broadcast updated presence
     this.broadcastPresence();
 
+    // Set alarm for stale DO cleanup (30 minutes)
+    this.ctx.storage.setAlarm(Date.now() + 30 * 60 * 1000);
+
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async alarm(): Promise<void> {
+    const sockets = this.ctx.getWebSockets();
+    if (sockets.length === 0) {
+      await this.ctx.storage.deleteAll();
+    } else {
+      this.ctx.storage.setAlarm(Date.now() + 30 * 60 * 1000);
+    }
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
@@ -89,7 +103,6 @@ export class WorkspaceRoom implements DurableObject {
         break;
 
       case "item_update":
-        // Broadcast to all others
         this.broadcastExcept(ws, {
           type: "item_update",
           itemId: data.itemId,
@@ -97,6 +110,8 @@ export class WorkspaceRoom implements DurableObject {
           userId: meta.userId,
           userName: meta.userName,
         });
+        // Fire-and-forget D1 persistence
+        this.persistItemUpdate(meta.workspaceId, data.itemId, data.changes, meta.userId);
         break;
 
       case "item_add":
@@ -106,6 +121,8 @@ export class WorkspaceRoom implements DurableObject {
           userId: meta.userId,
           userName: meta.userName,
         });
+        // Fire-and-forget D1 persistence
+        this.persistItemAdd(meta.workspaceId, data.item, meta.userId);
         break;
 
       case "item_delete":
@@ -115,6 +132,8 @@ export class WorkspaceRoom implements DurableObject {
           userId: meta.userId,
           userName: meta.userName,
         });
+        // Fire-and-forget D1 persistence
+        this.persistItemDelete(data.itemId);
         break;
 
       case "presence":
@@ -130,6 +149,49 @@ export class WorkspaceRoom implements DurableObject {
   async webSocketError(ws: WebSocket): Promise<void> {
     this.broadcastPresence();
   }
+
+  // ---- D1 Persistence Methods (fire-and-forget) ----
+
+  private async persistItemUpdate(workspaceId: number, itemId: number, changes: Record<string, any>, userId: number): Promise<void> {
+    try {
+      if (!this.schemaInitialized) { await ensureSchema(this.env.DB); this.schemaInitialized = true; }
+      const allowedFields = ["title", "content", "metadata", "positionX", "positionY", "width", "height"];
+      const updates: string[] = [];
+      const params: any[] = [];
+      for (const [key, value] of Object.entries(changes)) {
+        if (allowedFields.includes(key)) {
+          updates.push(`${key}=?`);
+          params.push(key === "metadata" ? JSON.stringify(value) : value);
+        }
+      }
+      if (updates.length === 0) return;
+      updates.push("lastEditedBy=?", "updatedAt=datetime('now')");
+      params.push(userId, itemId);
+      await this.env.DB.prepare(`UPDATE workspace_items SET ${updates.join(",")} WHERE id=?`).bind(...params).run();
+    } catch {}
+  }
+
+  private async persistItemAdd(workspaceId: number, item: any, userId: number): Promise<void> {
+    try {
+      if (!this.schemaInitialized) { await ensureSchema(this.env.DB); this.schemaInitialized = true; }
+      await this.env.DB.prepare(
+        `INSERT INTO workspace_items (workspaceId, type, title, content, metadata, createdBy, positionX, positionY, width, height) VALUES (?,?,?,?,?,?,?,?,?,?)`
+      ).bind(
+        workspaceId, item.type || "note", item.title || "", item.content || null,
+        item.metadata ? JSON.stringify(item.metadata) : null, userId,
+        item.positionX ?? 0, item.positionY ?? 0, item.width ?? 300, item.height ?? 200
+      ).run();
+    } catch {}
+  }
+
+  private async persistItemDelete(itemId: number): Promise<void> {
+    try {
+      if (!this.schemaInitialized) { await ensureSchema(this.env.DB); this.schemaInitialized = true; }
+      await this.env.DB.prepare(`DELETE FROM workspace_items WHERE id=?`).bind(itemId).run();
+    } catch {}
+  }
+
+  // ---- Broadcast & Utility Methods ----
 
   private broadcastPresence(): void {
     const sockets = this.ctx.getWebSockets();

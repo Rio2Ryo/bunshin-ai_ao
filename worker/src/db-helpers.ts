@@ -198,6 +198,7 @@ CREATE TABLE IF NOT EXISTS matching_dialogues (
   createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_matching_dialogues_sessionId ON matching_dialogues(sessionId);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_matching_dialogues_session_turn ON matching_dialogues(sessionId, turnNumber);
 
 CREATE TABLE IF NOT EXISTS matching_results (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2229,6 +2230,8 @@ CREATE INDEX IF NOT EXISTS idx_error_logs_created ON error_logs(createdAt);
 
 ALTER TABLE users ADD COLUMN subscriptionStatus TEXT;
 ALTER TABLE users ADD COLUMN paymentFailedAt TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_matching_dialogues_session_turn ON matching_dialogues(sessionId, turnNumber);
 `;
 
 let schemaReady = false;

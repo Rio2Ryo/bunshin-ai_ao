@@ -16,6 +16,13 @@
  *   { type: "reaction", userId, turnNumber, reactionType, reactionId }
  *   { type: "error", message }
  *   { type: "viewers", count }
+ *
+ * Reliability features:
+ *   - dialogueStarted persisted to ctx.storage (survives DO hibernation/wake)
+ *   - INSERT OR IGNORE for dialogue rows (idempotent on restart)
+ *   - Checkpoint every 3 turns to ctx.storage (resume on mid-failure)
+ *   - ensureSchema runs at most ONCE per DO instance lifetime
+ *   - Alarm-based stale session cleanup (30-minute interval)
  */
 
 import type { Env } from "./trpc";
@@ -23,10 +30,15 @@ import { ensureSchema, parseJson, toJson, normalizeTwin, addTrustAction } from "
 import { invokeLLM, getUserLLMConfig } from "./llm";
 import { notifyMatchingComplete } from "./notifications";
 
+interface DialogueCheckpoint {
+  turn: number;
+  dialogueHistory: { speaker: string; content: string }[];
+}
+
 export class MatchingRoom implements DurableObject {
   private ctx: DurableObjectState;
   private env: Env;
-  private dialogueStarted = false;
+  private schemaInitialized = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     this.ctx = ctx;
@@ -54,11 +66,31 @@ export class MatchingRoom implements DurableObject {
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment({ userId, sessionId, isInitiator, userName });
 
+    // Ensure schema is initialized once per DO instance lifetime
+    if (!this.schemaInitialized) {
+      await ensureSchema(this.env.DB);
+      this.schemaInitialized = true;
+    }
+
+    // Set stale session cleanup alarm (30 minutes)
+    this.ctx.storage.setAlarm(Date.now() + 30 * 60 * 1000);
+
     // Broadcast updated viewer count
     const viewerCount = this.ctx.getWebSockets().length;
     this.broadcast({ type: "viewers", count: viewerCount });
 
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async alarm(): Promise<void> {
+    const sockets = this.ctx.getWebSockets();
+    if (sockets.length === 0) {
+      // No connections — clean up storage
+      await this.ctx.storage.deleteAll();
+    } else {
+      // Re-schedule alarm for 30 minutes
+      this.ctx.storage.setAlarm(Date.now() + 30 * 60 * 1000);
+    }
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
@@ -89,11 +121,16 @@ export class MatchingRoom implements DurableObject {
           this.sendJson(ws, { type: "error", message: "Only the initiator can start the dialogue" });
           return;
         }
-        if (this.dialogueStarted) {
-          this.sendJson(ws, { type: "error", message: "Dialogue already started" });
-          return;
+        // Check dialogueStarted from durable storage (survives hibernation/wake)
+        {
+          const alreadyStarted = await this.ctx.storage.get<boolean>("dialogueStarted");
+          if (alreadyStarted) {
+            this.sendJson(ws, { type: "error", message: "Dialogue already started" });
+            return;
+          }
+          // Mark as started in durable storage
+          await this.ctx.storage.put("dialogueStarted", true);
         }
-        this.dialogueStarted = true;
         await this.startDialogue(meta.sessionId, meta.userId);
         break;
 
@@ -136,6 +173,14 @@ export class MatchingRoom implements DurableObject {
     }
   }
 
+  /** Ensure schema is initialized, at most once per DO instance lifetime. */
+  private async ensureSchemaOnce(): Promise<void> {
+    if (!this.schemaInitialized) {
+      await ensureSchema(this.env.DB);
+      this.schemaInitialized = true;
+    }
+  }
+
   private async handleComment(
     meta: { userId: number; sessionId: number; userName: string },
     data: { turnNumber?: number; content?: string }
@@ -145,7 +190,7 @@ export class MatchingRoom implements DurableObject {
     const db = this.env.DB;
 
     try {
-      await ensureSchema(db);
+      await this.ensureSchemaOnce();
       const res = await db.prepare(
         `INSERT INTO matching_comments (sessionId, userId, turnNumber, content) VALUES (?,?,?,?)`
       ).bind(meta.sessionId, meta.userId, data.turnNumber ?? null, content).run();
@@ -172,7 +217,7 @@ export class MatchingRoom implements DurableObject {
     const db = this.env.DB;
 
     try {
-      await ensureSchema(db);
+      await this.ensureSchemaOnce();
       const res = await db.prepare(
         `INSERT OR IGNORE INTO matching_reactions (sessionId, userId, turnNumber, type) VALUES (?,?,?,?)`
       ).bind(meta.sessionId, meta.userId, data.turnNumber, reactionType).run();
@@ -196,7 +241,7 @@ export class MatchingRoom implements DurableObject {
     const env = this.env;
 
     try {
-      await ensureSchema(db);
+      await this.ensureSchemaOnce();
 
       const session = await db.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(sessionId).first<any>();
       if (!session || session.status !== "running") {
@@ -237,10 +282,38 @@ export class MatchingRoom implements DurableObject {
         { id: session.twin2Id, name: twin2Norm?.name || "Twin 2", desc: twin2?.description || "", personality: twin2?.personality || "", profile: friendProfile, knowledge: friendKnowledge },
       ];
 
-      const dialogueHistory: { speaker: string; content: string }[] = [];
+      // Check for existing checkpoint (resume after mid-failure)
+      const checkpoint = await this.ctx.storage.get<DialogueCheckpoint>("checkpoint");
+      let dialogueHistory: { speaker: string; content: string }[];
+      let startTurn: number;
 
-      // Generate dialogue turns
-      for (let turn = 0; turn < turnsToRun; turn++) {
+      if (checkpoint && checkpoint.turn >= 0 && checkpoint.dialogueHistory) {
+        // Resume from checkpoint
+        dialogueHistory = checkpoint.dialogueHistory;
+        startTurn = checkpoint.turn + 1;
+
+        // Re-broadcast existing turns from DB so reconnected clients see them
+        const existingTurns = (await db.prepare(
+          `SELECT turnNumber, speakerTwinId, content FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber ASC`
+        ).bind(sessionId).all<any>()).results ?? [];
+
+        for (const row of existingTurns) {
+          const speakerTwin = twins.find(t => t.id === row.speakerTwinId);
+          this.broadcast({
+            type: "turn",
+            turnNumber: row.turnNumber,
+            speakerTwinId: row.speakerTwinId,
+            speakerName: speakerTwin?.name || "Unknown",
+            content: row.content,
+          });
+        }
+      } else {
+        dialogueHistory = [];
+        startTurn = 0;
+      }
+
+      // Generate dialogue turns (resuming from startTurn if checkpoint existed)
+      for (let turn = startTurn; turn < turnsToRun; turn++) {
         const speakerIdx = turn % 2;
         const speaker = twins[speakerIdx];
         const other = twins[1 - speakerIdx];
@@ -298,8 +371,9 @@ export class MatchingRoom implements DurableObject {
 
         dialogueHistory.push({ speaker: speaker.name, content });
 
+        // Idempotent insert — INSERT OR IGNORE with UNIQUE(sessionId, turnNumber)
         await db.prepare(
-          `INSERT INTO matching_dialogues (sessionId, speakerTwinId, content, turnNumber, aiProvider, aiModel) VALUES (?,?,?,?,?,?)`
+          `INSERT OR IGNORE INTO matching_dialogues (sessionId, speakerTwinId, content, turnNumber, aiProvider, aiModel) VALUES (?,?,?,?,?,?)`
         ).bind(sessionId, speaker.id, content, turn, provider, model).run();
 
         this.broadcast({
@@ -310,8 +384,16 @@ export class MatchingRoom implements DurableObject {
           content,
         });
 
+        // Checkpoint every 3 turns to ctx.storage for crash recovery
+        if ((turn + 1) % 3 === 0) {
+          await this.ctx.storage.put("checkpoint", { turn, dialogueHistory } as DialogueCheckpoint);
+        }
+
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
+
+      // Clear checkpoint after all turns complete successfully
+      await this.ctx.storage.delete("checkpoint");
 
       // Analysis phase
       this.broadcast({ type: "analysis_start" });

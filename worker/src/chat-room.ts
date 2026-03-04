@@ -22,6 +22,7 @@ import type { Message } from "./llm";
 export class ChatRoom implements DurableObject {
   private ctx: DurableObjectState;
   private env: Env;
+  private schemaInitialized = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     this.ctx = ctx;
@@ -47,7 +48,25 @@ export class ChatRoom implements DurableObject {
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment({ userId, sessionId });
 
+    // Ensure schema once per DO instance
+    if (!this.schemaInitialized) {
+      await ensureSchema(this.env.DB);
+      this.schemaInitialized = true;
+    }
+
+    // Set alarm for stale DO cleanup (30 minutes)
+    this.ctx.storage.setAlarm(Date.now() + 30 * 60 * 1000);
+
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async alarm(): Promise<void> {
+    const sockets = this.ctx.getWebSockets();
+    if (sockets.length === 0) {
+      await this.ctx.storage.deleteAll();
+    } else {
+      this.ctx.storage.setAlarm(Date.now() + 30 * 60 * 1000);
+    }
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
@@ -106,7 +125,11 @@ export class ChatRoom implements DurableObject {
     const db = this.env.DB;
 
     try {
-      await ensureSchema(db);
+      // Ensure schema at most once per DO instance (fallback if fetch() path was missed)
+      if (!this.schemaInitialized) {
+        await ensureSchema(db);
+        this.schemaInitialized = true;
+      }
 
       // Plan limit check
       const userRow = await db.prepare(`SELECT plan FROM users WHERE id=?`).bind(userId).first<any>();
