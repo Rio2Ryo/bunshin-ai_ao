@@ -133,12 +133,12 @@ export const matchingRouter = router({
     .input(z.object({ id: z.number() }))
     .query(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.id).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.id).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND" });
-      const twin1 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
-      const twin2 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
-      const dialogues = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.id).all<any>();
-      const result = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(input.id).first<any>();
+      const twin1 = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+      const twin2 = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+      const dialogues = await ctx.env.DB.prepare(`SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.id).all<any>();
+      const result = await ctx.env.DB.prepare(`SELECT id, sessionId, compatibilityScore, scoreBreakdown, collaborationPotential, strengths, challenges, recommendations, summary, detailedAnalysis, roleDistribution, timeline, resources, kpis, nextSteps, webSearchData, createdAt FROM matching_results WHERE sessionId=?`).bind(input.id).first<any>();
       return {
         session: { ...session, settings: parseJson<any>(session.settings) },
         twin1: normalizeTwin(twin1),
@@ -287,7 +287,7 @@ export const matchingRouter = router({
 
       const myTwin = await getMyTwin(ctx.env.DB, ctx.userId);
       if (!myTwin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIを作成してください" });
-      const friendTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.friendId).first<any>();
+      const friendTwin = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.friendId).first<any>();
       if (!friendTwin) throw new TRPCError({ code: "NOT_FOUND", message: "友達の分身AIがありません" });
 
       // Check trust score threshold (NPC friends are exempt)
@@ -306,6 +306,12 @@ export const matchingRouter = router({
         `INSERT INTO matching_sessions (initiatorUserId, twin1Id, twin2Id, theme, status) VALUES (?,?,?,?,'running')`
       ).bind(ctx.userId, myTwin.id, friendTwin.id, input.theme).run();
       const sessionId = Number(sessionRes.meta.last_row_id);
+
+      // Increment matching usage counter
+      await ctx.env.DB.batch([
+        ctx.env.DB.prepare(`INSERT OR IGNORE INTO usage_tracking (userId, matchingsThisMonth) VALUES (?, 0)`).bind(ctx.userId),
+        ctx.env.DB.prepare(`UPDATE usage_tracking SET matchingsThisMonth = matchingsThisMonth + 1, updatedAt = datetime('now') WHERE userId = ?`).bind(ctx.userId),
+      ]);
 
       const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
       if (!llmConfig) {
@@ -669,7 +675,7 @@ JSONのみ出力し、他の説明は不要です。`;
 
       const myTwin = await getMyTwin(ctx.env.DB, ctx.userId);
       if (!myTwin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIを作成してください" });
-      const friendTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.friendId).first<any>();
+      const friendTwin = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.friendId).first<any>();
       if (!friendTwin) throw new TRPCError({ code: "NOT_FOUND", message: "友達の分身AIがありません" });
 
       // Trust score check
@@ -689,19 +695,25 @@ JSONのみ出力し、他の説明は不要です。`;
       ).bind(ctx.userId, myTwin.id, friendTwin.id, input.theme, toJson({ turns: input.turns, friendId: input.friendId })).run();
       const sessionId = Number(sessionRes.meta.last_row_id);
 
+      // Increment matching usage counter
+      await ctx.env.DB.batch([
+        ctx.env.DB.prepare(`INSERT OR IGNORE INTO usage_tracking (userId, matchingsThisMonth) VALUES (?, 0)`).bind(ctx.userId),
+        ctx.env.DB.prepare(`UPDATE usage_tracking SET matchingsThisMonth = matchingsThisMonth + 1, updatedAt = datetime('now') WHERE userId = ?`).bind(ctx.userId),
+      ]);
+
       return { sessionId };
     }),
   runDialogue: protectedProcedure
     .input(z.object({ sessionId: z.number(), turns: z.number().optional() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
-      const twin1 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
-      const twin2 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+      const twin1 = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+      const twin2 = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
       if (!twin1 || !twin2) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
 
-      const existingDialogues = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionId).all<any>();
+      const existingDialogues = await ctx.env.DB.prepare(`SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionId).all<any>();
       const startTurn = (existingDialogues.results?.length ?? 0) + 1;
       const turns = input.turns ?? 5;
       const dialogues: any[] = [];
@@ -754,14 +766,14 @@ JSONのみ出力し、他の説明は不要です。`;
     .input(z.object({ sessionId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND" });
-      const dialogues = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionId).all<any>();
+      const dialogues = await ctx.env.DB.prepare(`SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionId).all<any>();
       if (!dialogues.results?.length) {
         return { compatibilityScore: 0, summary: "分析にはマッチング対話の生成が必要です", strengths: [], challenges: [], recommendations: [] };
       }
-      const twin1 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
-      const twin2 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+      const twin1 = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+      const twin2 = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
       const twin1Name = twin1?.name || `Twin #${session.twin1Id}`;
       const twin2Name = twin2?.name || `Twin #${session.twin2Id}`;
       const transcript = dialogues.results.map((d: any) => `Turn ${d.turnNumber} (Twin ${d.speakerTwinId}): ${d.content}`).join("\n");
@@ -813,12 +825,12 @@ JSONのみ出力し、他の説明は不要です。`;
     .input(z.object({ sessionId: z.number() }))
     .query(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND" });
-      const twin1 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
-      const twin2 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
-      const dialogues = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionId).all<any>();
-      const result = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(input.sessionId).first<any>();
+      const twin1 = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+      const twin2 = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+      const dialogues = await ctx.env.DB.prepare(`SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionId).all<any>();
+      const result = await ctx.env.DB.prepare(`SELECT id, sessionId, compatibilityScore, scoreBreakdown, collaborationPotential, strengths, challenges, recommendations, summary, detailedAnalysis, roleDistribution, timeline, resources, kpis, nextSteps, webSearchData, createdAt FROM matching_results WHERE sessionId=?`).bind(input.sessionId).first<any>();
       const parsedResult = result ? {
         ...result,
         scoreBreakdown: parseJson<any>(result.scoreBreakdown),
@@ -931,7 +943,7 @@ ${dialogueHtml || "<p>対話がまだ行われていません</p>"}
       const dialogues = await ctx.env.DB.prepare(
         `SELECT md.*, dt.name as speakerName FROM matching_dialogues md LEFT JOIN digital_twins dt ON dt.id=md.speakerTwinId WHERE md.sessionId=? ORDER BY md.turnNumber`
       ).bind(input.sessionId).all<any>();
-      const result = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(input.sessionId).first<any>();
+      const result = await ctx.env.DB.prepare(`SELECT id, sessionId, compatibilityScore, scoreBreakdown, collaborationPotential, strengths, challenges, recommendations, summary, detailedAnalysis, roleDistribution, timeline, resources, kpis, nextSteps, webSearchData, createdAt FROM matching_results WHERE sessionId=?`).bind(input.sessionId).first<any>();
 
       return {
         session: { id: ms.id, theme: ms.theme, twin1: ms.twin1Name, twin2: ms.twin2Name, createdAt: ms.createdAt, completedAt: ms.completedAt },
@@ -1387,7 +1399,7 @@ JSON形式で回答: {"summary": "傾向の要約(50文字)", "topPattern": "最
     .input(z.object({ sessionId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND" });
       if (session.initiatorUserId !== ctx.userId) throw new TRPCError({ code: "FORBIDDEN", message: "招待はセッション作成者のみ可能です" });
       const settings = parseJson<any>(session.settings) || {};
@@ -1521,7 +1533,7 @@ JSON形式で回答: {"summary": "傾向の要約(50文字)", "topPattern": "最
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       // Verify twin ownership
-      const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=? AND userId=?`).bind(input.twinId, ctx.userId).first<any>();
+      const twin = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE id=? AND userId=?`).bind(input.twinId, ctx.userId).first<any>();
       if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
 
       // Collect all feedback for sessions involving this twin
@@ -1611,7 +1623,7 @@ JSON形式で出力: {"personalityUpdate": "新しい性格設定テキスト", 
     .input(z.object({ sessionId: z.number(), turnNumber: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND" });
 
       // Get dialogue up to this turn
@@ -1692,7 +1704,7 @@ JSON形式で出力: {"personalityUpdate": "新しい性格設定テキスト", 
       participants[0].profile = myProfile;
 
       for (const friendId of input.friendIds) {
-        const friendTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(friendId).first<any>();
+        const friendTwin = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE userId=? LIMIT 1`).bind(friendId).first<any>();
         if (!friendTwin) throw new TRPCError({ code: "NOT_FOUND", message: `友達 #${friendId} の分身AIがありません` });
         const friendProfile = await ctx.env.DB.prepare(`SELECT company, industry, position, skills, expertise FROM user_profiles WHERE userId=?`).bind(friendId).first<any>();
         const nt = normalizeTwin(friendTwin);
@@ -1712,6 +1724,12 @@ JSON形式で出力: {"personalityUpdate": "新しい性格設定テキスト", 
       ).bind(ctx.userId, participants[0].twinId, participants[1].twinId, input.theme,
         toJson({ type: "group", turns: input.turns, friendIds: input.friendIds, participantCount: participants.length })).run();
       const sessionId = Number(sessionRes.meta.last_row_id);
+
+      // Increment matching usage counter
+      await ctx.env.DB.batch([
+        ctx.env.DB.prepare(`INSERT OR IGNORE INTO usage_tracking (userId, matchingsThisMonth) VALUES (?, 0)`).bind(ctx.userId),
+        ctx.env.DB.prepare(`UPDATE usage_tracking SET matchingsThisMonth = matchingsThisMonth + 1, updatedAt = datetime('now') WHERE userId = ?`).bind(ctx.userId),
+      ]);
 
       // Insert all participants
       for (let i = 0; i < participants.length; i++) {
@@ -1872,7 +1890,7 @@ JSONのみ出力してください。`;
     .input(z.object({ id: z.number() }))
     .query(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.id).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.id).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND" });
 
       const settings = parseJson<any>(session.settings) || {};
@@ -1894,7 +1912,7 @@ JSONのみ出力してください。`;
          WHERE md.sessionId = ? ORDER BY md.turnNumber`
       ).bind(input.id).all<any>();
 
-      const result = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(input.id).first<any>();
+      const result = await ctx.env.DB.prepare(`SELECT id, sessionId, compatibilityScore, scoreBreakdown, collaborationPotential, strengths, challenges, recommendations, summary, detailedAnalysis, roleDistribution, timeline, resources, kpis, nextSteps, webSearchData, createdAt FROM matching_results WHERE sessionId=?`).bind(input.id).first<any>();
 
       return {
         session: { ...session, settings },
@@ -2082,7 +2100,7 @@ ${historyText || "なし"}
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       const dialogues = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+        `SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
       ).bind(input.sessionId).all<any>();
 
       if (!dialogues.results?.length) return { translations: [] };
@@ -2131,7 +2149,7 @@ ${historyText || "なし"}
       const myTwin = await getMyTwin(ctx.env.DB, ctx.userId);
       if (!myTwin) throw new TRPCError({ code: "NOT_FOUND", message: "分身AIを作成してください" });
 
-      const friendTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.friendId).first<any>();
+      const friendTwin = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.friendId).first<any>();
       if (!friendTwin) throw new TRPCError({ code: "NOT_FOUND", message: "友達の分身AIが見つかりません" });
 
       const sessionRes = await ctx.env.DB.prepare(
@@ -2221,21 +2239,21 @@ ${historyText || "なし"}
     .input(z.object({ sessionId: z.number() }))
     .query(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND" });
       
       const twin1 = await ctx.env.DB.prepare(`SELECT id, name, personality, avatarUrl FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
       const twin2 = await ctx.env.DB.prepare(`SELECT id, name, personality, avatarUrl FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
       
       const dialogues = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+        `SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
       ).bind(input.sessionId).all<any>();
       
       const notes = await ctx.env.DB.prepare(
         `SELECT * FROM matching_notes WHERE sessionId=? AND userId=? ORDER BY turnNumber`
       ).bind(input.sessionId, ctx.userId).all<any>();
       
-      const result = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(input.sessionId).first<any>();
+      const result = await ctx.env.DB.prepare(`SELECT id, sessionId, compatibilityScore, scoreBreakdown, collaborationPotential, strengths, challenges, recommendations, summary, detailedAnalysis, roleDistribution, timeline, resources, kpis, nextSteps, webSearchData, createdAt FROM matching_results WHERE sessionId=?`).bind(input.sessionId).first<any>();
       
       return {
         session: { ...session, settings: parseJson<any>(session.settings) },
@@ -2285,8 +2303,8 @@ ${historyText || "なし"}
     turns: z.number().min(1).max(10).optional(),
   })).mutation(async ({ ctx, input }) => {
     await ensureSchema(ctx.env.DB);
-    const myTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=?`).bind(ctx.userId).first<any>();
-    const friendTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=?`).bind(input.friendId).first<any>();
+    const myTwin = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE userId=?`).bind(ctx.userId).first<any>();
+    const friendTwin = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE userId=?`).bind(input.friendId).first<any>();
     if (!myTwin || !friendTwin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
 
     // Create two sessions: A and B with different personality settings
@@ -2309,10 +2327,10 @@ ${historyText || "なし"}
   })).query(async ({ ctx, input }) => {
     await ensureSchema(ctx.env.DB);
     const getSessionData = async (sid: number) => {
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=? AND initiatorUserId=?`).bind(sid, ctx.userId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=? AND initiatorUserId=?`).bind(sid, ctx.userId).first<any>();
       if (!session) return null;
-      const result = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(sid).first<any>();
-      const dialogues = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(sid).all<any>();
+      const result = await ctx.env.DB.prepare(`SELECT id, sessionId, compatibilityScore, scoreBreakdown, collaborationPotential, strengths, challenges, recommendations, summary, detailedAnalysis, roleDistribution, timeline, resources, kpis, nextSteps, webSearchData, createdAt FROM matching_results WHERE sessionId=?`).bind(sid).first<any>();
+      const dialogues = await ctx.env.DB.prepare(`SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(sid).all<any>();
       return {
         session: { ...session, settings: parseJson<any>(session.settings) },
         result: result ? { ...result, scoreBreakdown: parseJson<any>(result.scoreBreakdown), strengths: parseJson<string[]>(result.strengths), challenges: parseJson<string[]>(result.challenges), recommendations: parseJson<string[]>(result.recommendations) } : null,
@@ -2349,8 +2367,8 @@ ${historyText || "なし"}
     const db = ctx.env.DB;
 
     // Get both twins
-    const myTwin = await db.prepare(`SELECT * FROM digital_twins WHERE userId=?`).bind(ctx.userId).first<any>();
-    const friendTwin = await db.prepare(`SELECT * FROM digital_twins WHERE userId=?`).bind(input.friendId).first<any>();
+    const myTwin = await db.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE userId=?`).bind(ctx.userId).first<any>();
+    const friendTwin = await db.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE userId=?`).bind(input.friendId).first<any>();
     if (!myTwin || !friendTwin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
 
     // Gather historical matching data between these two users
@@ -2374,8 +2392,8 @@ ${historyText || "なし"}
     const allPast = [...(pastMatchings.results ?? []), ...(pastMatchings2.results ?? [])];
 
     // Get profiles
-    const myProfile = await db.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
-    const friendProfile = await db.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(input.friendId).first<any>();
+    const myProfile = await db.prepare(`SELECT id, userId, displayName, bio, skills, experience, businessInfo, expertise, industry, company, position, avatarUrl, createdAt, updatedAt FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+    const friendProfile = await db.prepare(`SELECT id, userId, displayName, bio, skills, experience, businessInfo, expertise, industry, company, position, avatarUrl, createdAt, updatedAt FROM user_profiles WHERE userId=?`).bind(input.friendId).first<any>();
 
     // Get personality profiles
     const myPersonality = await db.prepare(`SELECT * FROM personality_profiles WHERE userId=? AND status='completed'`).bind(ctx.userId).first<any>();
@@ -2792,20 +2810,20 @@ JSONのみ出力してください。`;
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       const session = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_sessions WHERE id=? AND (userId=? OR targetUserId=?)`
+        `SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=? AND (userId=? OR targetUserId=?)`
       ).bind(input.sessionId, ctx.userId, ctx.userId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
 
       const dialogues = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber ASC`
+        `SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber ASC`
       ).bind(input.sessionId).all<any>();
       const allTurns = dialogues.results ?? [];
       const targetTurn = allTurns.find((d: any) => d.turnNumber === input.turnNumber);
       if (!targetTurn) throw new TRPCError({ code: "NOT_FOUND", message: "指定されたターンが見つかりません" });
 
       // Get twin info for context
-      const twin1 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
-      const twin2 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+      const twin1 = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+      const twin2 = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
 
       const dialogueContext = allTurns
         .filter((d: any) => d.turnNumber <= input.turnNumber)
@@ -2879,7 +2897,7 @@ JSONのみ出力してください。`;
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       const session = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_sessions WHERE id=? AND (userId=? OR targetUserId=?)`
+        `SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=? AND (userId=? OR targetUserId=?)`
       ).bind(input.sessionId, ctx.userId, ctx.userId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
 
@@ -3100,7 +3118,7 @@ JSONのみ出力してください。`;
       await ensureSchema(ctx.env.DB);
 
       const session = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_sessions WHERE id=? AND initiatorUserId=?`
+        `SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=? AND initiatorUserId=?`
       ).bind(input.sessionId, ctx.userId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "マッチングセッションが見つかりません" });
 
@@ -3263,7 +3281,7 @@ JSONのみ出力してください。`;
       ).bind(ctx.userId).all<any>();
 
       const profile = await ctx.env.DB.prepare(
-        `SELECT * FROM user_profiles WHERE userId=?`
+        `SELECT id, userId, displayName, bio, skills, experience, businessInfo, expertise, industry, company, position, avatarUrl, createdAt, updatedAt FROM user_profiles WHERE userId=?`
       ).bind(ctx.userId).first<any>();
 
       const twin = await getMyTwin(ctx.env.DB, ctx.userId);
@@ -3416,7 +3434,7 @@ JSONのみ出力してください。`;
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       const session = await ctx.env.DB
-        .prepare(`SELECT * FROM matching_sessions WHERE id = ?`)
+        .prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id = ?`)
         .bind(input.sessionId)
         .first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
@@ -3429,7 +3447,7 @@ JSONのみ出力してください。`;
       }
 
       const dialogues = await ctx.env.DB
-        .prepare(`SELECT * FROM matching_dialogues WHERE sessionId = ? ORDER BY turnNumber ASC`)
+        .prepare(`SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId = ? ORDER BY turnNumber ASC`)
         .bind(input.sessionId)
         .all<any>();
       if (!dialogues.results || dialogues.results.length === 0) {
@@ -3437,7 +3455,7 @@ JSONのみ出力してください。`;
       }
 
       const results = await ctx.env.DB
-        .prepare(`SELECT * FROM matching_results WHERE sessionId = ?`)
+        .prepare(`SELECT id, sessionId, compatibilityScore, scoreBreakdown, collaborationPotential, strengths, challenges, recommendations, summary, detailedAnalysis, roleDistribution, timeline, resources, kpis, nextSteps, webSearchData, createdAt FROM matching_results WHERE sessionId = ?`)
         .bind(input.sessionId)
         .first<any>();
 
@@ -3502,7 +3520,7 @@ JSONのみ出力してください。`;
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       const session = await ctx.env.DB
-        .prepare(`SELECT * FROM matching_sessions WHERE id = ? AND initiatorUserId = ?`)
+        .prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id = ? AND initiatorUserId = ?`)
         .bind(input.sessionId, ctx.userId)
         .first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
@@ -3596,7 +3614,7 @@ JSONのみ出力してください。`;
 
       // Verify session belongs to user
       const session = await ctx.env.DB
-        .prepare(`SELECT * FROM matching_sessions WHERE id = ? AND initiatorUserId = ?`)
+        .prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id = ? AND initiatorUserId = ?`)
         .bind(input.sessionId, ctx.userId)
         .first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "マッチングセッションが見つかりません" });
@@ -3762,12 +3780,12 @@ JSONのみ出力してください。`;
       // Load user's twin + profile
       const myTwin = await getMyTwin(db, ctx.userId);
       if (!myTwin) throw new TRPCError({ code: "NOT_FOUND", message: "あなたのツインが見つかりません" });
-      const myProfile = await db.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+      const myProfile = await db.prepare(`SELECT id, userId, displayName, bio, skills, experience, businessInfo, expertise, industry, company, position, avatarUrl, createdAt, updatedAt FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
 
       // Load friend's twin + profile
       const friendTwin = await getMyTwin(db, input.friendId);
       if (!friendTwin) throw new TRPCError({ code: "NOT_FOUND", message: "相手のツインが見つかりません" });
-      const friendProfile = await db.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(input.friendId).first<any>();
+      const friendProfile = await db.prepare(`SELECT id, userId, displayName, bio, skills, experience, businessInfo, expertise, industry, company, position, avatarUrl, createdAt, updatedAt FROM user_profiles WHERE userId=?`).bind(input.friendId).first<any>();
       const friendUser = await db.prepare(`SELECT name FROM users WHERE id=?`).bind(input.friendId).first<any>();
 
       // Load past matching history between them
@@ -4112,22 +4130,22 @@ ${JSON.stringify(strategy, null, 2)}
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       const session = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_sessions WHERE id=? AND (userId=? OR targetUserId=?)`
+        `SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=? AND (userId=? OR targetUserId=?)`
       ).bind(input.sessionId, ctx.userId, ctx.userId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
 
       const dialogues = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber ASC`
+        `SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber ASC`
       ).bind(input.sessionId).all<any>();
       const turns = dialogues.results ?? [];
       if (turns.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "対話データがありません" });
 
       const results = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_results WHERE sessionId=?`
+        `SELECT id, sessionId, compatibilityScore, scoreBreakdown, collaborationPotential, strengths, challenges, recommendations, summary, detailedAnalysis, roleDistribution, timeline, resources, kpis, nextSteps, webSearchData, createdAt FROM matching_results WHERE sessionId=?`
       ).bind(input.sessionId).first<any>();
 
-      const twin1 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
-      const twin2 = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
+      const twin1 = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE id=?`).bind(session.twin1Id).first<any>();
+      const twin2 = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE id=?`).bind(session.twin2Id).first<any>();
 
       const dialogueText = turns.map((d: any) =>
         `ターン${d.turnNumber} [${d.speakerTwinId === session.twin1Id ? (twin1?.name ?? "Twin1") : (twin2?.name ?? "Twin2")}]: ${d.content}`
@@ -4540,11 +4558,11 @@ ${historyContext ? `\nユーザーの過去マッチング傾向:\n${historyCont
     .input(z.object({ sessionId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id = ?`).bind(input.sessionId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id = ?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND" });
 
       const dialogues = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_dialogues WHERE sessionId = ? ORDER BY turnNumber`
+        `SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId = ? ORDER BY turnNumber`
       ).bind(input.sessionId).all<any>();
       if (!dialogues.results?.length) throw new TRPCError({ code: "BAD_REQUEST", message: "対話データがありません" });
 
@@ -4774,10 +4792,10 @@ ${historyContext ? `\nユーザーの過去マッチング傾向:\n${historyCont
 
       const sessionsData: any[] = [];
       for (const sid of input.sessionIds) {
-        const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(sid).first<any>();
+        const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(sid).first<any>();
         if (!session) continue;
-        const dialogues = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(sid).all<any>();
-        const result = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(sid).first<any>();
+        const dialogues = await ctx.env.DB.prepare(`SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(sid).all<any>();
+        const result = await ctx.env.DB.prepare(`SELECT id, sessionId, compatibilityScore, scoreBreakdown, collaborationPotential, strengths, challenges, recommendations, summary, detailedAnalysis, roleDistribution, timeline, resources, kpis, nextSteps, webSearchData, createdAt FROM matching_results WHERE sessionId=?`).bind(sid).first<any>();
         const settings = parseJson<any>(session.settings) || {};
         sessionsData.push({
           sessionId: sid, theme: session.theme, settings,
@@ -4890,11 +4908,11 @@ ${historyContext ? `\nユーザーの過去マッチング傾向:\n${historyCont
     .input(z.object({ sessionId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND" });
-      const dialogues = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionId).all<any>();
+      const dialogues = await ctx.env.DB.prepare(`SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionId).all<any>();
       if (!dialogues.results?.length) throw new TRPCError({ code: "BAD_REQUEST", message: "対話データがありません" });
-      const result = await ctx.env.DB.prepare(`SELECT * FROM matching_results WHERE sessionId=?`).bind(input.sessionId).first<any>();
+      const result = await ctx.env.DB.prepare(`SELECT id, sessionId, compatibilityScore, scoreBreakdown, collaborationPotential, strengths, challenges, recommendations, summary, detailedAnalysis, roleDistribution, timeline, resources, kpis, nextSteps, webSearchData, createdAt FROM matching_results WHERE sessionId=?`).bind(input.sessionId).first<any>();
 
       const dialogueText = (dialogues.results ?? []).map((d: any) => `Turn ${d.turnNumber} [${d.speaker}]: ${d.content}`).join("\n");
       const scoreInfo = result ? `スコア: ${result.compatibilityScore}` : "";
@@ -5547,7 +5565,7 @@ JSON形式:
 
       let opponentTwin: any = null;
       if (input.opponentUserId) {
-        opponentTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? AND status='active' LIMIT 1`).bind(input.opponentUserId).first<any>();
+        opponentTwin = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE userId=? AND status='active' LIMIT 1`).bind(input.opponentUserId).first<any>();
       }
 
       const proLabel = input.stance === "pro" ? twin.name : (opponentTwin?.name || "反対側AI");
@@ -5801,7 +5819,7 @@ JSON形式: {"summary":"要約","highlights":["ハイライト1"],"bestPair":{"n
     .input(z.object({ sessionId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND" });
 
       const dialogues = await ctx.env.DB.prepare(
@@ -5942,7 +5960,7 @@ JSON形式で返してください:
       const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
       if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
 
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND" });
 
       const dialogues = await ctx.env.DB.prepare(
@@ -5950,7 +5968,7 @@ JSON形式で返してください:
       ).bind(input.sessionId).all<any>();
 
       const result = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_results WHERE sessionId=?`
+        `SELECT id, sessionId, compatibilityScore, scoreBreakdown, collaborationPotential, strengths, challenges, recommendations, summary, detailedAnalysis, roleDistribution, timeline, resources, kpis, nextSteps, webSearchData, createdAt FROM matching_results WHERE sessionId=?`
       ).bind(input.sessionId).first<any>();
 
       const settings = parseJson<any>(session.settings) || {};
@@ -6061,7 +6079,7 @@ JSON形式で返してください:
       const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
       if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
 
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND" });
 
       const prompt = `あなたはビジネスマッチング対話のAIファシリテーターです。
@@ -6271,11 +6289,11 @@ JSON形式で返してください:
       if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
 
       // Gather context
-      const userProfile = await ctx.env.DB.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+      const userProfile = await ctx.env.DB.prepare(`SELECT id, userId, displayName, bio, skills, experience, businessInfo, expertise, industry, company, position, avatarUrl, createdAt, updatedAt FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
       let friendProfile: any = null;
       let friendTwin: any = null;
       if (input.friendId) {
-        friendProfile = await ctx.env.DB.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(input.friendId).first<any>();
+        friendProfile = await ctx.env.DB.prepare(`SELECT id, userId, displayName, bio, skills, experience, businessInfo, expertise, industry, company, position, avatarUrl, createdAt, updatedAt FROM user_profiles WHERE userId=?`).bind(input.friendId).first<any>();
         friendTwin = await ctx.env.DB.prepare(`SELECT name, personality, description, tags FROM digital_twins WHERE userId=?`).bind(input.friendId).first<any>();
       }
 
@@ -6780,7 +6798,7 @@ JSON形式で返してください:
       const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
       if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
 
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND" });
 
       const dialogues = await ctx.env.DB.prepare(
@@ -6899,8 +6917,8 @@ JSON形式で返してください:
       const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "matching", ctx.env);
       if (!llmConfig) throw new TRPCError({ code: "BAD_REQUEST", message: "LLM設定がありません" });
 
-      const sessionA = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionIdA).first<any>();
-      const sessionB = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionIdB).first<any>();
+      const sessionA = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionIdA).first<any>();
+      const sessionB = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionIdB).first<any>();
       if (!sessionA || !sessionB) throw new TRPCError({ code: "NOT_FOUND" });
 
       const dialoguesA = await ctx.env.DB.prepare(
@@ -6989,10 +7007,10 @@ JSON形式で返してください:
     .input(z.object({ sessionId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
       const dialogues = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+        `SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
       ).bind(input.sessionId).all<any>();
       if (!dialogues.results?.length) throw new TRPCError({ code: "BAD_REQUEST", message: "対話データがありません" });
 
@@ -7059,10 +7077,10 @@ JSON形式で返してください:
     .input(z.object({ sessionId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "セッションが見つかりません" });
       const dialogues = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+        `SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
       ).bind(input.sessionId).all<any>();
       if (!dialogues.results?.length) throw new TRPCError({ code: "BAD_REQUEST", message: "対話データがありません" });
 
@@ -7270,7 +7288,7 @@ JSON形式で返してください:
         `SELECT ms.theme, mr.compatibilityScore, mr.scoreBreakdown FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id WHERE (ms.initiatorUserId=? AND json_extract(ms.settings,'$.friendId')=?) OR (ms.initiatorUserId=? AND json_extract(ms.settings,'$.friendId')=?) ORDER BY ms.createdAt DESC LIMIT 5`
       ).bind(ctx.userId, input.friendId, input.friendId, ctx.userId).all<any>();
 
-      const myProfile = await ctx.env.DB.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+      const myProfile = await ctx.env.DB.prepare(`SELECT id, userId, displayName, bio, skills, experience, businessInfo, expertise, industry, company, position, avatarUrl, createdAt, updatedAt FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
 
       const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "risk_assessment", ctx.env);
       if (!llmConfig) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "LLM設定が取得できません" });
@@ -7413,7 +7431,7 @@ JSON形式で返してください:
     .input(z.object({ sessionId: z.number(), turnNumber: z.number(), tag: z.enum(["attack","defend","empathy","gather","propose","consensus","avoid"]), comment: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND" });
       const settings = parseJson<any>(session.settings) || {};
       if (session.initiatorUserId !== ctx.userId && settings.friendId !== ctx.userId) throw new TRPCError({ code: "FORBIDDEN" });
@@ -7453,7 +7471,7 @@ JSON形式で返してください:
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       const dialogues = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+        `SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
       ).bind(input.sessionId).all<any>();
       const stats = await ctx.env.DB.prepare(`
         SELECT sa.tag, COUNT(*) as count, AVG(CAST(mr.compatibilityScore AS REAL)) as avgScore
@@ -7487,7 +7505,7 @@ JSON形式で返してください:
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       const dialogues = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+        `SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
       ).bind(input.sessionId).all<any>();
       if (!dialogues.results?.length) throw new TRPCError({ code: "NOT_FOUND", message: "対話データがありません" });
 
@@ -7543,7 +7561,7 @@ JSON形式で返してください:
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       const dialogues = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+        `SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
       ).bind(input.sessionId).all<any>();
       if (!dialogues.results?.length) throw new TRPCError({ code: "NOT_FOUND", message: "対話データがありません" });
 
@@ -7622,18 +7640,18 @@ JSON形式で返してください:
     .input(z.object({ sessionId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const session = await ctx.env.DB.prepare(`SELECT * FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
+      const session = await ctx.env.DB.prepare(`SELECT id, initiatorUserId, twin1Id, twin2Id, theme, status, settings, createdAt, completedAt FROM matching_sessions WHERE id=?`).bind(input.sessionId).first<any>();
       if (!session) throw new TRPCError({ code: "NOT_FOUND" });
       const settings = parseJson<any>(session.settings) || {};
       const friendId = settings.friendId;
 
       let friendProfile: any = null;
       if (friendId) {
-        friendProfile = await ctx.env.DB.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(friendId).first<any>();
+        friendProfile = await ctx.env.DB.prepare(`SELECT id, userId, displayName, bio, skills, experience, businessInfo, expertise, industry, company, position, avatarUrl, createdAt, updatedAt FROM user_profiles WHERE userId=?`).bind(friendId).first<any>();
       }
 
       const dialogues = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+        `SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
       ).bind(input.sessionId).all<any>();
 
       const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "cross_culture", ctx.env);
@@ -7689,12 +7707,12 @@ JSON形式で返してください:
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
       const matchResult = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_results WHERE sessionId=?`
+        `SELECT id, sessionId, compatibilityScore, scoreBreakdown, collaborationPotential, strengths, challenges, recommendations, summary, detailedAnalysis, roleDistribution, timeline, resources, kpis, nextSteps, webSearchData, createdAt FROM matching_results WHERE sessionId=?`
       ).bind(input.sessionId).first<any>();
       if (!matchResult) throw new TRPCError({ code: "NOT_FOUND", message: "マッチング結果がありません" });
 
       const dialogues = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+        `SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
       ).bind(input.sessionId).all<any>();
       const turns = (dialogues.results ?? []).map((d: any) => `T${d.turnNumber}(${d.speakerRole}): ${d.message}`).join("\n");
       const originalScore = matchResult.compatibilityScore;
@@ -7885,12 +7903,12 @@ JSON形式で返してください:
     .input(z.object({ theme: z.string().min(1), friendId: z.number().optional() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      const twin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
+      const twin = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE userId=? LIMIT 1`).bind(ctx.userId).first<any>();
       if (!twin) throw new TRPCError({ code: "NOT_FOUND", message: "ツインが見つかりません" });
 
       let friendTwin: any = null;
       if (input.friendId) {
-        friendTwin = await ctx.env.DB.prepare(`SELECT * FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.friendId).first<any>();
+        friendTwin = await ctx.env.DB.prepare(`SELECT id, userId, name, description, personality, systemPrompt, rawInput, status, isPublic, publicBio, tags, bigFiveTraits, judgmentThresholds, virtueWaveform, mineWaveform, mbtiType, personalitySimilarity, accuracyScore, trainingIterations, avatarUrl, visibility, allowedViewerIds, createdAt, updatedAt FROM digital_twins WHERE userId=? LIMIT 1`).bind(input.friendId).first<any>();
       }
 
       const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, "brainstorm_diverge", ctx.env);
@@ -8237,7 +8255,7 @@ JSON形式で返してください:
       if (existing) return { alreadyScored: true, id: existing.id };
 
       const dialogues = await ctx.env.DB.prepare(
-        `SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
+        `SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`
       ).bind(input.sessionId).all<any>();
       if (!dialogues.results?.length) return { alreadyScored: false, skipped: true };
 
@@ -8286,8 +8304,8 @@ JSON形式で返してください:
         ctx.env.DB.prepare(`SELECT ms.*, mr.compatibilityScore, mr.scoreBreakdown, mr.recommendations FROM matching_sessions ms LEFT JOIN matching_results mr ON mr.sessionId=ms.id WHERE ms.id=?`).bind(input.sessionIdB).first<any>(),
       ]);
       if (!sessionA || !sessionB) throw new TRPCError({ code: 'NOT_FOUND', message: 'セッションが見つかりません' });
-      const dialoguesA = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionIdA).all<any>();
-      const dialoguesB = await ctx.env.DB.prepare(`SELECT * FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionIdB).all<any>();
+      const dialoguesA = await ctx.env.DB.prepare(`SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionIdA).all<any>();
+      const dialoguesB = await ctx.env.DB.prepare(`SELECT id, sessionId, speakerTwinId, content, aiProvider, aiModel, turnNumber, createdAt FROM matching_dialogues WHERE sessionId=? ORDER BY turnNumber`).bind(input.sessionIdB).all<any>();
 
       const llmConfig = await getUserLLMConfig(ctx.env.DB, ctx.userId, 'matching_compare', ctx.env);
       if (!llmConfig) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'LLM設定が見つかりません' });
@@ -8746,7 +8764,7 @@ ${(dialogues.results || []).map((d: any) => `${d.speaker}: ${(d.content || '').s
 
     // 3. Suggest themes based on user profile + twin data
     const myTwin = await getMyTwin(ctx.env.DB, ctx.userId);
-    const profile = await ctx.env.DB.prepare(`SELECT * FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
+    const profile = await ctx.env.DB.prepare(`SELECT id, userId, displayName, bio, skills, experience, businessInfo, expertise, industry, company, position, avatarUrl, createdAt, updatedAt FROM user_profiles WHERE userId=?`).bind(ctx.userId).first<any>();
     const industry = profile?.industry || "";
     const skills = (myTwin?.tags || "").split(",").filter(Boolean);
 

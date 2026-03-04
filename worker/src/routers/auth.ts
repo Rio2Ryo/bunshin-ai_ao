@@ -37,17 +37,6 @@ Step 5完了時に以下を出力:
 {"description": "概要", "personality": "性格", "rawInput": "全情報まとめ"}
 ---END_PROFILE_DATA---`;
 
-        const twinRes = await ctx.env.DB.prepare(
-          `INSERT INTO digital_twins (userId, name, systemPrompt, status, updatedAt) VALUES (?, ?, ?, 'active', datetime('now'))`
-        ).bind(user.id, twinName, onboardingSystemPrompt).run();
-        const twinId = Number(twinRes.meta.last_row_id);
-
-        // Create onboarding chat session
-        const sessionRes = await ctx.env.DB.prepare(
-          `INSERT INTO chat_sessions (userId, twinId, title, mode) VALUES (?, ?, ?, ?)`
-        ).bind(user.id, twinId, "はじめてのチャット", "onboarding").run();
-        const onboardingSessionId = Number(sessionRes.meta.last_row_id);
-
         // Insert welcome message
         const welcomeMessage = `はじめまして！ガイド太郎です！あなたの「デジタル分身AI」を一緒に作りましょう！
 
@@ -58,9 +47,23 @@ Step 5完了時に以下を出力:
 まずはあなたのお名前と年齢を教えてください。
 例えば「田中太郎、30歳です」のように教えてもらえると嬉しいです！`;
 
-        await ctx.env.DB.prepare(
-          `INSERT INTO chat_messages (sessionId, role, content) VALUES (?, ?, ?)`
-        ).bind(onboardingSessionId, "assistant", welcomeMessage).run();
+        // Pre-generate IDs for batch insert (D1 AUTOINCREMENT allows explicit IDs)
+        const twinIdTs = Date.now();
+        const sessionIdTs = twinIdTs + 1;
+
+        // Batch core creation for atomicity
+        await ctx.env.DB.batch([
+          ctx.env.DB.prepare(
+            `INSERT INTO digital_twins (id, userId, name, systemPrompt, status, updatedAt) VALUES (?, ?, ?, ?, 'active', datetime('now'))`
+          ).bind(twinIdTs, user.id, twinName, onboardingSystemPrompt),
+          ctx.env.DB.prepare(
+            `INSERT INTO chat_sessions (id, userId, twinId, title, mode) VALUES (?, ?, ?, ?, ?)`
+          ).bind(sessionIdTs, user.id, twinIdTs, "はじめてのチャット", "onboarding"),
+          ctx.env.DB.prepare(
+            `INSERT INTO chat_messages (sessionId, role, content) VALUES (?, ?, ?)`
+          ).bind(sessionIdTs, "assistant", welcomeMessage),
+        ]);
+        const twinId = twinIdTs;
 
         // Auto-create NPC friends (ガイド太郎, 案内花子) with tutorial messages
         await ensureNpcFriends(ctx.env.DB, user.id);
