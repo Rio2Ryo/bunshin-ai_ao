@@ -8,13 +8,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { usePageMeta } from "@/hooks/usePageMeta";
+import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Trophy, Users, Plus, Medal, Clock, Target, Star, Loader2, Crown, Flame } from "lucide-react";
 
 export default function Challenges() {
-  usePageMeta({ title: "マッチングチャレンジ", description: "友達とスコアを競うウィークリーチャレンジ", path: "/challenges" });
+  const { t } = useTranslation();
+  usePageMeta({ title: t("challenges.title"), description: t("challenges.description"), path: "/challenges" });
 
   const [activeTab, setActiveTab] = useState("list");
   const [createOpen, setCreateOpen] = useState(false);
@@ -114,9 +116,9 @@ export default function Challenges() {
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2">
               <Trophy className="h-6 w-6 text-primary" />
-              マッチングチャレンジ
+              {t("challenges.title")}
             </h1>
-            <p className="text-muted-foreground mt-1">友達とスコアを競うウィークリーチャレンジ</p>
+            <p className="text-muted-foreground mt-1">{t("challenges.description")}</p>
           </div>
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
@@ -162,8 +164,8 @@ export default function Challenges() {
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="list">チャレンジ一覧</TabsTrigger>
-            <TabsTrigger value="leaderboard">リーダーボード</TabsTrigger>
+            <TabsTrigger value="list">{t("challenges.title")}</TabsTrigger>
+            <TabsTrigger value="leaderboard">{t("challenges.leaderboard")}</TabsTrigger>
           </TabsList>
 
           {/* Challenge List Tab */}
@@ -187,7 +189,7 @@ export default function Challenges() {
                   <div className="space-y-3">
                     <h2 className="text-lg font-semibold flex items-center gap-2">
                       <Flame className="h-5 w-5 text-orange-500" />
-                      開催中 ({activeChallenges.length})
+                      {t("challenges.active")} ({activeChallenges.length})
                     </h2>
                     <div className="grid gap-4 sm:grid-cols-2">
                       {activeChallenges.map((c: any) => (
@@ -211,7 +213,7 @@ export default function Challenges() {
                               <div className="flex items-center gap-3">
                                 <span className="flex items-center gap-1 text-muted-foreground">
                                   <Users className="h-3.5 w-3.5" />
-                                  {c.participantCount ?? 0}人
+                                  {c.participantCount ?? 0} {t("challenges.participants")}
                                 </span>
                                 {c.topScore != null && (
                                   <span className="flex items-center gap-1 text-muted-foreground">
@@ -252,7 +254,7 @@ export default function Challenges() {
                       className="text-lg font-semibold flex items-center gap-2 hover:text-primary transition-colors"
                     >
                       <Trophy className="h-5 w-5 text-muted-foreground" />
-                      完了済み ({completedChallenges.length})
+                      {t("challenges.ended")} ({completedChallenges.length})
                       <span className="text-xs text-muted-foreground">{showCompleted ? "▲" : "▼"}</span>
                     </button>
                     {showCompleted && (
@@ -272,7 +274,7 @@ export default function Challenges() {
                               <div className="flex items-center gap-3 text-sm text-muted-foreground">
                                 <span className="flex items-center gap-1">
                                   <Users className="h-3.5 w-3.5" />
-                                  {c.participantCount ?? 0}人
+                                  {c.participantCount ?? 0} {t("challenges.participants")}
                                 </span>
                                 {c.topScore != null && (
                                   <span className="flex items-center gap-1">

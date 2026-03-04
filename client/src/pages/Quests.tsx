@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import { usePageMeta } from "@/hooks/usePageMeta";
+import { useTranslation } from "@/contexts/LanguageContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
@@ -53,7 +54,8 @@ const categoryColors: Record<string, string> = {
 
 
 export default function Quests() {
-  usePageMeta({ title: "クエスト", description: "デイリークエスト・実績・報酬", path: "/quests" });
+  const { t } = useTranslation();
+  usePageMeta({ title: t("quests.title"), description: t("quests.description"), path: "/quests" });
   const { data: quests, isLoading } = trpc.points.getQuests.useQuery();
   const { data: balance, refetch: refetchBalance } = trpc.points.getBalance.useQuery();
   
@@ -110,10 +112,10 @@ export default function Quests() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
               <Target className="h-6 w-6 text-primary" />
-              クエスト
+              {t("quests.title")}
             </h1>
             <p className="text-muted-foreground">
-              データを貯めてポイントを獲得しよう
+              {t("quests.description")}
             </p>
           </div>
           <div className="text-right">
@@ -135,7 +137,7 @@ export default function Quests() {
                 </div>
                 <div>
                   <p className="text-2xl font-bold">{quests?.stats.totalCompleted ?? 0}</p>
-                  <p className="text-sm text-muted-foreground">完了したクエスト</p>
+                  <p className="text-sm text-muted-foreground">{t("quests.completed")}</p>
                 </div>
               </div>
             </CardContent>
@@ -148,7 +150,7 @@ export default function Quests() {
                 </div>
                 <div>
                   <p className="text-2xl font-bold">{quests?.stats.totalPoints?.toLocaleString() ?? 0}</p>
-                  <p className="text-sm text-muted-foreground">獲得ポイント合計</p>
+                  <p className="text-sm text-muted-foreground">{t("quests.reward")}</p>
                 </div>
               </div>
             </CardContent>

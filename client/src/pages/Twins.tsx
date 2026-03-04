@@ -25,8 +25,10 @@ import { OtherPerspectiveWaveformChart } from "@/components/OtherPerspectiveWave
 import { VoiceCapture } from "@/components/VoiceCapture";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useTranslation } from "@/contexts/LanguageContext";
 
 export default function MyTwin() {
+  const { t } = useTranslation();
   usePageMeta({ title: "分身AI", description: "分身AIの作成・編集・性格分析", path: "/twins" });
   const { data: twin, isLoading, isError, refetch } = trpc.myTwin.get.useQuery();
   const upsertMutation = trpc.myTwin.upsert.useMutation();
@@ -306,9 +308,9 @@ export default function MyTwin() {
       <div className="space-y-6" role="main" aria-label="分身AI管理">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">自分の分身AI</h1>
+            <h1 className="text-3xl font-bold">{t("twins.title")}</h1>
             <p className="text-muted-foreground mt-1">
-              あなたの分身AIを作成・管理します
+              {t("twins.description")}
             </p>
           </div>
         </div>
@@ -320,14 +322,14 @@ export default function MyTwin() {
               <div className="rounded-full bg-primary/10 p-4 mb-4">
                 <Bot className="h-12 w-12 text-primary" />
               </div>
-              <h3 className="text-xl font-semibold mb-2">分身AIを作成しよう</h3>
+              <h3 className="text-xl font-semibold mb-2">{t("twins.createTwin")}</h3>
               <p className="text-muted-foreground text-center max-w-md mb-6">
                 あなたの情報を入力するだけで、AIが自動で整理して分身AIを作成します。
                 友達の分身AIとビジネスマッチングができるようになります。
               </p>
               <Button onClick={() => setIsEditing(true)} size="lg">
                 <Sparkles className="mr-2 h-5 w-5" />
-                分身AIを作成
+                {t("twins.createTwin")}
               </Button>
             </CardContent>
           </Card>
@@ -335,7 +337,7 @@ export default function MyTwin() {
           // 編集モード
           <Card>
             <CardHeader>
-              <CardTitle>{twin ? "分身AIを編集" : "分身AIを作成"}</CardTitle>
+              <CardTitle>{twin ? t("twins.editTwin") : t("twins.createTwin")}</CardTitle>
               <CardDescription>
                 あなたの情報を自由に入力してください。AIが自動で整理します。
               </CardDescription>
@@ -423,7 +425,7 @@ export default function MyTwin() {
                         {twin.isPublic === 1 && (
                           <Badge variant="outline" className="text-cyan-400 border-cyan-400">
                             <Globe className="h-3 w-3 mr-1" />
-                            公開中
+                            {t("twin.public")}
                           </Badge>
                         )}
                       </div>
@@ -437,13 +439,13 @@ export default function MyTwin() {
               <CardContent className="space-y-4">
                 {twin.description && (
                   <div>
-                    <h4 className="font-medium text-sm text-muted-foreground mb-1">紹介</h4>
+                    <h4 className="font-medium text-sm text-muted-foreground mb-1">{t("twins.introduction")}</h4>
                     <p>{twin.description}</p>
                   </div>
                 )}
                 {twin.personality && (
                   <div>
-                    <h4 className="font-medium text-sm text-muted-foreground mb-1">特徴・スキル</h4>
+                    <h4 className="font-medium text-sm text-muted-foreground mb-1">{t("twins.skills")}</h4>
                     <p className="whitespace-pre-wrap">{twin.personality}</p>
                   </div>
                 )}
@@ -463,7 +465,7 @@ export default function MyTwin() {
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
                   <Globe className="h-5 w-5" />
-                  公開設定
+                  {t("twins.publicSettings")}
                 </CardTitle>
                 <CardDescription>
                   分身AIを公開すると、他のユーザーから発見・マッチングリクエストを受けられます
@@ -831,7 +833,7 @@ export default function MyTwin() {
                   <div>
                     <CardTitle className="text-lg flex items-center gap-2">
                       <Brain className="h-5 w-5" />
-                      人格分析
+                      {t("twins.personality")}
                     </CardTitle>
                     <CardDescription>
                       ビッグ・ファイブ性格診断・9つの判断基準・分身AI精度
@@ -1142,6 +1144,7 @@ export default function MyTwin() {
 
 /** Knowledge Base Management Section */
 function KnowledgeBaseSection() {
+  const { t } = useTranslation();
   const { data: entries, isLoading, refetch } = trpc.knowledge.list.useQuery();
   const addMutation = trpc.knowledge.add.useMutation({
     onSuccess: () => {
@@ -1210,7 +1213,7 @@ function KnowledgeBaseSection() {
           <div>
             <CardTitle className="text-lg flex items-center gap-2">
               <BookOpen className="h-5 w-5" />
-              知識ベース
+              {t("twins.knowledge")}
             </CardTitle>
             <CardDescription>
               ドキュメント、経験、専門知識を追加して分身AIの回答品質を向上させましょう
@@ -1228,7 +1231,7 @@ function KnowledgeBaseSection() {
             </label>
             <Button size="sm" onClick={() => setIsAdding(!isAdding)}>
               <Plus className="h-4 w-4 mr-1" />
-              追加
+              {t("twins.addKnowledge")}
             </Button>
           </div>
         </div>

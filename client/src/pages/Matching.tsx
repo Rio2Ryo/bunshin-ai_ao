@@ -23,12 +23,14 @@ import {
   CalendarClock, Trash2, Bell, BarChart3, Globe, Target, Mail,
 } from "lucide-react";
 import MatchingQuickStart from "@/components/MatchingQuickStart";
+import { useTranslation } from "@/contexts/LanguageContext";
 
 // ---------------------------------------------------------------------------
 // Score components
 // ---------------------------------------------------------------------------
 
 function ScoreCircle({ score, size = "md", source }: { score: number; size?: "sm" | "md" | "lg"; source?: string }) {
+  const { t } = useTranslation();
   const sizeMap = { sm: "w-10 h-10 text-xs", md: "w-14 h-14 text-sm", lg: "w-20 h-20 text-lg" };
   const color = score >= 80 ? "text-green-500 border-green-500/40" :
                 score >= 60 ? "text-blue-500 border-blue-500/40" :
@@ -38,7 +40,7 @@ function ScoreCircle({ score, size = "md", source }: { score: number; size?: "sm
     <div className={`${sizeMap[size]} rounded-full border-2 ${color} flex flex-col items-center justify-center shrink-0`}>
       <span className="font-bold leading-none">{score}%</span>
       {source === "estimated" && size !== "sm" && (
-        <span className="text-[9px] text-muted-foreground leading-none mt-0.5">推定</span>
+        <span className="text-[9px] text-muted-foreground leading-none mt-0.5">{t("matching.estimated")}</span>
       )}
     </div>
   );
@@ -65,6 +67,7 @@ function AvatarCircle({ name, size = "md" }: { name: string; size?: "sm" | "md" 
 // ---------------------------------------------------------------------------
 
 export default function Matching() {
+  const { t } = useTranslation();
   usePageMeta({ title: "ビジネスマッチング", description: "スコアに基づいたマッチング候補を発見しましょう。", path: "/matching" });
   const { user } = useAuth();
   const { data: myTwin } = trpc.myTwin.get.useQuery();
@@ -205,7 +208,7 @@ export default function Matching() {
       default: return <Clock className="h-4 w-4 text-muted-foreground" />;
     }
   };
-  const getStatusText = (s: string) => s === "completed" ? "完了" : s === "running" ? "実行中" : s === "failed" ? "失敗" : "待機中";
+  const getStatusText = (s: string) => s === "completed" ? t("matching.completed") : s === "running" ? t("matching.running") : s === "failed" ? t("matching.failed") : t("matching.waiting");
 
   const friendsWithTwin = friends?.filter(f => f.twin) || [];
   const me = user as any;
@@ -241,9 +244,9 @@ export default function Matching() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">ビジネスマッチング</h1>
+            <h1 className="text-3xl font-bold">{t("matching.title")}</h1>
             <p className="text-muted-foreground mt-2">
-              信頼度スコアが近いユーザーとマッチングしましょう
+              {t("matching.desc")}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -364,42 +367,42 @@ export default function Matching() {
           </Dialog>
           <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) setPrediction(null); }}>
             <DialogTrigger asChild>
-              <Button size="sm" disabled={!myTwin}><Plus className="h-4 w-4 mr-2" />新規マッチング</Button>
+              <Button size="sm" disabled={!myTwin}><Plus className="h-4 w-4 mr-2" />{t("matching.newMatching")}</Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-md">
               <DialogHeader>
-                <DialogTitle>新規マッチングセッション</DialogTitle>
-                <DialogDescription>友達の分身AIを選んで、ビジネステーマを設定してください</DialogDescription>
+                <DialogTitle>{t("matching.dialogTitle")}</DialogTitle>
+                <DialogDescription>{t("matching.dialogDesc")}</DialogDescription>
               </DialogHeader>
               <div className="space-y-4 mt-4">
                 <div className="p-3 rounded-lg bg-muted/50 border">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1"><Bot className="h-4 w-4" />あなたの分身AI</div>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1"><Bot className="h-4 w-4" />{t("matching.yourTwin")}</div>
                   <p className="font-medium">{myTwin?.name || "未作成"}</p>
                 </div>
                 <div className="space-y-2">
-                  <Label>対話相手（友達の分身AI）</Label>
+                  <Label>{t("matching.selectFriend")}</Label>
                   <Select value={selectedFriendId} onValueChange={setSelectedFriendId}>
-                    <SelectTrigger><SelectValue placeholder="友達を選択" /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder={t("matching.selectPlaceholder")} /></SelectTrigger>
                     <SelectContent>
                       {friendsWithTwin.length > 0 ? friendsWithTwin.map((friend) => (
                         <SelectItem key={friend.friend.id} value={friend.friend.id.toString()}>
                           {friend.twin?.name} ({friend.friend.name})
                         </SelectItem>
-                      )) : <div className="p-2 text-sm text-muted-foreground text-center">分身AIを持つ友達がいません</div>}
+                      )) : <div className="p-2 text-sm text-muted-foreground text-center">{t("matching.noFriendsWithTwin")}</div>}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="theme">対話テーマ</Label>
-                  <Input id="theme" value={theme} onChange={(e) => setTheme(e.target.value)} placeholder="例: AI活用した新規事業の可能性" />
+                  <Label htmlFor="theme">{t("matching.theme")}</Label>
+                  <Input id="theme" value={theme} onChange={(e) => setTheme(e.target.value)} placeholder={t("matching.themePlaceholder")} />
                 </div>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <Label className="flex items-center gap-2"><MessageSquare className="h-4 w-4" />対話ターン数</Label>
+                    <Label className="flex items-center gap-2"><MessageSquare className="h-4 w-4" />{t("matching.turns")}</Label>
                     <span className="text-sm font-medium text-primary">{turns}ターン</span>
                   </div>
                   <Slider value={[turns]} onValueChange={(v) => setTurns(v[0])} min={3} max={30} step={1} className="w-full" />
-                  <div className="flex justify-between text-xs text-muted-foreground"><span>3（簡潔）</span><span>15（標準）</span><span>30（徹底議論）</span></div>
+                  <div className="flex justify-between text-xs text-muted-foreground"><span>{t("matching.turnsMin")}</span><span>{t("matching.turnsMid")}</span><span>{t("matching.turnsMax")}</span></div>
                 </div>
                 {/* AI Prediction */}
                 <div className="border rounded-lg p-3 space-y-2">
@@ -435,7 +438,7 @@ export default function Matching() {
                   <Button variant="outline" onClick={() => setIsCreateOpen(false)}>キャンセル</Button>
                   <Button onClick={handleCreate} disabled={startStreaming.isPending || friendsWithTwin.length === 0}>
                     {startStreaming.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                    作成して対話開始
+                    {t("matching.createAndStart")}
                   </Button>
                 </div>
               </div>
@@ -473,14 +476,14 @@ export default function Matching() {
         {/* Tabs */}
         <Tabs defaultValue={!tutorialDone && npcSessions.length > 0 ? "history" : "discover"} className="w-full">
           <TabsList className="w-full">
-            <TabsTrigger value="discover" className="gap-1.5"><Search className="h-4 w-4" />おすすめ候補</TabsTrigger>
+            <TabsTrigger value="discover" className="gap-1.5"><Search className="h-4 w-4" />{t("matching.tabDiscover")}</TabsTrigger>
             <TabsTrigger value="received" className="gap-1.5">
-              <Inbox className="h-4 w-4" />受信
+              <Inbox className="h-4 w-4" />{t("matching.tabReceived")}
               {pendingRecvCount > 0 && <Badge variant="destructive" className="text-[10px] px-1.5 py-0 ml-1">{pendingRecvCount}</Badge>}
             </TabsTrigger>
-            <TabsTrigger value="sent" className="gap-1.5"><Send className="h-4 w-4" />送信済み</TabsTrigger>
-            <TabsTrigger value="history" className="gap-1.5"><History className="h-4 w-4" />履歴</TabsTrigger>
-            <TabsTrigger value="scheduler" className="gap-1.5"><CalendarClock className="h-4 w-4" />自動</TabsTrigger>
+            <TabsTrigger value="sent" className="gap-1.5"><Send className="h-4 w-4" />{t("matching.tabSent")}</TabsTrigger>
+            <TabsTrigger value="history" className="gap-1.5"><History className="h-4 w-4" />{t("matching.tabHistory")}</TabsTrigger>
+            <TabsTrigger value="scheduler" className="gap-1.5"><CalendarClock className="h-4 w-4" />{t("matching.tabScheduler")}</TabsTrigger>
           </TabsList>
 
           {/* ===== Tab: Discover ===== */}
@@ -488,7 +491,7 @@ export default function Matching() {
             <div className="space-y-4 mt-4">
               <div className="flex items-center gap-2 mb-2">
                 <Shield className="h-5 w-5 text-primary" />
-                <p className="text-sm text-muted-foreground">あなたの信頼度: <span className="font-bold text-foreground">{trustScore}pt</span> — スコア差±20以内のユーザーが表示されます</p>
+                <p className="text-sm text-muted-foreground">{t("matching.trustLabel")}: <span className="font-bold text-foreground">{trustScore}pt</span> — {t("matching.trustRange")}</p>
               </div>
 
               {discoverLoading ? (
@@ -531,11 +534,11 @@ export default function Matching() {
                         </div>
                         <div className="mt-3">
                           {c.requestStatus === "pending" && c.requestDirection === "sent" ? (
-                            <Button size="sm" variant="outline" className="w-full" disabled><Clock className="h-3 w-3 mr-1" />リクエスト送信済み</Button>
+                            <Button size="sm" variant="outline" className="w-full" disabled><Clock className="h-3 w-3 mr-1" />{t("matching.requestSent")}</Button>
                           ) : c.requestStatus === "pending" && c.requestDirection === "received" ? (
                             <div className="flex gap-2">
                               <Button size="sm" className="flex-1" onClick={() => handleAcceptRequest(c.requestId)} disabled={acceptRequestMut.isPending}>
-                                <Check className="h-3 w-3 mr-1" />承認
+                                <Check className="h-3 w-3 mr-1" />{t("matching.approve")}
                               </Button>
                               <Button size="sm" variant="outline" onClick={() => handleRejectRequest(c.requestId)} disabled={rejectRequestMut.isPending}>
                                 <X className="h-3 w-3" />
@@ -543,11 +546,11 @@ export default function Matching() {
                             </div>
                           ) : c.requestStatus === "accepted" ? (
                             <Button size="sm" className="w-full" onClick={() => handleQuickMatch(c.userId, c.name)} disabled={createSession.isPending}>
-                              <Play className="h-3 w-3 mr-1" />マッチング開始
+                              <Play className="h-3 w-3 mr-1" />{t("matching.startMatching")}
                             </Button>
                           ) : c.isFriend ? (
                             <Button size="sm" className="w-full" onClick={() => handleQuickMatch(c.userId, c.name)} disabled={createSession.isPending}>
-                              <Play className="h-3 w-3 mr-1" />マッチング開始
+                              <Play className="h-3 w-3 mr-1" />{t("matching.startMatching")}
                             </Button>
                           ) : requestTargetId === c.userId ? (
                             <div className="space-y-2">
@@ -561,7 +564,7 @@ export default function Matching() {
                             </div>
                           ) : (
                             <Button size="sm" variant="outline" className="w-full" onClick={() => setRequestTargetId(c.userId)}>
-                              <UserPlus className="h-3 w-3 mr-1" />リクエスト送信
+                              <UserPlus className="h-3 w-3 mr-1" />{t("matching.sendRequest")}
                             </Button>
                           )}
                         </div>
@@ -573,8 +576,8 @@ export default function Matching() {
                 <Card>
                   <CardContent className="flex flex-col items-center justify-center py-12">
                     <Search className="h-12 w-12 text-muted-foreground mb-3" />
-                    <h3 className="text-base font-medium mb-1">候補が見つかりません</h3>
-                    <p className="text-muted-foreground text-sm text-center">信頼度スコアが近いユーザーがまだいません。プロフィールを充実させてスコアを上げましょう。</p>
+                    <h3 className="text-base font-medium mb-1">{t("matching.noCandidates")}</h3>
+                    <p className="text-muted-foreground text-sm text-center">{t("matching.noCandidatesDesc")}</p>
                   </CardContent>
                 </Card>
               )}
@@ -604,7 +607,7 @@ export default function Matching() {
                           </div>
                           <div className="flex gap-2 shrink-0">
                             <Button size="sm" onClick={() => handleAcceptRequest(r.id)} disabled={acceptRequestMut.isPending}>
-                              {acceptRequestMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3 mr-1" />}承認
+                              {acceptRequestMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3 mr-1" />}{t("matching.approve")}
                             </Button>
                             <Button size="sm" variant="outline" onClick={() => handleRejectRequest(r.id)} disabled={rejectRequestMut.isPending}>
                               <X className="h-3 w-3" />
@@ -619,8 +622,8 @@ export default function Matching() {
                 <Card>
                   <CardContent className="flex flex-col items-center justify-center py-12">
                     <Inbox className="h-12 w-12 text-muted-foreground mb-3" />
-                    <h3 className="text-base font-medium mb-1">受信リクエストはありません</h3>
-                    <p className="text-muted-foreground text-sm text-center">他のユーザーからのマッチングリクエストがここに表示されます</p>
+                    <h3 className="text-base font-medium mb-1">{t("matching.noReceived")}</h3>
+                    <p className="text-muted-foreground text-sm text-center">{t("matching.noReceivedDesc")}</p>
                   </CardContent>
                 </Card>
               )}
@@ -646,9 +649,9 @@ export default function Matching() {
                             {r.message && <p className="text-xs text-muted-foreground mt-1 italic">「{r.message}」</p>}
                           </div>
                           <div className="shrink-0">
-                            {r.status === "pending" && <Badge variant="secondary" className="gap-1"><Clock className="h-3 w-3" />保留中</Badge>}
-                            {r.status === "accepted" && <Badge className="gap-1 bg-green-500/20 text-green-600 border-green-500/30"><CheckCircle className="h-3 w-3" />承認済み</Badge>}
-                            {r.status === "rejected" && <Badge variant="destructive" className="gap-1"><XCircle className="h-3 w-3" />拒否</Badge>}
+                            {r.status === "pending" && <Badge variant="secondary" className="gap-1"><Clock className="h-3 w-3" />{t("matching.pending")}</Badge>}
+                            {r.status === "accepted" && <Badge className="gap-1 bg-green-500/20 text-green-600 border-green-500/30"><CheckCircle className="h-3 w-3" />{t("matching.accepted")}</Badge>}
+                            {r.status === "rejected" && <Badge variant="destructive" className="gap-1"><XCircle className="h-3 w-3" />{t("matching.rejected")}</Badge>}
                           </div>
                         </div>
                       </CardContent>
@@ -659,8 +662,8 @@ export default function Matching() {
                 <Card>
                   <CardContent className="flex flex-col items-center justify-center py-12">
                     <Send className="h-12 w-12 text-muted-foreground mb-3" />
-                    <h3 className="text-base font-medium mb-1">送信済みリクエストはありません</h3>
-                    <p className="text-muted-foreground text-sm text-center">おすすめ候補からリクエストを送信しましょう</p>
+                    <h3 className="text-base font-medium mb-1">{t("matching.noSent")}</h3>
+                    <p className="text-muted-foreground text-sm text-center">{t("matching.noSentDesc")}</p>
                   </CardContent>
                 </Card>
               )}
@@ -675,7 +678,7 @@ export default function Matching() {
                 <div className="space-y-3">
                   <div className="flex items-center gap-2">
                     <Sparkles className="h-4 w-4 text-primary" />
-                    <h3 className="text-sm font-medium">友達マッチング候補</h3>
+                    <h3 className="text-sm font-medium">{t("matching.friendCandidates")}</h3>
                     <Badge variant="secondary" className="text-xs">{candidates.length}件</Badge>
                   </div>
                   <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
@@ -708,7 +711,7 @@ export default function Matching() {
                           </div>
                           <div className="flex gap-2 mt-3">
                             <Button size="sm" className="flex-1" onClick={() => handleQuickMatch(c.friend.id, c.friend.name)} disabled={createSession.isPending}>
-                              <Play className="h-3 w-3 mr-1" />マッチング開始
+                              <Play className="h-3 w-3 mr-1" />{t("matching.startMatching")}
                             </Button>
                             {c.bestResult?.sessionId && (
                               <Link href={`/matching/${c.bestResult.sessionId}`}><Button size="sm" variant="outline"><ArrowRight className="h-3 w-3" /></Button></Link>
@@ -725,7 +728,7 @@ export default function Matching() {
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <TrendingUp className="h-4 w-4 text-muted-foreground" />
-                  <h3 className="text-sm font-medium">マッチング履歴</h3>
+                  <h3 className="text-sm font-medium">{t("matching.history")}</h3>
                   {sortedSessions.length > 0 && <Badge variant="secondary" className="text-xs">{sortedSessions.length}件</Badge>}
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2">
@@ -738,9 +741,9 @@ export default function Matching() {
                   <div className="flex gap-1">
                     {[
                       { value: "all", label: "全て" },
-                      { value: "completed", label: "完了" },
-                      { value: "running", label: "実行中" },
-                      { value: "pending", label: "待機中" },
+                      { value: "completed", label: t("matching.completed") },
+                      { value: "running", label: t("matching.running") },
+                      { value: "pending", label: t("matching.waiting") },
                     ].map((opt) => (
                       <Button
                         key={opt.value}
@@ -770,7 +773,7 @@ export default function Matching() {
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
                                 <p className="font-medium text-sm truncate">{session.theme}</p>
-                                {session.isNpcSession && <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">チュートリアル</Badge>}
+                                {session.isNpcSession && <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">{t("matching.tutorial")}</Badge>}
                                 {session.isGroup && <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0"><Users className="h-2.5 w-2.5 mr-0.5" />{session.participantCount}人</Badge>}
                               </div>
                               <p className="text-xs text-muted-foreground">{session.isGroup ? `グループ（${session.participantCount}人参加）` : `${session.twin1?.name || `Twin #${session.twin1Id}`} × ${session.twin2?.name || `Twin #${session.twin2Id}`}`}</p>
@@ -795,8 +798,8 @@ export default function Matching() {
                   <Card>
                     <CardContent className="flex flex-col items-center justify-center py-12">
                       <Users className="h-12 w-12 text-muted-foreground mb-3" />
-                      <h3 className="text-base font-medium mb-1">マッチング履歴がありません</h3>
-                      <p className="text-muted-foreground text-sm text-center">おすすめ候補からマッチングを始めましょう</p>
+                      <h3 className="text-base font-medium mb-1">{t("matching.noHistory")}</h3>
+                      <p className="text-muted-foreground text-sm text-center">{t("matching.noHistoryDesc")}</p>
                     </CardContent>
                   </Card>
                 )}

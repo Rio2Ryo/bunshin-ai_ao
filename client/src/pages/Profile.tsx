@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Save, Plus, X, Eye, Shield, Download, Trash2, AlertTriangle, Camera } from "lucide-react";
+import { useTranslation } from "@/contexts/LanguageContext";
 import {
   Dialog,
   DialogContent,
@@ -26,7 +27,8 @@ import { useLocation } from "wouter";
 export default function Profile() {
   const { user, logout } = useAuth();
   const [, navigate] = useLocation();
-  usePageMeta({ title: "プロフィール", description: "あなたのプロフィール情報を管理しましょう。スキル、経歴、自己紹介を設定できます。", path: "/profile" });
+  const { t } = useTranslation();
+  usePageMeta({ title: t("profile.title"), description: t("profile.description"), path: "/profile" });
   const { data: profile, isLoading, isError } = trpc.profile.get.useQuery();
   const { data: trustData } = trpc.trust.getScore.useQuery();
   const updateProfile = trpc.profile.update.useMutation();
@@ -125,11 +127,11 @@ export default function Profile() {
 
   return (
     <DashboardLayout>
-      <div className="max-w-3xl mx-auto space-y-6" role="main" aria-label="プロフィール設定">
+      <div className="max-w-3xl mx-auto space-y-6" role="main" aria-label={t("profile.title")}>
         <div>
-          <h1 className="text-3xl font-bold">プロフィール設定</h1>
+          <h1 className="text-3xl font-bold">{t("profile.title")}</h1>
           <p className="text-muted-foreground mt-2">
-            あなたの情報を入力して、分身AIの基盤を作成しましょう。
+            {t("profile.description")}
           </p>
         </div>
 

@@ -16,8 +16,10 @@ import { LazyStreamdown as Streamdown } from "@/components/LazyStreamdown";
 import { toast } from "sonner";
 import { useMatchingRoom, type MatchingComment, type MatchingReaction } from "@/hooks/useMatchingRoom";
 import { type MatchingTurn, type MatchingAnalysis } from "@/hooks/useMatchingStream";
+import { useTranslation } from "@/contexts/LanguageContext";
 
 export default function MatchingSession() {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const sessionId = parseInt(id || "0");
   usePageMeta({ title: `マッチングセッション #${sessionId}`, description: "マッチング結果の詳細を確認。スコア、対話履歴、分析レポートを閲覧できます。", ogImage: "https://bunshin-ai.pages.dev/og/matching.svg", path: `/matching/${id}` });
@@ -64,7 +66,7 @@ export default function MatchingSession() {
     setIsStreaming(false);
     // Refetch to get the final persisted data
     refetch();
-    toast.success("対話と分析が完了しました！");
+    toast.success(t("matchingSession.completed"));
   }, [refetch]);
 
   const onError = useCallback((message: string) => {
@@ -342,7 +344,7 @@ export default function MatchingSession() {
                 {isRunning && (
                   <span className="flex items-center gap-1.5 text-xs text-primary font-medium animate-pulse">
                     <Zap className="h-3.5 w-3.5" />
-                    {phase === "dialogue" ? "対話生成中..." : phase === "analysis" ? "分析中..." : "接続中..."}
+                    {phase === "dialogue" ? t("matchingSession.dialogueGenerating") : phase === "analysis" ? t("matchingSession.analyzing") : t("matchingSession.connecting")}
                   </span>
                 )}
               </div>
@@ -365,25 +367,25 @@ export default function MatchingSession() {
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm">
                   <Share2 className="h-4 w-4 mr-2" />
-                  共有
+                  {t("matchingSession.share")}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={handleShare}>
                   <ExternalLink className="h-4 w-4 mr-2" />
-                  共有...
+                  {t("matchingSession.share")}...
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={handleShareLine}>
                   <MessageSquare className="h-4 w-4 mr-2" />
-                  LINEで共有
+                  {t("matchingSession.shareLine")}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={handleShareTwitter}>
                   <ExternalLink className="h-4 w-4 mr-2" />
-                  Xで共有
+                  {t("matchingSession.shareX")}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={handleCopyLink}>
                   <LinkIcon className="h-4 w-4 mr-2" />
-                  リンクをコピー
+                  {t("matchingSession.copyLink")}
                 </DropdownMenuItem>
                 {data?.session?.settings?.friendId && (
                   <DropdownMenuItem onClick={handleInviteFriend} disabled={inviteMutation.isPending}>
@@ -424,7 +426,7 @@ export default function MatchingSession() {
               ) : (
                 <Download className="h-4 w-4 mr-2" />
               )}
-              PDF印刷
+              {t("matchingSession.exportPdf")}
             </Button>
             <Button
               variant="outline"
@@ -432,7 +434,7 @@ export default function MatchingSession() {
               onClick={() => window.open(`${API_BASE}/api/export/matching/${sessionId}/csv`, '_blank')}
             >
               <Download className="h-4 w-4 mr-2" />
-              CSV
+              {t("matchingSession.exportCsv")}
             </Button>
             <Button
               variant="outline"
@@ -440,7 +442,7 @@ export default function MatchingSession() {
               onClick={() => window.open(`${API_BASE}/api/export/matching/${sessionId}/pdf`, '_blank')}
             >
               <Download className="h-4 w-4 mr-2" />
-              レポート
+              {t("matchingSession.exportReport")}
             </Button>
             {session.status === "completed" && (
               <Link href={`/matching/replay/${sessionId}`}>
@@ -458,7 +460,7 @@ export default function MatchingSession() {
                 <Loader2 className="h-5 w-5 animate-spin text-primary" />
                 <div className="flex-1">
                   <p className="text-sm font-medium">
-                    {phase === "dialogue" ? `対話生成中... (${streamingTurns.length}ターン完了)` : phase === "analysis" ? "AI分析を実行中..." : "接続中..."}
+                    {phase === "dialogue" ? `${t("matchingSession.dialogueGenerating")} (${streamingTurns.length} ${t("matchingSession.turnsCompleted")})` : phase === "analysis" ? t("matchingSession.analyzing") : t("matchingSession.connecting")}
                   </p>
                   <Progress value={phase === "dialogue" ? (streamingTurns.length / 5) * 70 : phase === "analysis" ? 85 : 10} className="h-1.5 mt-2" />
                 </div>
@@ -473,7 +475,7 @@ export default function MatchingSession() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <BarChart3 className="h-5 w-5 text-primary" />
-                マッチング結果
+                {t("matchingSession.result")}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -481,13 +483,13 @@ export default function MatchingSession() {
                 <div className="grid gap-6 md:grid-cols-2">
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm text-muted-foreground">相性スコア</span>
+                      <span className="text-sm text-muted-foreground">{t("matchingSession.compatScore")}</span>
                       <span className="text-2xl font-bold text-primary">{displayScore}%</span>
                     </div>
                     <Progress value={displayScore} className="h-3" />
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground mb-2">総合評価</p>
+                    <p className="text-sm text-muted-foreground mb-2">{t("matchingSession.summary")}</p>
                     <p className="font-medium">{displayResult.summary}</p>
                   </div>
                 </div>
@@ -495,12 +497,12 @@ export default function MatchingSession() {
                 {/* Score Breakdown */}
                 {displayResult.scoreBreakdown && (
                   <div className="border-t pt-4">
-                    <h4 className="text-sm font-medium mb-4">スコア内訳（5つの観点×20点満点）</h4>
+                    <h4 className="text-sm font-medium mb-4">{t("matchingSession.scoreBreakdown")}</h4>
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                       {/* Skill Match */}
                       <div className="bg-muted/50 rounded-lg p-3">
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm font-medium">スキルマッチ度</span>
+                          <span className="text-sm font-medium">{t("matchingSession.skillMatch")}</span>
                           <span className="text-sm font-bold text-primary">
                             {displayResult.scoreBreakdown.skillMatch?.score || 0}/20
                           </span>
@@ -514,7 +516,7 @@ export default function MatchingSession() {
                       {/* Value Alignment */}
                       <div className="bg-muted/50 rounded-lg p-3">
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm font-medium">価値観の一致度</span>
+                          <span className="text-sm font-medium">{t("matchingSession.valueAlignment")}</span>
                           <span className="text-sm font-bold text-primary">
                             {displayResult.scoreBreakdown.valueAlignment?.score || 0}/20
                           </span>
@@ -528,7 +530,7 @@ export default function MatchingSession() {
                       {/* Communication Style */}
                       <div className="bg-muted/50 rounded-lg p-3">
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm font-medium">コミュニケーション</span>
+                          <span className="text-sm font-medium">{t("matchingSession.commStyle")}</span>
                           <span className="text-sm font-bold text-primary">
                             {displayResult.scoreBreakdown.communicationStyle?.score || 0}/20
                           </span>
@@ -542,7 +544,7 @@ export default function MatchingSession() {
                       {/* Business Goal Fit */}
                       <div className="bg-muted/50 rounded-lg p-3">
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm font-medium">ビジネス目標適合度</span>
+                          <span className="text-sm font-medium">{t("matchingSession.goalFit")}</span>
                           <span className="text-sm font-bold text-primary">
                             {displayResult.scoreBreakdown.businessGoalFit?.score || 0}/20
                           </span>
@@ -556,7 +558,7 @@ export default function MatchingSession() {
                       {/* Complementary Strengths */}
                       <div className="bg-muted/50 rounded-lg p-3">
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm font-medium">相互補完性</span>
+                          <span className="text-sm font-medium">{t("matchingSession.complement")}</span>
                           <span className="text-sm font-bold text-primary">
                             {displayResult.scoreBreakdown.complementaryStrengths?.score || 0}/20
                           </span>
@@ -578,15 +580,15 @@ export default function MatchingSession() {
           <TabsList>
             <TabsTrigger value="dialogue">
               <MessageSquare className="h-4 w-4 mr-2" />
-              対話内容
+              {t("matchingSession.tabDialogue")}
             </TabsTrigger>
             <TabsTrigger value="analysis" disabled={!displayResult}>
               <BarChart3 className="h-4 w-4 mr-2" />
-              詳細分析
+              {t("matchingSession.tabAnalysis")}
             </TabsTrigger>
             <TabsTrigger value="websearch">
               <Search className="h-4 w-4 mr-2" />
-              Web検索
+              {t("matchingSession.tabSearch")}
             </TabsTrigger>
           </TabsList>
 
@@ -594,9 +596,9 @@ export default function MatchingSession() {
           <TabsContent value="dialogue">
             <Card>
               <CardHeader>
-                <CardTitle>対話履歴</CardTitle>
+                <CardTitle>{t("matchingSession.dialogueTitle")}</CardTitle>
                 <CardDescription>
-                  分身AI同士の対話内容（{dialogues?.length || 0}ターン）
+                  {t("matchingSession.dialogueDesc")}（{dialogues?.length || 0} {t("matchingSession.turns")}）
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -814,12 +816,12 @@ export default function MatchingSession() {
                     ) : isRunning ? (
                       <div className="text-center py-8">
                         <Loader2 className="h-8 w-8 mx-auto text-primary animate-spin mb-4" />
-                        <p className="text-muted-foreground">分身AI同士の対話を生成しています...</p>
+                        <p className="text-muted-foreground">{t("matchingSession.generating")}</p>
                       </div>
                     ) : (
                       <div className="text-center py-8">
                         <MessageSquare className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                        <p className="text-muted-foreground">対話がまだ行われていません</p>
+                        <p className="text-muted-foreground">{t("matchingSession.noDialogue")}</p>
                       </div>
                     )}
                     {/* Typing indicator during dialogue generation */}
@@ -933,7 +935,7 @@ export default function MatchingSession() {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <Lightbulb className="h-5 w-5 text-yellow-500" />
-                      協業可能性
+                      {t("matchingSession.collaboration")}
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -946,7 +948,7 @@ export default function MatchingSession() {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <CheckCircle className="h-5 w-5 text-green-500" />
-                      強み
+                      {t("matchingSession.strengths")}
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -970,7 +972,7 @@ export default function MatchingSession() {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <AlertTriangle className="h-5 w-5 text-yellow-500" />
-                      課題
+                      {t("matchingSession.challenges")}
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -994,7 +996,7 @@ export default function MatchingSession() {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <Lightbulb className="h-5 w-5 text-primary" />
-                      提案
+                      {t("matchingSession.recommendations")}
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -1021,7 +1023,7 @@ export default function MatchingSession() {
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <Users className="h-5 w-5 text-blue-500" />
-                        役割分担
+                        {t("matchingSession.roleDistribution")}
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
@@ -1038,7 +1040,7 @@ export default function MatchingSession() {
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <Calendar className="h-5 w-5 text-purple-500" />
-                        タイムライン
+                        {t("matchingSession.timeline")}
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
@@ -1055,7 +1057,7 @@ export default function MatchingSession() {
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <DollarSign className="h-5 w-5 text-green-500" />
-                        必要リソース
+                        {t("matchingSession.resources")}
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
@@ -1072,7 +1074,7 @@ export default function MatchingSession() {
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <Target className="h-5 w-5 text-red-500" />
-                        期待成果・KPI
+                        {t("matchingSession.kpi")}
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
@@ -1089,7 +1091,7 @@ export default function MatchingSession() {
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <Rocket className="h-5 w-5 text-primary" />
-                        明日からできるアクション
+                        {t("matchingSession.nextSteps")}
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
@@ -1103,7 +1105,7 @@ export default function MatchingSession() {
                 {/* Detailed Analysis */}
                 <Card className="md:col-span-2">
                   <CardHeader>
-                    <CardTitle>詳細分析</CardTitle>
+                    <CardTitle>{t("matchingSession.detailedAnalysis")}</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="prose prose-sm dark:prose-invert max-w-none">

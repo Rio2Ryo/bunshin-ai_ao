@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePageMeta } from "@/hooks/usePageMeta";
+import { useTranslation, type TranslationKey } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -15,16 +16,17 @@ import {
   Globe, Zap, Settings, Filter, Inbox, BellRing,
 } from "lucide-react";
 
-const TYPE_LABELS: Record<string, string> = {
-  matching_complete: "マッチング完了",
-  matching_invite: "マッチング招待",
-  friend_request: "友達リクエスト",
-  matching_request: "マッチングリクエスト",
-  system: "システム",
+const TYPE_KEYS: Record<string, string> = {
+  matching_complete: "notifications.matchingComplete",
+  matching_invite: "notifications.matchingInvite",
+  friend_request: "notifications.friendRequest",
+  matching_request: "notifications.matchingRequest",
+  system: "notifications.system",
 };
 
 export default function NotificationDashboard() {
-  usePageMeta({ title: "通知管理", description: "通知設定と通知履歴", path: "/notifications" });
+  const { t } = useTranslation();
+  usePageMeta({ title: t("notifications.title"), description: t("notifications.description"), path: "/notifications" });
   const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined);
 
   const { data: channels, isLoading: loadingChannels } = trpc.notification.channelStatus.useQuery();
@@ -36,8 +38,8 @@ export default function NotificationDashboard() {
   const handleToggle = async (field: string, value: boolean) => {
     try {
       await updateMut.mutateAsync({ [field]: value ? 1 : 0 } as any);
-      toast.success("設定を更新しました");
-    } catch { toast.error("設定の更新に失敗しました"); }
+      toast.success(t("notifications.settingsUpdated"));
+    } catch { toast.error(t("notifications.settingsError")); }
   };
 
   const handleMarkAllRead = async () => {
@@ -62,14 +64,14 @@ export default function NotificationDashboard() {
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2">
               <Bell className="h-6 w-6 text-primary" />
-              通知管理
+              {t("notifications.title")}
             </h1>
-            <p className="text-muted-foreground">通知チャネル設定と通知履歴</p>
+            <p className="text-muted-foreground">{t("notifications.description")}</p>
           </div>
           {(history?.unreadCount ?? 0) > 0 && (
             <Button variant="outline" size="sm" onClick={handleMarkAllRead}>
               <CheckCircle className="h-4 w-4 mr-2" />
-              すべて既読 ({history?.unreadCount})
+              {t("notifications.markAllRead")} ({history?.unreadCount})
             </Button>
           )}
         </div>
@@ -77,7 +79,7 @@ export default function NotificationDashboard() {
         <Tabs defaultValue="settings">
           <TabsList>
             <TabsTrigger value="settings">
-              <Settings className="h-4 w-4 mr-2" />設定
+              <Settings className="h-4 w-4 mr-2" />{t("notifications.settings")}
             </TabsTrigger>
             <TabsTrigger value="history">
               <Inbox className="h-4 w-4 mr-2" />履歴
@@ -189,7 +191,7 @@ export default function NotificationDashboard() {
                   size="sm"
                   onClick={() => setTypeFilter(tc.type)}
                 >
-                  {TYPE_LABELS[tc.type] || tc.type} ({tc.count})
+                  {TYPE_KEYS[tc.type] ? t(TYPE_KEYS[tc.type] as TranslationKey) : tc.type} ({tc.count})
                 </Button>
               ))}
             </div>
@@ -207,7 +209,7 @@ export default function NotificationDashboard() {
                         <p className="text-xs text-muted-foreground truncate">{n.message}</p>
                         <p className="text-xs text-muted-foreground">{n.createdAt?.slice(0, 16).replace("T", " ")}</p>
                       </div>
-                      <Badge variant="outline" className="text-xs shrink-0">{TYPE_LABELS[n.type] || n.type}</Badge>
+                      <Badge variant="outline" className="text-xs shrink-0">{TYPE_KEYS[n.type] ? t(TYPE_KEYS[n.type] as TranslationKey) : n.type}</Badge>
                       {!n.isRead && (
                         <Button variant="ghost" size="sm" onClick={() => handleMarkRead(n.id)}>既読</Button>
                       )}
@@ -219,7 +221,7 @@ export default function NotificationDashboard() {
               <Card>
                 <CardContent className="py-12 text-center">
                   <Bell className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                  <p className="text-muted-foreground">通知はまだありません</p>
+                  <p className="text-muted-foreground">{t("notifications.noNotifications")}</p>
                 </CardContent>
               </Card>
             )}

@@ -6,6 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { trpc } from "@/lib/trpc";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
+import { useTranslation } from "@/contexts/LanguageContext";
 import {
   saveChatMessages,
   getChatMessages,
@@ -40,18 +41,20 @@ function formatTime(dateStr?: string | null) {
 }
 
 function TypingDots() {
+  const { t } = useTranslation();
   return (
-    <div className="flex gap-1 items-center h-5" role="status" aria-label="AIが入力中">
+    <div className="flex gap-1 items-center h-5" role="status" aria-label={t("chat.aiTyping")}>
       <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} aria-hidden="true" />
       <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} aria-hidden="true" />
       <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} aria-hidden="true" />
-      <span className="sr-only">AIが応答を生成中...</span>
+      <span className="sr-only">{t("chat.aiGenerating")}</span>
     </div>
   );
 }
 
 export default function Chat() {
-  usePageMeta({ title: "チャット", description: "分身AIとのチャット", path: "/chat" });
+  const { t } = useTranslation();
+  usePageMeta({ title: t("chat.title"), description: "分身AIとのチャット", path: "/chat" });
   const { sessionId } = useParams<{ sessionId?: string }>();
   const [, navigate] = useLocation();
   const { isOnline } = useNetworkStatus();
@@ -476,7 +479,7 @@ export default function Chat() {
             <CardContent className="p-2">
               <div className="mb-2">
                 <Input
-                  placeholder="チャットを検索..."
+                  placeholder={t("chat.searchSessions")}
                   value={sessionSearch}
                   onChange={(e) => setSessionSearch(e.target.value)}
                   className="h-7 text-sm"

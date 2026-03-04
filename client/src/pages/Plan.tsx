@@ -12,6 +12,7 @@ import { Crown, Users, MessageSquare, Database, FileUp, Zap, Check, Sparkles, Cr
 import { toast } from "sonner";
 import { useState, useEffect } from "react";
 import { useSearch } from "wouter";
+import { useTranslation } from "@/contexts/LanguageContext";
 
 const planDetails = {
   free: {
@@ -38,6 +39,7 @@ const planDetails = {
 };
 
 export default function Plan() {
+  const { t } = useTranslation();
   usePageMeta({ title: "プラン", description: "料金プランの確認と変更", path: "/plan" });
   const { user } = useAuth();
   const search = useSearch();
@@ -127,7 +129,7 @@ export default function Plan() {
   };
 
   const formatLimit = (value: number) => {
-    return value === -1 ? "無制限" : value.toString();
+    return value === -1 ? t("plan.unlimited") : value.toString();
   };
 
   const handleUpgrade = (plan: "premium" | "enterprise") => {
@@ -155,7 +157,7 @@ export default function Plan() {
                 </div>
                 <div>
                   <CardTitle className="text-xl">{planDetails[currentPlan].name}</CardTitle>
-                  <CardDescription>現在のプラン</CardDescription>
+                  <CardDescription>{t("plan.currentPlan")}</CardDescription>
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -170,12 +172,12 @@ export default function Plan() {
                     disabled={portalMutation.isPending}
                   >
                     <Settings className="h-4 w-4 mr-2" />
-                    管理
+                    {t("plan.manage")}
                   </Button>
                 )}
                 {currentPlan !== "free" && !subscription?.cancelAtPeriodEnd && (
                   <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={handleCancelFlow}>
-                    解約
+                    {t("plan.cancel")}
                   </Button>
                 )}
               </div>
@@ -221,7 +223,7 @@ export default function Plan() {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
                 <Database className="h-4 w-4 text-cyan-400" />
-                知識ベース
+                {t("plan.knowledgeBase")}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -239,7 +241,7 @@ export default function Plan() {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
                 <FileUp className="h-4 w-4 text-cyan-400" />
-                ファイルアップロード
+                {t("plan.fileUpload")}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -255,7 +257,7 @@ export default function Plan() {
         </div>
 
         {/* Plan Comparison */}
-        <h2 id="pricing-section" className="text-xl font-bold mt-8 scroll-mt-20">プラン比較</h2>
+        <h2 id="pricing-section" className="text-xl font-bold mt-8 scroll-mt-20">{t("plan.comparison")}</h2>
         <div className="grid gap-4 md:grid-cols-3">
           {(["free", "premium", "enterprise"] as const).map((plan) => {
             const details = planDetails[plan];
@@ -307,13 +309,13 @@ export default function Plan() {
                     ) : (
                       <span className="h-4 w-4 text-gray-500">✕</span>
                     )}
-                    外部AI連携
+                    {t("plan.externalAI")}
                   </div>
 
                   <div className="pt-4">
                     {isCurrentPlan ? (
                       <Button disabled className="w-full" variant="outline">
-                        現在のプラン
+                        {t("plan.currentPlan")}
                       </Button>
                     ) : plan === "free" ? (
                       <Button disabled className="w-full" variant="outline">
@@ -325,7 +327,7 @@ export default function Plan() {
                         onClick={() => handleUpgrade(plan)}
                       >
                         <CreditCard className="h-4 w-4 mr-2" />
-                        アップグレード
+                        {t("plan.upgrade")}
                       </Button>
                     )}
                   </div>
@@ -341,7 +343,7 @@ export default function Plan() {
             <div className="flex items-start gap-3">
               <CreditCard className="h-5 w-5 text-yellow-500 mt-0.5" />
               <div>
-                <h3 className="font-semibold text-yellow-500">テストモード</h3>
+                <h3 className="font-semibold text-yellow-500">{t("plan.testMode")}</h3>
                 <p className="text-sm text-gray-400 mt-1">
                   現在テストモードで動作しています。テスト用カード番号: <code className="bg-gray-800 px-2 py-0.5 rounded">4242 4242 4242 4242</code>
                 </p>
@@ -375,7 +377,7 @@ export default function Plan() {
                     : "border-gray-700 hover:border-gray-600"
                 }`}
               >
-                <div className="font-semibold">月額プラン</div>
+                <div className="font-semibold">{t("plan.monthly")}</div>
                 <div className="text-2xl font-bold mt-1">
                   {selectedPlan === "premium" ? "¥1,480" : "¥4,980"}
                   <span className="text-sm font-normal text-gray-400">/月</span>
@@ -390,7 +392,7 @@ export default function Plan() {
                 }`}
               >
                 <Badge className="absolute -top-2 -right-2 bg-green-600">2ヶ月分お得</Badge>
-                <div className="font-semibold">年額プラン</div>
+                <div className="font-semibold">{t("plan.yearly")}</div>
                 <div className="text-2xl font-bold mt-1">
                   {selectedPlan === "premium" ? "¥14,800" : "¥49,800"}
                   <span className="text-sm font-normal text-gray-400">/年</span>
@@ -408,7 +410,7 @@ export default function Plan() {
               ) : (
                 <CreditCard className="h-4 w-4 mr-2" />
               )}
-              決済に進む
+              {t("plan.checkout")}
             </Button>
 
             <p className="text-xs text-gray-500 text-center">

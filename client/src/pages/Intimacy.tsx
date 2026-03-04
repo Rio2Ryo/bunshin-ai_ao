@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { usePageMeta } from "@/hooks/usePageMeta";
+import { useTranslation } from "@/contexts/LanguageContext";
 import { trpc } from "@/lib/trpc";
 import {
   Heart, Users, Eye, Activity, ArrowRight,
@@ -313,7 +314,8 @@ function FriendIntimacyCard({ friend, onRefresh }: {
 
 // ===== Main Page =====
 export default function Intimacy() {
-  usePageMeta({ title: "親密度", description: "友達との親密度や自己認識ギャップを確認しましょう。", path: "/intimacy" });
+  const { t } = useTranslation();
+  usePageMeta({ title: t("intimacy.title"), description: t("intimacy.description"), path: "/intimacy" });
   const [refreshingFriend, setRefreshingFriend] = useState<number | null>(null);
 
   const { data: comparison, isLoading: compLoading } = trpc.friends.getWaveformComparison.useQuery();
@@ -362,10 +364,10 @@ export default function Intimacy() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Heart className="h-6 w-6 text-pink-500" />
-            親密度・自己認識ギャップ
+            {t("intimacy.title")}
           </h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            友達の分身AIがあなたの価値観を予測。自己申告と他者視点の波形を比較できます。
+            {t("intimacy.description")}
           </p>
         </div>
 
@@ -405,7 +407,7 @@ export default function Intimacy() {
               <div>
                 <CardTitle className="text-base flex items-center gap-2">
                   <Eye className="h-4 w-4" />
-                  自己認識ギャップ
+                  {t("intimacy.gap")}
                 </CardTitle>
                 <CardDescription>
                   自分が思う自分と、友達から見た自分のズレを可視化
@@ -433,7 +435,7 @@ export default function Intimacy() {
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold flex items-center gap-2">
               <Users className="h-5 w-5" />
-              友達別の親密度
+              {t("intimacy.score")}
             </h2>
             {dashboard?.friends && dashboard.friends.length > 0 && (
               <Badge variant="secondary">{dashboard.friends.length}人</Badge>
@@ -454,8 +456,8 @@ export default function Intimacy() {
             <Card>
               <CardContent className="p-8 text-center text-muted-foreground">
                 <Users className="h-10 w-10 mx-auto mb-3 opacity-50" />
-                <p className="text-sm">まだ友達がいません</p>
-                <p className="text-xs mt-1">友達を追加して親密度を計測しましょう</p>
+                <p className="text-sm">{t("intimacy.noData")}</p>
+                <p className="text-xs mt-1">{t("intimacy.noDataDesc")}</p>
                 <a href="/friends">
                   <Button variant="outline" size="sm" className="mt-3 gap-1">
                     友達を追加 <ArrowRight className="h-3 w-3" />

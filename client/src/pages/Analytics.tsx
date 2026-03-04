@@ -3,12 +3,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { trpc } from "@/lib/trpc";
 import { BarChart3, MessageSquare, Users, TrendingUp, Target, UserPlus, Shield, Loader2 } from "lucide-react";
+import { useTranslation } from "@/contexts/LanguageContext";
 import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie,
 } from "recharts";
 
 export default function Analytics() {
+  const { t } = useTranslation();
   usePageMeta({ title: "分析ダッシュボード", description: "マッチング成功率やエンゲージメントの推移を確認", path: "/analytics" });
   const { data, isLoading } = trpc.analytics.dashboard.useQuery(undefined, { staleTime: 60_000 });
 
@@ -25,26 +27,26 @@ export default function Analytics() {
   const { matching, scoreDist, monthlyTrend, engagement, weeklyMessages } = data;
 
   const scoreDistData = [
-    { name: "80-100 (優秀)", value: scoreDist.excellent, fill: "#22c55e" },
-    { name: "60-79 (良好)", value: scoreDist.good, fill: "#3b82f6" },
-    { name: "40-59 (普通)", value: scoreDist.fair, fill: "#eab308" },
-    { name: "0-39 (低い)", value: scoreDist.low, fill: "#f87171" },
+    { name: `80-100 (${t("analytics.excellent")})`, value: scoreDist.excellent, fill: "#22c55e" },
+    { name: `60-79 (${t("analytics.good")})`, value: scoreDist.good, fill: "#3b82f6" },
+    { name: `40-59 (${t("analytics.fair")})`, value: scoreDist.fair, fill: "#eab308" },
+    { name: `0-39 (${t("analytics.low")})`, value: scoreDist.low, fill: "#f87171" },
   ].filter((d) => d.value > 0);
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold">分析ダッシュボード</h1>
-          <p className="text-muted-foreground text-sm mt-1">マッチング成功率とエンゲージメントの推移</p>
+          <h1 className="text-2xl font-bold">{t("analytics.title")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{t("analytics.subtitle")}</p>
         </div>
 
         {/* KPI Cards */}
         <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-          <KPICard icon={Target} label="マッチング数" value={matching.total} sub={`${matching.completed}件完了`} />
-          <KPICard icon={TrendingUp} label="成功率" value={`${matching.successRate}%`} sub={`スコア70+: ${matching.highScoreCount}件`} />
-          <KPICard icon={BarChart3} label="平均スコア" value={`${matching.avgScore}`} sub="相性スコア平均" />
-          <KPICard icon={MessageSquare} label="メッセージ" value={engagement.totalMessages} sub={`${engagement.totalChats}チャット`} />
+          <KPICard icon={Target} label={t("analytics.matchingCount")} value={matching.total} sub={`${matching.completed}件完了`} />
+          <KPICard icon={TrendingUp} label={t("analytics.successRate")} value={`${matching.successRate}%`} sub={`スコア70+: ${matching.highScoreCount}件`} />
+          <KPICard icon={BarChart3} label={t("analytics.avgScore")} value={`${matching.avgScore}`} sub={t("analytics.scoreAvgDesc")} />
+          <KPICard icon={MessageSquare} label={t("analytics.messages")} value={engagement.totalMessages} sub={`${engagement.totalChats}チャット`} />
         </div>
 
         {/* Charts Row */}
@@ -54,9 +56,9 @@ export default function Analytics() {
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <BarChart3 className="h-4 w-4 text-primary" />
-                月別マッチング数
+                {t("analytics.monthlyTrend")}
               </CardTitle>
-              <CardDescription>過去6ヶ月の推移</CardDescription>
+              <CardDescription>{t("analytics.last6months")}</CardDescription>
             </CardHeader>
             <CardContent>
               {monthlyTrend.length > 0 ? (
@@ -73,7 +75,7 @@ export default function Analytics() {
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
-                <p className="text-sm text-muted-foreground text-center py-8">データなし</p>
+                <p className="text-sm text-muted-foreground text-center py-8">{t("analytics.noData")}</p>
               )}
             </CardContent>
           </Card>
@@ -83,9 +85,9 @@ export default function Analytics() {
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <Target className="h-4 w-4 text-primary" />
-                スコア分布
+                {t("analytics.scoreDist")}
               </CardTitle>
-              <CardDescription>相性スコアの分布</CardDescription>
+              <CardDescription>{t("analytics.scoreDistDesc")}</CardDescription>
             </CardHeader>
             <CardContent>
               {scoreDistData.length > 0 ? (
@@ -119,7 +121,7 @@ export default function Analytics() {
                   </div>
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground text-center py-8">データなし</p>
+                <p className="text-sm text-muted-foreground text-center py-8">{t("analytics.noData")}</p>
               )}
             </CardContent>
           </Card>
@@ -129,9 +131,9 @@ export default function Analytics() {
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <MessageSquare className="h-4 w-4 text-primary" />
-                週別メッセージ数
+                {t("analytics.weeklyMessages")}
               </CardTitle>
-              <CardDescription>過去8週間のチャット活動</CardDescription>
+              <CardDescription>{t("analytics.weeklyDesc")}</CardDescription>
             </CardHeader>
             <CardContent>
               {weeklyMessages.length > 0 ? (
@@ -148,7 +150,7 @@ export default function Analytics() {
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
-                <p className="text-sm text-muted-foreground text-center py-8">データなし</p>
+                <p className="text-sm text-muted-foreground text-center py-8">{t("analytics.noData")}</p>
               )}
             </CardContent>
           </Card>
@@ -158,7 +160,7 @@ export default function Analytics() {
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <Users className="h-4 w-4 text-primary" />
-                エンゲージメント
+                {t("analytics.engagement")}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -166,22 +168,22 @@ export default function Analytics() {
                 <div className="text-center p-3 bg-muted/50 rounded-lg">
                   <UserPlus className="h-5 w-5 mx-auto text-muted-foreground mb-1" />
                   <p className="text-2xl font-bold">{engagement.friendCount}</p>
-                  <p className="text-xs text-muted-foreground">友達数</p>
+                  <p className="text-xs text-muted-foreground">{t("analytics.friendCount")}</p>
                 </div>
                 <div className="text-center p-3 bg-muted/50 rounded-lg">
                   <Shield className="h-5 w-5 mx-auto text-muted-foreground mb-1" />
                   <p className="text-2xl font-bold">{engagement.trustScore}</p>
-                  <p className="text-xs text-muted-foreground">信頼スコア</p>
+                  <p className="text-xs text-muted-foreground">{t("analytics.trustScore")}</p>
                 </div>
                 <div className="text-center p-3 bg-muted/50 rounded-lg">
                   <MessageSquare className="h-5 w-5 mx-auto text-muted-foreground mb-1" />
                   <p className="text-2xl font-bold">{engagement.totalChats}</p>
-                  <p className="text-xs text-muted-foreground">チャット数</p>
+                  <p className="text-xs text-muted-foreground">{t("analytics.chatCount")}</p>
                 </div>
                 <div className="text-center p-3 bg-muted/50 rounded-lg">
                   <TrendingUp className="h-5 w-5 mx-auto text-muted-foreground mb-1" />
                   <p className="text-2xl font-bold">{matching.avgScore || "-"}</p>
-                  <p className="text-xs text-muted-foreground">平均相性</p>
+                  <p className="text-xs text-muted-foreground">{t("analytics.avgCompat")}</p>
                 </div>
               </div>
             </CardContent>

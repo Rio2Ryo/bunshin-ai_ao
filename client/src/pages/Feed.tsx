@@ -5,6 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { usePageMeta } from "@/hooks/usePageMeta";
+import { useTranslation, type TranslationKey } from "@/contexts/LanguageContext";
 import { trpc, API_BASE } from "@/lib/trpc";
 import { Link } from "wouter";
 import { useState } from "react";
@@ -23,15 +24,16 @@ const VISIBILITY_ICONS: Record<string, any> = {
   private: Lock,
 };
 
-const TYPE_LABELS: Record<string, { label: string; icon: any; color: string }> = {
-  matching_result: { label: "マッチング結果", icon: BarChart3, color: "text-primary" },
-  tournament_result: { label: "トーナメント成績", icon: Trophy, color: "text-yellow-500" },
-  scenario_review: { label: "シナリオレビュー", icon: Star, color: "text-orange-500" },
-  achievement: { label: "アチーブメント", icon: Target, color: "text-green-500" },
-  status: { label: "ステータス", icon: MessageSquare, color: "text-blue-500" },
+const TYPE_ICONS: Record<string, { icon: any; color: string; key: string }> = {
+  matching_result: { icon: BarChart3, color: "text-primary", key: "feed.matchingResult" },
+  tournament_result: { icon: Trophy, color: "text-yellow-500", key: "feed.tournamentResult" },
+  scenario_review: { icon: Star, color: "text-orange-500", key: "feed.scenarioReview" },
+  achievement: { icon: Target, color: "text-green-500", key: "feed.achievement" },
+  status: { icon: MessageSquare, color: "text-blue-500", key: "feed.status" },
 };
 
 function FeedItem({ item, onRefetch }: { item: any; onRefetch: () => void }) {
+  const { t } = useTranslation();
   const [showComments, setShowComments] = useState(false);
   const [commentInput, setCommentInput] = useState("");
   const likeMut = trpc.feed.like.useMutation();
@@ -44,7 +46,7 @@ function FeedItem({ item, onRefetch }: { item: any; onRefetch: () => void }) {
     { enabled: showComments }
   );
 
-  const typeInfo = TYPE_LABELS[item.type] || TYPE_LABELS.status;
+  const typeInfo = TYPE_ICONS[item.type] || TYPE_ICONS.status;
   const TypeIcon = typeInfo.icon;
   const VisIcon = VISIBILITY_ICONS[item.visibility] || Globe;
 
@@ -104,7 +106,7 @@ function FeedItem({ item, onRefetch }: { item: any; onRefetch: () => void }) {
               </Link>
               <Badge variant="outline" className={`text-xs ${typeInfo.color}`}>
                 <TypeIcon className="h-3 w-3 mr-1" />
-                {typeInfo.label}
+                {t(typeInfo.key as TranslationKey)}
               </Badge>
             </div>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -240,7 +242,8 @@ function FeedItem({ item, onRefetch }: { item: any; onRefetch: () => void }) {
 }
 
 export default function Feed() {
-  usePageMeta({ title: "フィード", description: "友達のマッチング結果やアクティビティを確認", path: "/feed" });
+  const { t } = useTranslation();
+  usePageMeta({ title: t("feed.title"), description: t("feed.description"), path: "/feed" });
   const { data, isLoading, refetch } = trpc.feed.list.useQuery({ limit: 30 });
 
   return (
@@ -249,9 +252,9 @@ export default function Feed() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <MessageSquare className="h-6 w-6 text-primary" />
-            フィード
+            {t("feed.title")}
           </h1>
-          <p className="text-muted-foreground">友達のマッチング結果・トーナメント成績・レビュー</p>
+          <p className="text-muted-foreground">{t("feed.description")}</p>
         </div>
 
         {isLoading ? (
@@ -266,10 +269,10 @@ export default function Feed() {
           <Card>
             <CardContent className="py-12 text-center">
               <MessageSquare className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              <p className="text-muted-foreground">フィードにまだ投稿がありません</p>
-              <p className="text-sm text-muted-foreground mt-1">マッチング完了後に結果をシェアしましょう</p>
+              <p className="text-muted-foreground">{t("feed.noItems")}</p>
+              <p className="text-sm text-muted-foreground mt-1">{t("feed.noItemsDesc")}</p>
               <Link href="/matching">
-                <Button variant="outline" className="mt-4">マッチングを開始</Button>
+                <Button variant="outline" className="mt-4">{t("action.matching")}</Button>
               </Link>
             </CardContent>
           </Card>

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import { usePageMeta } from "@/hooks/usePageMeta";
+import { useTranslation } from "@/contexts/LanguageContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +28,8 @@ import {
 } from "lucide-react";
 
 export default function Points() {
-  usePageMeta({ title: "ポイント", description: "ポイント残高・履歴・特典交換", path: "/points" });
+  const { t } = useTranslation();
+  usePageMeta({ title: t("points.title"), description: t("points.description"), path: "/points" });
   const [selectedProduct, setSelectedProduct] = useState<{
     id: number;
     name: string;
@@ -116,12 +118,12 @@ export default function Points() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6" role="main" aria-label="ポイント管理">
+      <div className="space-y-6" role="main" aria-label={t("points.title")}>
         {/* Header */}
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">ポイント</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t("points.title")}</h1>
           <p className="text-muted-foreground">
-            評価データの提供でポイントを獲得し、製品と交換できます
+            {t("points.description")}
           </p>
         </div>
 
@@ -129,7 +131,7 @@ export default function Points() {
         <div className="grid gap-4 md:grid-cols-4">
           <Card className="md:col-span-2 bg-gradient-to-br from-amber-500 to-orange-600 text-white">
             <CardHeader className="pb-2">
-              <CardTitle className="text-lg font-medium opacity-90">現在のポイント残高</CardTitle>
+              <CardTitle className="text-lg font-medium opacity-90">{t("points.balance")}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-baseline gap-2">
@@ -181,11 +183,11 @@ export default function Points() {
             </TabsTrigger>
             <TabsTrigger value="history" className="flex items-center gap-2">
               <History className="h-4 w-4" />
-              ポイント履歴
+              {t("points.history")}
             </TabsTrigger>
             <TabsTrigger value="redemptions" className="flex items-center gap-2">
               <Gift className="h-4 w-4" />
-              交換履歴
+              {t("points.redeem")}
             </TabsTrigger>
           </TabsList>
 
@@ -322,8 +324,8 @@ export default function Points() {
           <TabsContent value="history" className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>ポイント履歴</CardTitle>
-                <CardDescription>ポイントの獲得・使用履歴</CardDescription>
+                <CardTitle>{t("points.history")}</CardTitle>
+                <CardDescription>{t("points.description")}</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
@@ -350,7 +352,7 @@ export default function Points() {
                   {(!transactions || transactions.length === 0) && (
                     <div className="flex flex-col items-center justify-center py-12">
                       <History className="h-12 w-12 text-muted-foreground mb-4" />
-                      <p className="text-muted-foreground">ポイント履歴はまだありません</p>
+                      <p className="text-muted-foreground">{t("points.noHistory")}</p>
                     </div>
                   )}
                 </div>
@@ -402,7 +404,7 @@ export default function Points() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Coins className="h-5 w-5 text-amber-500" />
-              ポイントの貯め方
+              {t("points.earnedBy")}
             </CardTitle>
           </CardHeader>
           <CardContent>

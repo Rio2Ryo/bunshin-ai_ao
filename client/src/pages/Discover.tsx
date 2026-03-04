@@ -12,15 +12,17 @@ import { Search, User, Globe, UserPlus, MessageSquare, Sparkles, ExternalLink, L
 import { toast } from "sonner";
 import { useState } from "react";
 import { useLocation, Link } from "wouter";
+import { useTranslation } from "@/contexts/LanguageContext";
 
 export default function Discover() {
-  usePageMeta({ title: "分身AI発見", description: "公開されている分身AIを探索して、新しいつながりを見つけましょう。", ogImage: "https://bunshin-ai.pages.dev/og/discover.svg", path: "/discover" });
+  const { t } = useTranslation();
+  usePageMeta({ title: t("discover.title"), description: t("discover.description"), ogImage: "https://bunshin-ai.pages.dev/og/discover.svg", path: "/discover" });
   const { user } = useAuth();
   const [, navigate] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTwin, setSelectedTwin] = useState<{ twin: any; user: any } | null>(null);
   const [matchingDialogOpen, setMatchingDialogOpen] = useState(false);
-  const [matchingTheme, setMatchingTheme] = useState("ビジネス協業の可能性");
+  const [matchingTheme, setMatchingTheme] = useState(t("discover.businessCollab"));
   const [matchingTargetUserId, setMatchingTargetUserId] = useState<number | null>(null);
 
   const { data: publicTwins, isLoading, refetch } = trpc.myTwin.searchPublic.useQuery({
@@ -33,7 +35,7 @@ export default function Discover() {
 
   const sendRequestMutation = trpc.friends.sendRequest.useMutation({
     onSuccess: () => {
-      toast.success("友達リクエストを送信しました");
+      toast.success(t("discover.requestSent"));
       refetch();
     },
     onError: (error) => {
@@ -84,10 +86,10 @@ export default function Discover() {
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2">
               <Globe className="h-6 w-6 text-cyan-400" />
-              分身AI発見
+              {t("discover.title")}
             </h1>
             <p className="text-gray-400 mt-1">
-              公開されている分身AIを探して、ビジネスマッチングを始めましょう
+              {t("discover.description")}
             </p>
           </div>
         </div>
@@ -238,7 +240,7 @@ export default function Discover() {
                         }
                         if (selectedTwin.user?.id) {
                           setMatchingTargetUserId(selectedTwin.user.id);
-                          setMatchingTheme("ビジネス協業の可能性");
+                          setMatchingTheme(t("discover.businessCollab"));
                           setMatchingDialogOpen(true);
                         }
                       }}

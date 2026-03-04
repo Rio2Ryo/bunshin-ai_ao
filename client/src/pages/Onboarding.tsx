@@ -7,14 +7,15 @@ import { Bot, Send, Loader2, SkipForward, ArrowRight, MessageSquare, Users, Shie
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
+import { useTranslation, type TranslationKey } from "@/contexts/LanguageContext";
 
-const ONBOARDING_STEPS = [
-  { label: "サービス概要", icon: Sparkles },
-  { label: "機能説明", icon: Zap },
-  { label: "マッチング説明", icon: Target },
-  { label: "NPC紹介", icon: MessageSquare },
-  { label: "自己紹介", icon: Users },
-  { label: "マッチング候補", icon: UserPlus },
+const ONBOARDING_STEPS: Array<{ labelKey: TranslationKey; icon: typeof Sparkles }> = [
+  { labelKey: "onboarding.serviceOverview", icon: Sparkles },
+  { labelKey: "onboarding.featureExplain", icon: Zap },
+  { labelKey: "onboarding.matchingExplain", icon: Target },
+  { labelKey: "onboarding.npcIntro", icon: MessageSquare },
+  { labelKey: "onboarding.selfIntro", icon: Users },
+  { labelKey: "onboarding.matchingCandidates", icon: UserPlus },
 ];
 
 function useTypingEffect(text: string, speed: number = 20) {
@@ -55,6 +56,7 @@ const STEP_HELP: Record<number, string> = {
 };
 
 export default function Onboarding() {
+  const { t } = useTranslation();
   usePageMeta({ title: "オンボーディング", description: "分身AIの初期設定ガイド", path: "/onboarding" });
   const [, navigate] = useLocation();
   const [message, setMessage] = useState("");
@@ -307,7 +309,7 @@ export default function Onboarding() {
             {step < 5 && (
               <Button variant="ghost" size="sm" onClick={handleSkip} className="text-muted-foreground">
                 <SkipForward className="h-4 w-4 mr-1" />
-                スキップ
+                {t("onboarding.skip")}
               </Button>
             )}
           </div>
@@ -318,21 +320,21 @@ export default function Onboarding() {
       <div className="max-w-3xl mx-auto w-full px-4 py-3">
         <div className="flex items-center gap-1">
           {ONBOARDING_STEPS.map((s, i) => (
-            <div key={s.label} className="flex-1 flex flex-col items-center gap-1">
+            <div key={s.labelKey} className="flex-1 flex flex-col items-center gap-1">
               <div
                 className={`h-1.5 w-full rounded-full transition-colors ${
                   i <= step ? "bg-primary" : "bg-muted"
                 }`}
               />
               <span className={`text-[10px] hidden sm:block ${i <= step ? "text-primary" : "text-muted-foreground"}`}>
-                {s.label}
+                {t(s.labelKey)}
               </span>
             </div>
           ))}
         </div>
         <div className="flex justify-between items-center mt-1">
           <span className="text-xs text-muted-foreground">
-            ステップ {step + 1} / {ONBOARDING_STEPS.length}
+            {t("onboarding.step")} {step + 1} / {ONBOARDING_STEPS.length}
           </span>
           <span className="text-xs font-medium text-primary">
             {Math.round(((step + 1) / ONBOARDING_STEPS.length) * 100)}%

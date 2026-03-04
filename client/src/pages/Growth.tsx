@@ -8,6 +8,7 @@ import { Slider } from "@/components/ui/slider";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
 import { usePageMeta } from "@/hooks/usePageMeta";
+import { useTranslation } from "@/contexts/LanguageContext";
 import { Sparkles, Star, Trophy, Heart, Zap, Brain, MessageSquare, Target, Crown, Loader2, Settings, ImageIcon, Stethoscope, Handshake, Info, X } from "lucide-react";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
@@ -53,7 +54,8 @@ const evolutionIcons: Record<string, string> = {
 type SkillType = "conversation" | "imageGeneration" | "analysis" | "diagnosis" | "matching";
 
 export default function Growth() {
-  usePageMeta({ title: "成長", description: "分身AIのスキルレベル・成長管理", path: "/growth" });
+  const { t } = useTranslation();
+  usePageMeta({ title: t("growth.title"), description: t("growth.description"), path: "/growth" });
   const { data: growthStatus, isLoading: statusLoading, isError: statusError, refetch: refetchStatus } = trpc.growth.getStatus.useQuery();
   const { data: skillsData, isLoading: skillsLoading, isError: skillsError, refetch: refetchSkills } = trpc.growth.getSkills.useQuery();
   const { data: milestonesData, isLoading: milestonesLoading, isError: milestonesError } = trpc.growth.getMilestones.useQuery();
@@ -159,10 +161,10 @@ export default function Growth() {
           <div>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight flex items-center gap-2">
               <Sparkles className="h-5 w-5 sm:h-6 sm:w-6 text-primary" />
-              分身AI育成
+              {t("growth.title")}
             </h1>
             <p className="text-sm text-muted-foreground">
-              あなたの分身AIを育てて、より強力なパートナーに成長させましょう
+              {t("growth.description")}
             </p>
           </div>
           <Button 
@@ -230,7 +232,7 @@ export default function Growth() {
                   </div>
                   <div className="text-right">
                     <p className="text-xl sm:text-2xl font-bold text-primary">{status?.experience?.toLocaleString() || 0}</p>
-                    <p className="text-xs text-muted-foreground">総経験値</p>
+                    <p className="text-xs text-muted-foreground">{t("growth.experience")}</p>
                   </div>
                 </div>
 
@@ -290,11 +292,11 @@ export default function Growth() {
             </TabsTrigger>
             <TabsTrigger value="milestones" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
               <Trophy className="h-3 w-3 sm:h-4 sm:w-4" />
-              <span>図鑑</span>
+              <span>{t("growth.milestones")}</span>
             </TabsTrigger>
             <TabsTrigger value="evolution" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
               <Crown className="h-3 w-3 sm:h-4 sm:w-4" />
-              <span>進化</span>
+              <span>{t("growth.evolution")}</span>
             </TabsTrigger>
           </TabsList>
 

@@ -12,23 +12,43 @@ import { useDashboardLayout, type WidgetId } from "@/hooks/useDashboardLayout";
 import { KpiWidget, RecentMatchingsWidget, FriendsListWidget, TwinStatusWidget, NotificationsWidget, QuickActionsWidget, AnalyticsWidget, BriefingWidget, QualityTrendWidget, BookmarksWidget } from "@/components/widgets";
 import { useCallback, useRef, useState } from "react";
 import { WidgetErrorBoundary } from "@/components/WidgetErrorBoundary";
+import { useTranslation, type TranslationKey } from "@/contexts/LanguageContext";
 
-const WIDGET_COMPONENTS: Record<WidgetId, { component: React.FC; label: string }> = {
-  kpi: { component: KpiWidget, label: "KPI" },
-  recentMatchings: { component: RecentMatchingsWidget, label: "最近のマッチング" },
-  friendsList: { component: FriendsListWidget, label: "友達" },
-  twinStatus: { component: TwinStatusWidget, label: "分身AI" },
-  notifications: { component: NotificationsWidget, label: "通知" },
-  quickActions: { component: QuickActionsWidget, label: "クイックアクション" },
-  analytics: { component: AnalyticsWidget, label: "アクティビティ" },
-  briefing: { component: BriefingWidget, label: "ブリーフィング" },
-  qualityTrend: { component: QualityTrendWidget, label: "品質トレンド" },
-  bookmarks: { component: BookmarksWidget, label: "ブックマーク" },
+const WIDGET_COMPONENTS: Record<WidgetId, { component: React.FC }> = {
+  kpi: { component: KpiWidget },
+  recentMatchings: { component: RecentMatchingsWidget },
+  friendsList: { component: FriendsListWidget },
+  twinStatus: { component: TwinStatusWidget },
+  notifications: { component: NotificationsWidget },
+  quickActions: { component: QuickActionsWidget },
+  analytics: { component: AnalyticsWidget },
+  briefing: { component: BriefingWidget },
+  qualityTrend: { component: QualityTrendWidget },
+  bookmarks: { component: BookmarksWidget },
+};
+
+const WIDGET_LABEL_KEYS: Record<WidgetId, TranslationKey | null> = {
+  kpi: null,
+  recentMatchings: "dashboard.recentMatchingsLabel",
+  friendsList: "dashboard.friendsLabel",
+  twinStatus: "dashboard.twinLabel",
+  notifications: "dashboard.notificationsLabel",
+  quickActions: "dashboard.quickActionsLabel",
+  analytics: "dashboard.activityLabel",
+  briefing: "dashboard.briefingLabel",
+  qualityTrend: "dashboard.qualityTrendLabel",
+  bookmarks: "dashboard.bookmarksLabel",
 };
 
 export default function Dashboard() {
   const { user } = useAuth();
-  usePageMeta({ title: "ダッシュボード", description: "分身AIの管理、チャット、マッチングの概要を確認しましょう。", path: "/dashboard" });
+  const { t } = useTranslation();
+  usePageMeta({ title: t("dashboard.title"), description: t("dashboard.description"), path: "/dashboard" });
+
+  const getWidgetLabel = (id: WidgetId): string => {
+    const key = WIDGET_LABEL_KEYS[id];
+    return key === null ? "KPI" : t(key);
+  };
   const { data: planInfo } = trpc.plan.getInfo.useQuery();
   const { data: profile } = trpc.profile.get.useQuery(undefined, { staleTime: 60_000 });
   const { data: receivedRequests } = trpc.matching.receivedRequests.useQuery(undefined, { staleTime: 15_000 });
@@ -92,15 +112,15 @@ export default function Dashboard() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6" role="main" aria-label="ダッシュボード">
+      <div className="space-y-6" role="main" aria-label={t("dashboard.title")}>
         {/* Header */}
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-2xl font-bold">
-              {!tutorialDone ? "はじめまして" : "おかえりなさい"}、<span className="text-gradient">{user?.name || "ユーザー"}</span>さん
+              {!tutorialDone ? t("dashboard.firstVisitTitle") : t("dashboard.returningTitle")}、<span className="text-gradient">{user?.name || "ユーザー"}</span>さん
             </h1>
             <p className="text-muted-foreground mt-1 text-sm">
-              {!tutorialDone ? "分身AIの世界へようこそ！まずは練習マッチングから始めましょう" : "分身AIの管理とビジネスマッチングを始めましょう"}
+              {!tutorialDone ? t("dashboard.firstVisitSubtitle") : t("dashboard.returningSubtitle")}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -154,7 +174,7 @@ export default function Dashboard() {
                 className="gap-1"
               >
                 <Eye className="h-3 w-3" />
-                {WIDGET_COMPONENTS[w.id]?.label}
+                {getWidgetLabel(w.id)}
               </Button>
             ))}
           </div>
@@ -261,7 +281,7 @@ export default function Dashboard() {
                     <button
                       onClick={() => toggleWidget(widgetLayout.id)}
                       className="h-6 w-6 rounded-full bg-destructive/90 text-white flex items-center justify-center hover:bg-destructive text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                      aria-label={`${config.label}ウィジェットを非表示`}
+                      aria-label={`${getWidgetLabel(widgetLayout.id)}ウィジェットを非表示`}
                     >
                       <EyeOff className="h-3 w-3" aria-hidden="true" />
                     </button>
@@ -272,7 +292,7 @@ export default function Dashboard() {
                     className="absolute top-2 left-2 z-10 cursor-grab active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-ring rounded"
                     tabIndex={0}
                     role="button"
-                    aria-label={`${config.label}ウィジェットを移動（矢印キーで並べ替え）`}
+                    aria-label={`${getWidgetLabel(widgetLayout.id)}ウィジェットを移動（矢印キーで並べ替え）`}
                     aria-roledescription="ドラッグハンドル"
                     onKeyDown={(e) => {
                       const idx = visibleWidgets.findIndex(w => w.id === widgetLayout.id);
@@ -288,7 +308,7 @@ export default function Dashboard() {
                     <GripVertical className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                   </div>
                 )}
-                <WidgetErrorBoundary widgetName={config.label}>
+                <WidgetErrorBoundary widgetName={getWidgetLabel(widgetLayout.id)}>
                   <WidgetComponent />
                 </WidgetErrorBoundary>
               </div>

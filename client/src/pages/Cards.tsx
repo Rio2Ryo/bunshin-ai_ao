@@ -44,6 +44,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useTranslation } from "@/contexts/LanguageContext";
 
 // カードタイプの定義
 const CARD_TYPES = [
@@ -72,6 +73,7 @@ function getCardTypeIcon(type: string) {
 }
 
 export default function Cards() {
+  const { t } = useTranslation();
   usePageMeta({ title: "名刺管理", description: "名刺のデジタル管理・OCR取り込み", path: "/cards" });
   const { user } = useAuth();
   
@@ -131,14 +133,14 @@ export default function Cards() {
         {/* ヘッダー */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
-            <h1 className="text-2xl font-bold">カード管理</h1>
-            <p className="text-muted-foreground">名刺やポイントカードなどを管理</p>
+            <h1 className="text-2xl font-bold">{t("cards.title")}</h1>
+            <p className="text-muted-foreground">{t("cards.description")}</p>
           </div>
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
               <Button>
                 <Plus className="mr-2 h-4 w-4" />
-                カードを追加
+                {t("cards.addCard")}
               </Button>
             </DialogTrigger>
             <AddCardDialog 
@@ -156,7 +158,7 @@ export default function Cards() {
           <Card>
             <CardContent className="pt-4">
               <div className="text-2xl font-bold">{cards?.length || 0}</div>
-              <p className="text-xs text-muted-foreground">総カード数</p>
+              <p className="text-xs text-muted-foreground">{t("cards.totalCards")}</p>
             </CardContent>
           </Card>
           {stats?.slice(0, 3).map((stat) => (
@@ -174,7 +176,7 @@ export default function Cards() {
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="カードを検索..."
+              placeholder={t("cards.searchPlaceholder")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-10"
@@ -220,9 +222,9 @@ export default function Cards() {
           <Card>
             <CardContent className="py-12 text-center">
               <CreditCard className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-              <h3 className="text-lg font-medium">カードがありません</h3>
+              <h3 className="text-lg font-medium">{t("cards.noCards")}</h3>
               <p className="text-muted-foreground mt-2">
-                「カードを追加」ボタンから最初のカードを登録しましょう
+                {t("cards.noCardsDesc")}
               </p>
             </CardContent>
           </Card>
@@ -381,7 +383,7 @@ function CardItem({
 
 // カード追加ダイアログ
 function AddCardDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
-  
+  const { t } = useTranslation();
   const [step, setStep] = useState<"upload" | "analyze" | "confirm">("upload");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -500,21 +502,21 @@ function AddCardDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess:
     <DialogContent className="sm:max-w-[600px]">
       <DialogHeader>
         <DialogTitle>
-          {step === "upload" && "カードを追加"}
-          {step === "analyze" && "解析中..."}
-          {step === "confirm" && "カード情報を確認"}
+          {step === "upload" && t("cards.addCard")}
+          {step === "analyze" && t("cards.analyzing")}
+          {step === "confirm" && t("cards.confirmInfo")}
         </DialogTitle>
         <DialogDescription>
-          {step === "upload" && "カードの画像をアップロードしてください"}
-          {step === "analyze" && "画像を解析しています"}
-          {step === "confirm" && "抽出された情報を確認・編集してください"}
+          {step === "upload" && t("cards.uploadImage")}
+          {step === "analyze" && t("cards.analyzing")}
+          {step === "confirm" && t("cards.confirmDesc")}
         </DialogDescription>
       </DialogHeader>
 
       {step === "upload" && (
         <div className="space-y-4">
           <div>
-            <Label>カードタイプ</Label>
+            <Label>{t("cards.cardType")}</Label>
             <Select value={cardType} onValueChange={setCardType}>
               <SelectTrigger className="mt-1.5">
                 <SelectValue />
@@ -574,12 +576,12 @@ function AddCardDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess:
               {isAnalyzing ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  解析中...
+                  {t("cards.analyzing")}
                 </>
               ) : (
                 <>
                   <ScanLine className="mr-2 h-4 w-4" />
-                  解析する
+                  {t("cards.analyze")}
                 </>
               )}
             </Button>
@@ -615,7 +617,7 @@ function AddCardDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess:
             </div>
 
             <div>
-              <Label>カードタイプ</Label>
+              <Label>{t("cards.cardType")}</Label>
               <Select value={analysisResult.cardType || cardType} onValueChange={(v) => setAnalysisResult({...analysisResult, cardType: v})}>
                 <SelectTrigger className="mt-1.5">
                   <SelectValue />
@@ -696,10 +698,10 @@ function AddCardDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess:
               {createMutation.isPending ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  登録中...
+                  {t("cards.registering")}
                 </>
               ) : (
-                "登録する"
+                t("cards.register")
               )}
             </Button>
           </DialogFooter>

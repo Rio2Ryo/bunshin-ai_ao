@@ -16,6 +16,7 @@ import { UserPlus, Users, Loader2, Check, X, Bot, Copy, Share2, QrCode, Link as 
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Link } from "wouter";
 import { QRCodeSVG } from "qrcode.react";
+import { useTranslation, type TranslationKey } from "@/contexts/LanguageContext";
 
 // 相性レベルに応じた色を取得
 function getCompatibilityColor(score: number): string {
@@ -26,15 +27,16 @@ function getCompatibilityColor(score: number): string {
 }
 
 // 相性レベルに応じたラベルを取得
-function getCompatibilityLabel(score: number): string {
-  if (score >= 80) return "最高の相性";
-  if (score >= 60) return "良い相性";
-  if (score >= 40) return "普通";
-  return "まだ分析中";
+function getCompatibilityLabel(score: number, t: (key: TranslationKey) => string): string {
+  if (score >= 80) return t("friends.bestCompat");
+  if (score >= 60) return t("friends.goodCompat");
+  if (score >= 40) return t("friends.normalCompat");
+  return t("friends.analyzing");
 }
 
 export default function Friends() {
-  usePageMeta({ title: "友達", description: "友達一覧・友達申請・相性チェック", path: "/friends" });
+  const { t } = useTranslation();
+  usePageMeta({ title: t("friends.title"), description: t("friends.description"), path: "/friends" });
   const { user } = useAuth();
   const { data: friends, isLoading, refetch } = trpc.friends.list.useQuery();
   const { data: requests, refetch: refetchRequests } = trpc.friends.pendingRequests.useQuery();
@@ -150,9 +152,9 @@ export default function Friends() {
       <div className="space-y-6" role="main" aria-label="友達管理">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">友達</h1>
+            <h1 className="text-3xl font-bold">{t("friends.title")}</h1>
             <p className="text-muted-foreground mt-2">
-              友達になると、お互いの分身AI同士でマッチングができます
+              {t("friends.description")}
             </p>
           </div>
           <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
@@ -378,7 +380,7 @@ export default function Friends() {
                                         className="h-2"
                                       />
                                       <p className={`text-xs text-center ${getCompatibilityColor(compatibility.overallCompatibility)}`}>
-                                        {getCompatibilityLabel(compatibility.overallCompatibility)}
+                                        {getCompatibilityLabel(compatibility.overallCompatibility, t)}
                                       </p>
                                     </div>
                                   </TooltipTrigger>
