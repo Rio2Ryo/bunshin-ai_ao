@@ -887,3 +887,251 @@ echo "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" | CLOUDFLARE_API_TOK
 | Wave 11 | #183(tRPCエラー), #206(UX一貫性), #184(ESLint) | 3並列 | エラーハンドリング + UX + Lint |
 | Wave 12 | #191(テスト基盤), #167(コマンドパレット), #185(devスクリプト) | 3並列 | テスト + DX |
 | Wave 13 | #186(ダークモード), #168(NPC), #189(i18n), #166(壊れた機能残り) | 3-4並列 | UX改善 + 多言語化 + 残件 |
+
+---
+
+## Phase 87: LLMトークン追跡 + GDPRデータエクスポート + WS強化 + 通知補完 + プロンプト予算（2026-03-03）
+
+### 調査概要
+3並列エージェント（opus）で以下を調査:
+- Agent 1: LLM コスト管理 / トークン追跡 / invokeLLM 分析 / 呼び出し頻度 / システムプロンプトサイズ / ストリーミング / API キー管理
+- Agent 2: 通知システム全体 / WebSocket DO / メール / LINE / Slack / cron 通知 / SSE
+- Agent 3: GDPR データエクスポート / R2 ファイル管理 / データ保持 / 監査ログ / パスワードセキュリティ / セッション管理
+
+### 発見事項一覧
+
+| ID | カテゴリ | 重要度 | 発見内容 |
+|---|---|---|---|
+| LLM-1 | コスト | CRITICAL | invokeLLM の result.usage が 135 コールサイト全てで即破棄。トークン消費量が完全に不可視 |
+| LLM-2 | コスト | CRITICAL | コスト推定・トークン予算・LLMログが一切なし。matching.createGroup は1リクエストで最大31回 LLM 呼び出し |
+| LLM-3 | コスト | HIGH | usage_tracking テーブルは matchingsThisMonth のみ。LLM トークン列が存在しない |
+| LLM-4 | パフォーマンス | HIGH | システムプロンプトに全体トークン予算なし。ナレッジ8件 + プロフィール + 性格 + 対話履歴で 10,000+ トークン可能 |
+| LLM-5 | パフォーマンス | MEDIUM | マッチング対話ループで一部は全ダイアログ履歴を送信（.slice(-10) 未統一）。分析プロンプトも切り詰めなし |
+| LLM-6 | 可観測性 | HIGH | invokeLLM にログ出力ゼロ。console.log/error/logger なし → 障害時のデバッグ不能 |
+| GDPR-3 | プライバシー | HIGH | ユーザーが自身の全データをダウンロードするエンドポイントが存在しない（GDPR Article 20 違反） |
+| GDPR-4 | プライバシー | HIGH | deleteAccount で R2 ファイル削除なし。env.R2.delete() がコードベース全体でゼロ → アバター/ファイル/画像が永久残留 |
+| GDPR-5 | プライバシー | MEDIUM | データ保持自動化なし: 期限切れ通知、使用済みリセットトークン、古いチャットメッセージのクリーンアップ機構ゼロ |
+| WS-1 | セキュリティ | MEDIUM | 3 DO 全てに heartbeat/ping-pong なし → アイドル接続が無期限蓄積 |
+| WS-2 | セキュリティ | MEDIUM | ChatRoom にWS メッセージレート制限なし → 高速送信で LLM DoS（各メッセージが LLM 呼び出し） |
+| WS-3 | セキュリティ | MEDIUM | ChatRoom/WorkspaceRoom にメッセージサイズ検証なし（無制限） |
+| NOTIF-1 | 機能 | MEDIUM | emailNotify デッドトグル: notification_settings にカラム + UI あるがチェックするコードパスがゼロ |
+| NOTIF-2 | 運用 | MEDIUM | notifications テーブルのクリーンアップなし → 無制限に肥大化 |
+| NOTIF-3 | 機能 | LOW | 日次ブリーフィング (generateBriefing) がオンデマンドのみ。cron 自動生成/通知/メール送信フローなし |
+| NOTIF-4 | UX | LOW | register 後の歓迎メールなし（検証メールのみ） |
+
+### タスク対応表
+
+| タスク# | 優先度 | 対応する発見 | 内容 |
+|---|---|---|---|
+| #207 | HIGH | LLM-1〜3, LLM-6 | LLM トークン追跡 + コスト管理（llm_usage_logs テーブル + 135サイトの usage 永続化 + コスト推定） |
+| #208 | HIGH | GDPR-3〜5 | GDPR データエクスポート + R2 クリーンアップ（全データ JSON エクスポート + R2 削除 + 保持自動化） |
+| #209 | MEDIUM | WS-1〜3 | WebSocket 強化（heartbeat + レート制限 + サイズ検証 + アイドルタイムアウト） |
+| #210 | MEDIUM | NOTIF-1〜4 | 通知システム補完（emailNotify 有効化 + クリーンアップ + 日次ブリーフィング + 歓迎メール） |
+| #211 | MEDIUM | LLM-4〜5 | LLM システムプロンプト予算管理（トークン予算 + 切り詰め + サイズ監視） |
+
+### Wave 実装順序（Phase 78〜87 統合・最終版）
+
+| Wave | タスク | 並列度 | 理由 |
+|---|---|---|---|
+| Wave 1 | #164(JWT秘密鍵), #169(IDOR), #199(セッション失効) | 3並列 | セキュリティ CRITICAL — 認証基盤の即時修正 |
+| Wave 2 | #177(API暗号化), #198(CSRF), #203(SQLカラム不一致) | 3並列 | セキュリティ + データ整合性 |
+| Wave 3 | #197(Register原子性), #193(課金カウンター), #202(Stripe課金) | 3並列 | データ整合性 + 課金 |
+| Wave 4 | #207(LLMトークン追跡), #192(GDPR削除), #208(GDPRエクスポート) | 3並列 | コスト可視化 + プライバシー |
+| Wave 5 | #196(壊れた機能), #187(Sentry), #211(プロンプト予算) | 3並列 | 機能修復 + 監視 + LLMコスト削減 |
+| Wave 6 | #165(QueryClient), #170(LLM retry), #205(ルート保護) | 3並列 | 安定性 + フロント認可 |
+| Wave 7 | #194(CI/CD), #171(バリデーション), #178(データ漏洩) | 3並列 | 品質ゲート + 入力検証 |
+| Wave 8 | #188(WebPush暗号化), #209(WS強化), #200(Admin Guard) | 3並列 | 通知修復 + WS セキュリティ + 認可 |
+| Wave 9 | #204(D1スキーマ最適化), #195(バンドル), #172(Stripe統合) | 3並列 | パフォーマンス + 保守性 |
+| Wave 10 | #180(God-router), #173(ensureSchema), #201(Cron+error_logs) | 3並列 | 保守性 + インフラ |
+| Wave 11 | #182(デッドコード), #181(Webhook+SW), #190(DO永続化) | 3並列 | クリーンアップ + インフラ |
+| Wave 12 | #183(tRPCエラー), #206(UX一貫性), #210(通知補完) | 3並列 | エラーハンドリング + UX + 通知 |
+| Wave 13 | #179(プロンプトインジェクション), #184(ESLint), #191(テスト基盤) | 3並列 | セキュリティ + Lint + テスト |
+| Wave 14 | #167(コマンドパレット), #185(devスクリプト), #186(ダークモード) | 3並列 | DX + UX |
+| Wave 15 | #168(NPC), #189(i18n), #166(壊れた機能残り) | 3並列 | NPC品質 + 多言語化 + 残件 |
+
+---
+
+## Phase 88: Discover検索修復 + ツイン完成度 + オンボーディング永続化 + Feed改善 + マッチング精度（2026-03-03）
+
+### 調査概要
+3並列エージェント（opus）で以下を調査:
+- Agent 1: Discover/Search ページ + 検索バックエンド + フルテキスト検索 + フィルタ + ページネーション
+- Agent 2: マッチング品質 + 候補選定アルゴリズム + ML/埋め込み + スコアリング
+- Agent 3: オンボーディング完了率 + Feed/ソーシャル機能 + ツイン品質指標
+
+### 発見事項一覧
+
+| ID | カテゴリ | 重要度 | 発見内容 |
+|---|---|---|---|
+| SEARCH-1 | UX/機能 | CRITICAL | Discover 検索バーが装飾的。twins.ts:649-663 の searchPublic が query/limit パラメータを完全無視 |
+| SEARCH-2 | UX/機能 | HIGH | フルテキスト検索なし、業界/スキル/地域フィルタなし、ページネーションなし（固定 LIMIT 20） |
+| SEARCH-3 | 保守性 | MEDIUM | discover.ts に別の discover.search エンドポイントが存在するが Discover ページから呼ばれていない（デッドエンドポイント） |
+| TWIN-1 | UX | HIGH | ユーザー対面のツイン完成度指標がゼロ。不完全ツインが完全ツインと同列に Discover 表示 |
+| TWIN-2 | UX | MEDIUM | プロフィール完成度はマッチングスコア内に暗黙計算されるがユーザーに非公開 |
+| TWIN-3 | UX | MEDIUM | 完成度チェックリスト/進捗バー/警告なし（"説明を追加しましょう" 等のナッジなし） |
+| ONBOARD-1 | UX | MEDIUM | オンボーディングステップ進捗が sessionStorage に保存 → ブラウザ閉じで消失 |
+| ONBOARD-2 | UX | MEDIUM | 静的ステップ (0-3) の進捗がバックエンドに一切保存されない |
+| ONBOARD-3 | 分析 | MEDIUM | 離脱分析機能ゼロ: ステップ別離脱率、再訪率、完了時間が全て不可視 |
+| FEED-1 | パフォーマンス | HIGH | feed.list で各アイテムに 3 個の個別クエリ (likeCount, commentCount, liked) → N+1 問題 |
+| FEED-2 | UX | MEDIUM | ユーザーが直接投稿を作成する UI なし。フィードアイテムはシステムイベントのみ |
+| FEED-3 | UX | LOW | いいね/コメントの通知なし。無限スクロールなし（手動ページネーション） |
+| MATCH-1 | 機能 | LOW | 候補推薦に ML/ベクトル埋め込み/コサイン類似度なし。ヒューリスティックのみ |
+| MATCH-2 | UX | LOW | 推薦理由がユーザーに非表示（"なぜこの候補が推薦されたか" の説明なし） |
+
+### タスク対応表
+
+| タスク# | 優先度 | 対応する発見 | 内容 |
+|---|---|---|---|
+| #212 | HIGH | SEARCH-1〜3 | Discover 検索機能修復（LIKE 検索 + 業界/スキルフィルタ + cursor ページネーション） |
+| #213 | MEDIUM | TWIN-1〜3 | ツイン完成度メーター（computeCompleteness() + 円形プログレス + チェックリスト） |
+| #214 | MEDIUM | ONBOARD-1〜3 | オンボーディング永続化（users.onboardingStep + 離脱分析テーブル + ファネル分析エンドポイント） |
+| #215 | MEDIUM | FEED-1〜3 | Feed パフォーマンス修正（N+1→JOIN + ユーザー投稿 UI + いいね通知 + 無限スクロール） |
+| #216 | LOW | MATCH-1〜2 | マッチング精度向上（推薦理由表示 + キーワード抽出 + Workers AI 埋め込み設計メモ） |
+
+### Wave 実装順序（Phase 78〜88 統合・最終版）
+
+| Wave | タスク | 並列度 | 理由 |
+|---|---|---|---|
+| Wave 1 | #164(JWT秘密鍵), #169(IDOR), #199(セッション失効) | 3並列 | セキュリティ CRITICAL |
+| Wave 2 | #177(API暗号化), #198(CSRF), #203(SQLカラム不一致) | 3並列 | セキュリティ + データ整合性 |
+| Wave 3 | #197(Register原子性), #193(課金カウンター), #202(Stripe課金) | 3並列 | データ整合性 + 課金 |
+| Wave 4 | #207(LLMトークン), #192(GDPR削除), #208(GDPRエクスポート) | 3並列 | コスト + プライバシー |
+| Wave 5 | #212(Discover検索), #196(壊れた機能), #187(Sentry) | 3並列 | 検索修復 + 機能修復 + 監視 |
+| Wave 6 | #165(QueryClient), #170(LLM retry), #211(プロンプト予算) | 3並列 | 安定性 + LLMコスト |
+| Wave 7 | #205(ルート保護), #194(CI/CD), #171(バリデーション) | 3並列 | 認可 + 品質ゲート |
+| Wave 8 | #178(データ漏洩), #188(WebPush), #209(WS強化) | 3並列 | セキュリティ + 通知 |
+| Wave 9 | #200(Admin Guard), #213(ツイン完成度), #215(Feed N+1) | 3並列 | 認可 + UX |
+| Wave 10 | #204(D1スキーマ), #195(バンドル), #172(Stripe統合) | 3並列 | パフォーマンス |
+| Wave 11 | #180(God-router), #173(ensureSchema), #201(Cron) | 3並列 | 保守性 + インフラ |
+| Wave 12 | #182(デッドコード), #181(Webhook+SW), #190(DO永続化) | 3並列 | クリーンアップ |
+| Wave 13 | #183(tRPCエラー), #206(UX一貫性), #210(通知補完) | 3並列 | エラーハンドリング + UX |
+| Wave 14 | #179(プロンプトインジェクション), #184(ESLint), #214(オンボーディング) | 3並列 | セキュリティ + 分析 |
+| Wave 15 | #191(テスト基盤), #167(コマンドパレット), #185(devスクリプト) | 3並列 | テスト + DX |
+| Wave 16 | #186(ダークモード), #168(NPC), #189(i18n) | 3並列 | UX + 多言語化 |
+| Wave 17 | #216(マッチング精度), #166(壊れた機能残り) | 2並列 | 機能改善 + 残件 |
+
+---
+
+## Phase 89: D1行型定義 + tRPC出力スキーマ + as any削減 + tsconfig強化 + LLM型安全性（2026-03-03）
+
+### 調査概要
+3並列エージェント（opus）で以下を調査:
+- Agent 1: tsconfig.json 厳格性 / `as any` 使用分析 / 型アサーション / D1 クエリ結果型 / tRPC 戻り値型 / 共有型
+- Agent 2: ルーター別の型安全性ホットスポット / normalizeTwin 伝搬 / LLM プロバイダー型
+- Agent 3: drizzle スキーマとの乖離 / shared/types.ts 死亡コード / クライアント型推論チェーン
+
+### 発見事項一覧
+
+| ID | カテゴリ | 重要度 | 発見内容 |
+|---|---|---|---|
+| TYPE-1 | 型安全性 | CRITICAL | .first&lt;any&gt;() が 725 箇所、.all&lt;any&gt;() が 376 箇所（合計 1,101 箇所/32ファイル）。D1 行型インターフェースがゼロ |
+| TYPE-2 | 型安全性 | CRITICAL | 約 1,071 tRPC プロシージャ全てで .output() Zod スキーマがゼロ → 出力ランタイム検証なし |
+| TYPE-3 | 型安全性 | HIGH | `as any` が 313 箇所/93ファイル。`: any` 型注釈が 479 箇所/29ワーカーファイル |
+| TYPE-4 | 型安全性 | HIGH | normalizeTwin(row: any) が全ツインデータに any を伝搬。parseJson&lt;any&gt;() で 6 フィールドが any 化 |
+| TYPE-5 | 型安全性 | HIGH | matching.ts に `: any` が 237 件、twins.ts に 132 件 — 2 ファイルで全体の 77% |
+| TYPE-6 | 型安全性 | MEDIUM | `body: any` が 71 箇所/9ファイル (LLM リクエストボディ)。`res.json() as any` が 20+ 箇所 |
+| TYPE-7 | 設定 | MEDIUM | tsconfig.json に noUncheckedIndexedAccess/exactOptionalProperties が未設定 |
+| TYPE-8 | デッドコード | MEDIUM | drizzle/schema.ts に型定義 (User, DigitalTwin 等) があるが worker/client から一切 import なし |
+| TYPE-9 | 設定 | LOW | (ctx.env as any).RESEND_API_KEY が 9 箇所 — Env 型に既に宣言済みで cast 不要 |
+| TYPE-10 | 型推論 | HIGH | tRPC 推論チェーン: D1 &lt;any&gt; → procedure return (any) → AppRouter → client hooks = any が全階層に伝搬 |
+
+### タスク対応表
+
+| タスク# | 優先度 | 対応する発見 | 内容 |
+|---|---|---|---|
+| #217 | HIGH | TYPE-1, TYPE-4 | D1 行型インターフェース定義（主要20テーブル + normalizeTwin 型付け） |
+| #218 | HIGH | TYPE-2, TYPE-10 | tRPC 出力スキーマ基盤（重要20プロシージャに .output() 追加） |
+| #219 | MEDIUM | TYPE-3, TYPE-5, TYPE-9 | as any 削減（不要 cast 313件 + `: any` 479件の段階的除去） |
+| #220 | MEDIUM | TYPE-7 | tsconfig 厳格化（noUncheckedIndexedAccess + exactOptionalProperties） |
+| #221 | MEDIUM | TYPE-6 | LLM プロバイダー型安全性（リクエスト/レスポンス型定義 4プロバイダー） |
+
+### Wave 実装順序（Phase 78〜89 統合・最終版）
+
+| Wave | タスク | 並列度 | 理由 |
+|---|---|---|---|
+| Wave 1 | #164(JWT秘密鍵), #169(IDOR), #199(セッション失効) | 3並列 | セキュリティ CRITICAL |
+| Wave 2 | #177(API暗号化), #198(CSRF), #203(SQLカラム不一致) | 3並列 | セキュリティ + データ整合性 |
+| Wave 3 | #197(Register原子性), #193(課金カウンター), #202(Stripe課金) | 3並列 | データ整合性 + 課金 |
+| Wave 4 | #207(LLMトークン), #192(GDPR削除), #208(GDPRエクスポート) | 3並列 | コスト + プライバシー |
+| Wave 5 | #212(Discover検索), #196(壊れた機能), #187(Sentry) | 3並列 | 検索修復 + 機能修復 + 監視 |
+| Wave 6 | #217(D1行型), #218(tRPC出力), #221(LLM型) | 3並列 | 型安全性基盤 — 全後続タスクの品質に影響 |
+| Wave 7 | #165(QueryClient), #170(LLM retry), #211(プロンプト予算) | 3並列 | 安定性 + LLMコスト |
+| Wave 8 | #205(ルート保護), #194(CI/CD), #171(バリデーション) | 3並列 | 認可 + 品質ゲート |
+| Wave 9 | #178(データ漏洩), #188(WebPush), #209(WS強化) | 3並列 | セキュリティ + 通知 |
+| Wave 10 | #200(Admin Guard), #213(ツイン完成度), #215(Feed N+1) | 3並列 | 認可 + UX |
+| Wave 11 | #204(D1スキーマ), #195(バンドル), #172(Stripe統合) | 3並列 | パフォーマンス |
+| Wave 12 | #180(God-router), #173(ensureSchema), #201(Cron) | 3並列 | 保守性 + インフラ |
+| Wave 13 | #219(as any削減), #220(tsconfig), #182(デッドコード) | 3並列 | 型安全性強化 + クリーンアップ |
+| Wave 14 | #181(Webhook+SW), #190(DO永続化), #183(tRPCエラー) | 3並列 | インフラ + エラーハンドリング |
+| Wave 15 | #206(UX一貫性), #210(通知補完), #179(プロンプトインジェクション) | 3並列 | UX + セキュリティ |
+| Wave 16 | #184(ESLint), #214(オンボーディング), #191(テスト基盤) | 3並列 | Lint + 分析 + テスト |
+| Wave 17 | #167(コマンドパレット), #185(devスクリプト), #186(ダークモード) | 3並列 | DX + UX |
+| Wave 18 | #168(NPC), #189(i18n), #216(マッチング精度), #166(壊れた機能残り) | 3-4並列 | 品質 + 多言語化 + 残件 |
+
+---
+
+## Phase 90: 可観測性パイプライン + SEO + アクセシビリティ + ヘルスチェック + サイレントcatch（2026-03-04）
+
+### 調査概要
+3並列エージェント（opus）で以下を調査:
+- Agent 1: SEO / メタタグ / OG画像 / sitemap / robots.txt / JSON-LD / canonical / web-vitals
+- Agent 2: アクセシビリティ / ARIA / キーボード / フォーカス / コントラスト / スクリーンリーダー / reduced-motion
+- Agent 3: ログ / 構造化ログ / ヘルスチェック / エラー追跡 / リクエストトレーシング / メトリクス / アラート
+
+### 発見事項一覧
+
+| ID | カテゴリ | 重要度 | 発見内容 |
+|---|---|---|---|
+| OBS-1 | 可観測性 | CRITICAL | tRPC createContext に logger/requestId が伝搬されない → プロシージャ内エラーがサーバーサイドでログされない |
+| OBS-2 | 可観測性 | HIGH | tRPC onError ハンドラ未設定 → 全プロシージャエラーがサイレント |
+| OBS-3 | 可観測性 | HIGH | requestId がレスポンスヘッダーに含まれない → クライアントデバッグ不能 |
+| OBS-4 | 可観測性 | HIGH | 運用メトリクス (レイテンシ/エラー率/スループット) が一切なし |
+| OBS-5 | 可観測性 | HIGH | 196+ の空 catch ブロック (matching.ts 80件, twins.ts 46件) → エラーがサイレントに握り潰される |
+| SEO-1 | SEO | HIGH | 純粋 SPA で SSR/SSG/プリレンダリングなし → SNS クローラーが per-page メタタグを取得不能 |
+| SEO-2 | SEO | HIGH | OG 画像が SVG (Facebook/Twitter/LINE 未対応)。デフォルト OG は 512x512 アイコン (1200x630 推奨) |
+| SEO-3 | SEO | MEDIUM | JSON-LD に fabricated aggregateRating (4.5星/50件) → Google ペナルティリスク |
+| SEO-4 | SEO | MEDIUM | 静的サイトマップ。/users/:id (公開プロフィール) が未掲載。動的生成なし |
+| SEO-5 | SEO | LOW | hreflang タグなし (ja/en i18n 対応済みだが代替言語リンクなし) |
+| A11Y-1 | アクセシビリティ | HIGH | 138 ページ中 119 ページ (86%) に ARIA 属性がゼロ |
+| A11Y-2 | アクセシビリティ | HIGH | prefers-reduced-motion: CSS/JS 全体でゼロ。全アニメーションがユーザー設定を無視 |
+| A11Y-3 | アクセシビリティ | MEDIUM | 366 箇所の toast.error() がフォームフィールドと非関連付け → スクリーンリーダー認識不能 |
+| A11Y-4 | アクセシビリティ | MEDIUM | 14 ダイアログに DialogDescription なし (Radix a11y 警告) |
+| A11Y-5 | アクセシビリティ | LOW | 3 コンポーネントが deprecated onKeyPress を使用 |
+| HEALTH-1 | 運用 | MEDIUM | /api/health: R2/LLM が env 変数存在確認のみ (実接続テストなし) |
+| HEALTH-2 | 運用 | MEDIUM | バージョン不整合: /api/health="2.3.0", /api/health/detailed="2.2.0", /api/status="2.2.0" |
+| HEALTH-3 | 運用 | MEDIUM | rate limit ヒット時のログ/通知なし |
+
+### タスク対応表
+
+| タスク# | 優先度 | 対応する発見 | 内容 |
+|---|---|---|---|
+| #222 | HIGH | OBS-1〜4 | 可観測性パイプライン完成（tRPC onError + logger 伝搬 + requestId ヘッダー + 運用メトリクス） |
+| #223 | HIGH | SEO-1〜5 | SEO プリレンダリング + OG 画像 PNG 化 + 偽レーティング削除 + 動的サイトマップ |
+| #224 | MEDIUM | A11Y-1〜5 | アクセシビリティ基盤（prefers-reduced-motion + 主要20ページ ARIA + インラインエラー） |
+| #225 | MEDIUM | HEALTH-1〜3 | ヘルスチェック強化（実接続テスト + バージョン統一 + 運用アラート） |
+| #226 | MEDIUM | OBS-5 | サイレント catch 排除（196件の空 catch → 構造化ログに置換） |
+
+### Wave 実装順序（Phase 78〜90 統合・最終版）
+
+| Wave | タスク | 並列度 | 理由 |
+|---|---|---|---|
+| Wave 1 | #164(JWT秘密鍵), #169(IDOR), #199(セッション失効) | 3並列 | セキュリティ CRITICAL |
+| Wave 2 | #177(API暗号化), #198(CSRF), #203(SQLカラム不一致) | 3並列 | セキュリティ + データ整合性 |
+| Wave 3 | #197(Register原子性), #193(課金カウンター), #202(Stripe課金) | 3並列 | データ整合性 + 課金 |
+| Wave 4 | #222(可観測性), #207(LLMトークン), #187(Sentry) | 3並列 | 可観測性基盤 — 以降の全修正の効果測定に必須 |
+| Wave 5 | #192(GDPR削除), #208(GDPRエクスポート), #212(Discover検索) | 3並列 | プライバシー + 検索修復 |
+| Wave 6 | #217(D1行型), #218(tRPC出力), #221(LLM型) | 3並列 | 型安全性基盤 |
+| Wave 7 | #196(壊れた機能), #211(プロンプト予算), #226(サイレントcatch) | 3並列 | 機能修復 + ログ改善 |
+| Wave 8 | #165(QueryClient), #170(LLM retry), #205(ルート保護) | 3並列 | 安定性 + 認可 |
+| Wave 9 | #194(CI/CD), #171(バリデーション), #178(データ漏洩) | 3並列 | 品質ゲート + 入力検証 |
+| Wave 10 | #188(WebPush), #209(WS強化), #200(Admin Guard) | 3並列 | 通知修復 + WS + 認可 |
+| Wave 11 | #223(SEO), #224(アクセシビリティ), #225(ヘルスチェック) | 3並列 | SEO + a11y + 運用 |
+| Wave 12 | #213(ツイン完成度), #215(Feed N+1), #204(D1スキーマ) | 3並列 | UX + パフォーマンス |
+| Wave 13 | #195(バンドル), #172(Stripe統合), #180(God-router) | 3並列 | パフォーマンス + 保守性 |
+| Wave 14 | #173(ensureSchema), #201(Cron), #182(デッドコード) | 3並列 | インフラ + クリーンアップ |
+| Wave 15 | #219(as any), #220(tsconfig), #181(Webhook+SW) | 3並列 | 型安全性 + インフラ |
+| Wave 16 | #190(DO永続化), #183(tRPCエラー), #206(UX一貫性) | 3並列 | インフラ + UX |
+| Wave 17 | #210(通知補完), #179(プロンプトインジェクション), #184(ESLint) | 3並列 | 通知 + セキュリティ + Lint |
+| Wave 18 | #214(オンボーディング), #191(テスト基盤), #167(コマンドパレット) | 3並列 | 分析 + テスト + DX |
+| Wave 19 | #185(devスクリプト), #186(ダークモード), #168(NPC) | 3並列 | DX + UX |
+| Wave 20 | #189(i18n), #216(マッチング精度), #166(壊れた機能残り) | 3並列 | 多言語化 + 残件 |
