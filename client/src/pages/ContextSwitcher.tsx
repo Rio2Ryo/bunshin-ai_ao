@@ -99,19 +99,17 @@ export default function ContextSwitcher() {
     if (editingId) {
       updateMut.mutate({
         ruleId: editingId,
-        name: form.name,
-        conditionType: form.conditionType,
+        ruleName: form.name,
         conditionValue: form.conditionValue,
-        actionType: form.actionType,
         actionValue: form.actionValue,
         priority: form.priority,
       });
     } else {
       createMut.mutate({
-        name: form.name,
-        conditionType: form.conditionType,
+        ruleName: form.name,
+        conditionType: form.conditionType as "industry" | "theme_keyword" | "friend_attribute" | "score_range" | "time_of_day",
         conditionValue: form.conditionValue,
-        actionType: form.actionType,
+        actionType: form.actionType as "persona" | "knowledge_set" | "style" | "system_prompt_append",
         actionValue: form.actionValue,
         priority: form.priority,
       });
@@ -121,7 +119,7 @@ export default function ContextSwitcher() {
   const startEdit = (rule: any) => {
     setEditingId(rule.id);
     setForm({
-      name: rule.name,
+      name: rule.ruleName,
       conditionType: rule.conditionType,
       conditionValue: rule.conditionValue,
       actionType: rule.actionType,
@@ -138,7 +136,7 @@ export default function ContextSwitcher() {
   const toggleActive = (rule: any) => {
     updateMut.mutate({
       ruleId: rule.id,
-      active: rule.active ? 0 : 1,
+      isActive: !rule.isActive,
     });
   };
 
@@ -284,12 +282,12 @@ export default function ContextSwitcher() {
                     {rules.map((rule: any) => (
                       <div key={rule.id} className="flex items-center gap-3 p-3 rounded-lg border bg-card hover:bg-muted/30 transition-colors">
                         <Switch
-                          checked={!!rule.active}
+                          checked={!!rule.isActive}
                           onCheckedChange={() => toggleActive(rule)}
                         />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-medium text-sm">{rule.name}</span>
+                            <span className="font-medium text-sm">{rule.ruleName}</span>
                             <Badge variant="outline" className="text-xs">{conditionLabel(rule.conditionType)}: {rule.conditionValue}</Badge>
                             <Badge variant="secondary" className="text-xs">{actionLabel(rule.actionType)}</Badge>
                             {rule.applyCount != null && (
@@ -373,16 +371,16 @@ export default function ContextSwitcher() {
 
                 {evaluateMut.data && (
                   <div className="space-y-3 pt-4 border-t">
-                    <p className="text-sm font-medium">評価結果: {evaluateMut.data.matchedRules?.length || 0}件マッチ</p>
-                    {evaluateMut.data.matchedRules?.length === 0 && (
+                    <p className="text-sm font-medium">評価結果: {evaluateMut.data.appliedRules?.length || 0}件マッチ ({evaluateMut.data.totalEvaluated}件評価)</p>
+                    {evaluateMut.data.appliedRules?.length === 0 && (
                       <p className="text-sm text-muted-foreground">マッチするルールはありませんでした</p>
                     )}
-                    {evaluateMut.data.matchedRules?.map((match: any, i: number) => (
+                    {evaluateMut.data.appliedRules?.map((match: any, i: number) => (
                       <Card key={i} className="border-l-4 border-l-green-500 bg-green-50/50 dark:bg-green-900/10">
                         <CardContent className="p-3">
                           <div className="flex items-center gap-2 flex-wrap">
                             <CheckCircle className="h-4 w-4 text-green-500" />
-                            <span className="font-medium text-sm">{match.ruleName || match.name}</span>
+                            <span className="font-medium text-sm">{match.ruleName}</span>
                             <Badge variant="outline" className="text-xs">
                               {conditionLabel(match.conditionType)}: {match.conditionValue}
                             </Badge>
@@ -393,16 +391,6 @@ export default function ContextSwitcher() {
                         </CardContent>
                       </Card>
                     ))}
-                    {evaluateMut.data.appliedActions && evaluateMut.data.appliedActions.length > 0 && (
-                      <div className="pt-2">
-                        <p className="text-sm font-medium mb-2">適用されるアクション:</p>
-                        {evaluateMut.data.appliedActions.map((action: any, i: number) => (
-                          <Badge key={i} variant="secondary" className="mr-2 mb-1">
-                            <Zap className="h-3 w-3 mr-1" />{actionLabel(action.type)}: {action.value}
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 )}
               </CardContent>

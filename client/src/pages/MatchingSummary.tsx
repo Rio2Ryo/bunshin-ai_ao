@@ -271,7 +271,7 @@ export default function MatchingSummary() {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => distributeMut.mutate({ sessionId: Number(selectedSession), channels })}
+                        onClick={() => distributeMut.mutate({ sessionId: Number(selectedSession), channels: channels as ("email" | "slack" | "app" | "line")[] })}
                         disabled={channels.length === 0 || distributeMut.isPending}
                       >
                         {distributeMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Send className="h-4 w-4 mr-2" />}

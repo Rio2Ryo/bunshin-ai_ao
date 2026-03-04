@@ -61,7 +61,7 @@ export default function OutcomeTracker() {
   // Queries
   const { data: sessionsData } = trpc.matching.sessions.useQuery();
   const { data: actionItemsData, isLoading: actionsLoading, refetch: refetchActions } = trpc.matching.listActionItems.useQuery(
-    { status: statusFilter === "all" ? undefined : statusFilter }
+    { status: statusFilter === "all" ? undefined : statusFilter as "pending" | "in_progress" | "done" | "cancelled" }
   );
   const { data: summaryData, isLoading: summaryLoading } = trpc.matching.getOutcomeSummary.useQuery(
     undefined,
@@ -89,10 +89,10 @@ export default function OutcomeTracker() {
     }
     try {
       await createActionMut.mutateAsync({
-        sessionId: newActionSessionId ? parseInt(newActionSessionId) : undefined,
+        sessionId: newActionSessionId ? parseInt(newActionSessionId) : 0,
         title: newActionTitle,
         description: newActionDescription || undefined,
-        priority: newActionPriority,
+        priority: newActionPriority as "high" | "medium" | "low",
         dueDate: newActionDueDate || undefined,
       });
       toast.success("アクションアイテムを作成しました");
@@ -110,7 +110,7 @@ export default function OutcomeTracker() {
 
   const handleUpdateStatus = async (itemId: number, newStatus: string) => {
     try {
-      await updateActionMut.mutateAsync({ itemId, status: newStatus });
+      await updateActionMut.mutateAsync({ itemId, status: newStatus as "pending" | "in_progress" | "done" | "cancelled" });
       toast.success("ステータスを更新しました");
       refetchActions();
     } catch (e: any) {
@@ -125,8 +125,8 @@ export default function OutcomeTracker() {
     }
     try {
       await recordOutcomeMut.mutateAsync({
-        sessionId: newOutcomeSessionId ? parseInt(newOutcomeSessionId) : undefined,
-        type: newOutcomeType,
+        sessionId: newOutcomeSessionId ? parseInt(newOutcomeSessionId) : 0,
+        outcomeType: newOutcomeType as "meeting" | "deal" | "partnership" | "referral" | "other",
         description: newOutcomeDescription,
         monetaryValue: newOutcomeValue ? parseFloat(newOutcomeValue) : undefined,
       });

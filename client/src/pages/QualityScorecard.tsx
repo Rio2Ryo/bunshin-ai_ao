@@ -42,7 +42,7 @@ export default function QualityScorecard() {
 
   // Fetch quality score for selected session
   const { data: qualityData, isLoading: qualityLoading } = trpc.matching.getQualityScore.useQuery(
-    { sessionId: selectedSessionId },
+    { sessionId: Number(selectedSessionId) },
     { enabled: !!selectedSessionId }
   );
 
@@ -64,7 +64,7 @@ export default function QualityScorecard() {
       toast.error("セッションを選択してください");
       return;
     }
-    evaluateMut.mutate({ sessionId: selectedSessionId });
+    evaluateMut.mutate({ sessionId: Number(selectedSessionId) });
   };
 
   const quality = qualityData as any;

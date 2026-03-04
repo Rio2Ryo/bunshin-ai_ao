@@ -72,7 +72,7 @@ export default function StrategyPlanner() {
     }
     try {
       await saveNoteMut.mutateAsync({
-        friendId: parseInt(selectedFriendId),
+        strategyId: parseInt(selectedFriendId),
         note: notes,
       });
       toast.success("メモを保存しました");
@@ -90,7 +90,7 @@ export default function StrategyPlanner() {
       const result = await reviewMut.mutateAsync({
         strategyId: parseInt(selectedStrategyId),
         sessionId: parseInt(selectedSessionId),
-        effectiveness,
+        effectiveness: effectiveness as "excellent" | "good" | "neutral" | "poor",
       });
       setReviewResult(result);
       toast.success("振り返りを完了しました");

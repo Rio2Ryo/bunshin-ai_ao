@@ -67,7 +67,7 @@ export default function KnowledgeGraph() {
 
   // Fetch related knowledge for selected node
   const { data: relatedData, isLoading: relatedLoading } = trpc.myTwin.getRelatedKnowledge.useQuery(
-    { entryId: selectedNodeId! },
+    { entryId: Number(selectedNodeId!) },
     { enabled: !!selectedNodeId }
   );
 
@@ -91,7 +91,7 @@ export default function KnowledgeGraph() {
   clusters.forEach((c) => clusterMap.set(c.id, c));
 
   const handleGenerate = () => {
-    generateMut.mutate({});
+    generateMut.mutate();
   };
 
   // Calculate simple circular layout positions for SVG visualization
