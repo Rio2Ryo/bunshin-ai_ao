@@ -176,7 +176,7 @@ api.use("/api/*", async (c, next) => {
 const rateLimitMap = new Map<string, { count: number; resetAt: number; limit: number }>();
 const RATE_LIMIT_WINDOW = 60_000;
 const PLAN_RATE_LIMITS: Record<string, number> = { free: 60, premium: 120, enterprise: 600 };
-const DEFAULT_RATE_LIMIT = 30;
+const DEFAULT_RATE_LIMIT = 200;
 let lastCleanup = Date.now();
 
 // Paths excluded from rate limiting (server-to-server webhooks with their own signature verification)
