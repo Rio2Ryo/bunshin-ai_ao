@@ -1638,6 +1638,72 @@ async function handleScheduled(env: Env, cronSchedule?: string): Promise<void> {
         }
       } catch {}
     }
+
+    // === Monthly: Orphan DB record cleanup ===
+    try {
+      // Clean expired tokens
+      await db.prepare(`DELETE FROM password_reset_tokens WHERE expiresAt < datetime('now')`).run();
+      await db.prepare(`DELETE FROM email_verification_tokens WHERE expiresAt < datetime('now')`).run();
+
+      // Clean old notifications (older than 90 days)
+      await db.prepare(`DELETE FROM notifications WHERE createdAt < datetime('now', '-90 days')`).run();
+
+      // Clean old error logs (older than 30 days)
+      try {
+        await db.prepare(`DELETE FROM error_logs WHERE createdAt < datetime('now', '-30 days')`).run();
+      } catch { /* table may not exist */ }
+
+      // Clean orphaned matching data (sessions referencing deleted users)
+      try {
+        await db.prepare(
+          `DELETE FROM matching_dialogues WHERE sessionId NOT IN (SELECT id FROM matching_sessions)`
+        ).run();
+      } catch {}
+      try {
+        await db.prepare(
+          `DELETE FROM matching_results WHERE sessionId NOT IN (SELECT id FROM matching_sessions)`
+        ).run();
+      } catch {}
+
+      // Clean orphaned chat messages (sessions referencing deleted sessions)
+      try {
+        await db.prepare(
+          `DELETE FROM chat_messages WHERE sessionId NOT IN (SELECT id FROM chat_sessions)`
+        ).run();
+      } catch {}
+
+      // Clean orphaned knowledge_base entries (twin deleted)
+      try {
+        await db.prepare(
+          `DELETE FROM knowledge_base WHERE twinId NOT IN (SELECT id FROM digital_twins)`
+        ).run();
+      } catch {}
+
+      // Clean orphaned intimacy_scores (user deleted)
+      try {
+        await db.prepare(
+          `DELETE FROM intimacy_scores WHERE userId NOT IN (SELECT id FROM users) OR friendId NOT IN (SELECT id FROM users)`
+        ).run();
+      } catch {}
+
+      // Clean stale stripe webhook events (older than 90 days)
+      try {
+        await db.prepare(
+          `DELETE FROM stripe_webhook_events WHERE createdAt < datetime('now', '-90 days')`
+        ).run();
+      } catch {}
+
+      // Clean disconnected LINE connections (disconnected for 30+ days)
+      try {
+        await db.prepare(
+          `DELETE FROM line_connections WHERE status='disconnected' AND disconnectedAt < datetime('now', '-30 days')`
+        ).run();
+      } catch {}
+
+      console.log("[Cron] Orphan DB cleanup completed");
+    } catch (e: any) {
+      console.error("[Cron] Orphan DB cleanup error:", e?.message);
+    }
   }
 }
 

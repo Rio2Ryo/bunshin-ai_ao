@@ -130,7 +130,54 @@ export const twinsRouter = router({
 
   reset: protectedProcedure.mutation(async ({ ctx }) => {
     await ensureSchema(ctx.env.DB);
-    await ctx.env.DB.prepare(`DELETE FROM digital_twins WHERE userId = ?`).bind(ctx.userId).run();
+    const twin = await ctx.env.DB.prepare(`SELECT id FROM digital_twins WHERE userId=?`).bind(ctx.userId).first<any>();
+    if (!twin) return { ok: true };
+
+    const twinId = twin.id;
+
+    // Delete child tables that reference twinId (child before parent)
+    const twinChildTables = [
+      "knowledge_base", "twin_growth_status", "twin_skill_levels", "twin_milestones",
+      "twin_visibility_rules", "conversation_learning", "twin_personas",
+      "twin_evolution_events", "twin_memories", "twin_versions", "twin_benchmarks",
+      "twin_goals", "twin_faqs", "twin_templates", "twin_clones", "knowledge_graphs",
+      "cumulative_waveforms", "value_scenario_responses",
+    ];
+    for (const table of twinChildTables) {
+      try {
+        await ctx.env.DB.prepare(`DELETE FROM ${table} WHERE twinId=?`).bind(twinId).run();
+      } catch { /* table may not exist */ }
+    }
+
+    // Delete tables with subquery references
+    const subqueryDeletes = [
+      `DELETE FROM twin_coaching_messages WHERE sessionId IN (SELECT id FROM twin_coaching_sessions WHERE twinId=?)`,
+      `DELETE FROM twin_collaboration_turns WHERE collaborationId IN (SELECT id FROM twin_collaborations WHERE userId=?)`,
+      `DELETE FROM other_perspective_waveforms WHERE twinId=? OR evaluatorTwinId=?`,
+    ];
+    for (const sql of subqueryDeletes) {
+      try {
+        const bindCount = (sql.match(/\?/g) || []).length;
+        if (bindCount === 1) {
+          await ctx.env.DB.prepare(sql).bind(twinId).run();
+        } else {
+          await ctx.env.DB.prepare(sql).bind(twinId, twinId).run();
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Delete coaching sessions and collaborations themselves
+    try { await ctx.env.DB.prepare(`DELETE FROM twin_coaching_sessions WHERE twinId=?`).bind(twinId).run(); } catch {}
+    try { await ctx.env.DB.prepare(`DELETE FROM twin_collaborations WHERE userId=?`).bind(ctx.userId).run(); } catch {}
+
+    // Delete chat sessions and messages that reference this twin
+    try {
+      await ctx.env.DB.prepare(`DELETE FROM chat_messages WHERE sessionId IN (SELECT id FROM chat_sessions WHERE twinId=?)`).bind(twinId).run();
+      await ctx.env.DB.prepare(`DELETE FROM chat_sessions WHERE twinId=?`).bind(twinId).run();
+    } catch {}
+
+    // Finally delete the twin itself
+    await ctx.env.DB.prepare(`DELETE FROM digital_twins WHERE userId=?`).bind(ctx.userId).run();
     return { ok: true };
   }),
 

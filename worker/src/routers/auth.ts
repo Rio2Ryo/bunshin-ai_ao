@@ -316,22 +316,120 @@ Step 5完了時に以下を出力:
           for (const stmt of twinDeletions) {
             try { await stmt.run(); } catch { /* table may not exist */ }
           }
+
+          // Twin-related cleanup (extended)
+          const twinExtendedDeletions = [
+            ctx.env.DB.prepare(`DELETE FROM twin_personas WHERE twinId=?`).bind(twinId),
+            ctx.env.DB.prepare(`DELETE FROM twin_evolution_events WHERE twinId=?`).bind(twinId),
+            ctx.env.DB.prepare(`DELETE FROM twin_memories WHERE userId=?`).bind(userId),
+            ctx.env.DB.prepare(`DELETE FROM twin_versions WHERE twinId=?`).bind(twinId),
+            ctx.env.DB.prepare(`DELETE FROM twin_benchmarks WHERE twinId=?`).bind(twinId),
+            ctx.env.DB.prepare(`DELETE FROM twin_goals WHERE userId=?`).bind(userId),
+            ctx.env.DB.prepare(`DELETE FROM twin_faqs WHERE twinId=?`).bind(twinId),
+            ctx.env.DB.prepare(`DELETE FROM twin_templates WHERE userId=?`).bind(userId),
+            ctx.env.DB.prepare(`DELETE FROM twin_clones WHERE sourceTwinId=?`).bind(twinId),
+            ctx.env.DB.prepare(`DELETE FROM knowledge_graphs WHERE twinId=?`).bind(twinId),
+          ];
+          for (const stmt of twinExtendedDeletions) {
+            try { await stmt.run(); } catch { /* table may not exist */ }
+          }
+
+          // Twin coaching & collaboration (subquery-based, run individually)
+          try { await ctx.env.DB.prepare(`DELETE FROM twin_coaching_messages WHERE sessionId IN (SELECT id FROM twin_coaching_sessions WHERE twinId=?)`).bind(twinId).run(); } catch { /* ignore */ }
+          try { await ctx.env.DB.prepare(`DELETE FROM twin_coaching_sessions WHERE twinId=?`).bind(twinId).run(); } catch { /* ignore */ }
+          try { await ctx.env.DB.prepare(`DELETE FROM twin_collaboration_turns WHERE collaborationId IN (SELECT id FROM twin_collaborations WHERE userId=?)`).bind(userId).run(); } catch { /* ignore */ }
+          try { await ctx.env.DB.prepare(`DELETE FROM twin_collaborations WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
         }
 
         // Chat data
         try { await ctx.env.DB.prepare(`DELETE FROM chat_messages WHERE sessionId IN (SELECT id FROM chat_sessions WHERE userId=?)`).bind(userId).run(); } catch { /* ignore */ }
         try { await ctx.env.DB.prepare(`DELETE FROM chat_sessions WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
 
-        // Matching data
+        // Matching data — subquery-based deletes BEFORE matching_sessions is deleted
         try { await ctx.env.DB.prepare(`DELETE FROM matching_dialogues WHERE sessionId IN (SELECT id FROM matching_sessions WHERE initiatorUserId=?)`).bind(userId).run(); } catch { /* ignore */ }
         try { await ctx.env.DB.prepare(`DELETE FROM matching_results WHERE sessionId IN (SELECT id FROM matching_sessions WHERE initiatorUserId=?)`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM matching_emotion_analysis WHERE sessionId IN (SELECT id FROM matching_sessions WHERE initiatorUserId=?)`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM matching_highlights WHERE sessionId IN (SELECT id FROM matching_sessions WHERE initiatorUserId=?)`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM facilitator_interventions WHERE sessionId IN (SELECT id FROM matching_sessions WHERE initiatorUserId=?)`).bind(userId).run(); } catch { /* ignore */ }
+        // Now safe to delete matching_sessions parent table
         try { await ctx.env.DB.prepare(`DELETE FROM matching_sessions WHERE initiatorUserId=?`).bind(userId).run(); } catch { /* ignore */ }
         try { await ctx.env.DB.prepare(`DELETE FROM matching_requests WHERE senderUserId=? OR receiverUserId=?`).bind(userId, userId).run(); } catch { /* ignore */ }
         try { await ctx.env.DB.prepare(`DELETE FROM auto_matching_schedules WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
 
+        // Matching-related cleanup (extended) — userId-based deletes
+        const matchingExtDeletions = [
+          ctx.env.DB.prepare(`DELETE FROM matching_comments WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_reactions WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_notes WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_session_participants WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM dialogue_feedback WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_quality_scores WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_action_items WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_outcomes WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_strategies WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_templates WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_template_uses WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_insights WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_coach_advice WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_digests WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_playbooks WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_summaries WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_storyboards WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_heatmap_analyses WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_network_graphs WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_calendar_events WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_reminders WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_predictions WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_voice_notes WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_streaks WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_achievements WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_peer_reviews WHERE reviewerId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_minutes WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM smart_matching_recommendations WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM conversation_style_analysis WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM dialogue_quality_scores WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM session_tags WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM session_bookmarks WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM action_plans WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM strategy_annotations WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM consensus_tracking WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM replay_commentaries WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM emotion_flow_analyses WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM multi_perspective_replays WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM comparison_timelines WHERE userId=?`).bind(userId),
+        ];
+        for (const stmt of matchingExtDeletions) {
+          try { await stmt.run(); } catch { /* table may not exist */ }
+        }
+
         // Social
         try { await ctx.env.DB.prepare(`DELETE FROM friendships WHERE userId=? OR friendId=?`).bind(userId, userId).run(); } catch { /* ignore */ }
         try { await ctx.env.DB.prepare(`DELETE FROM intimacy_scores WHERE userId=? OR friendId=?`).bind(userId, userId).run(); } catch { /* ignore */ }
+
+        // Social & community cleanup
+        try { await ctx.env.DB.prepare(`DELETE FROM friend_activities WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM trust_progress WHERE userId=? OR friendId=?`).bind(userId, userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM user_blocks WHERE userId=? OR blockedUserId=?`).bind(userId, userId).run(); } catch { /* ignore */ }
+        // Feed: comments/likes before items (child before parent)
+        try { await ctx.env.DB.prepare(`DELETE FROM feed_comments WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM feed_likes WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM feed_items WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Community events
+        try { await ctx.env.DB.prepare(`DELETE FROM community_event_participants WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM community_events WHERE organizerId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Team battles
+        try { await ctx.env.DB.prepare(`DELETE FROM team_battle_members WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM team_battles WHERE creatorUserId=?`).bind(userId).run(); } catch { /* ignore */ }
+        // Challenges
+        try { await ctx.env.DB.prepare(`DELETE FROM challenge_participants WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM matching_challenges WHERE creatorId=?`).bind(userId).run(); } catch { /* ignore */ }
+
+        // Workspace cleanup (items/goals/members before workspaces — child before parent)
+        try { await ctx.env.DB.prepare(`DELETE FROM workspace_board_items WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM workspace_goals WHERE createdBy=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM workspace_items WHERE createdBy=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM workspace_members WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM workspaces WHERE ownerId=?`).bind(userId).run(); } catch { /* ignore */ }
 
         // Waveforms & scenarios
         try { await ctx.env.DB.prepare(`DELETE FROM value_scenario_responses WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
@@ -378,6 +476,66 @@ Step 5完了時に以下を出力:
         try { await ctx.env.DB.prepare(`DELETE FROM password_reset_tokens WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
         // Email verification tokens
         try { await ctx.env.DB.prepare(`DELETE FROM email_verification_tokens WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+
+        // Personal data cleanup — subquery-based deletes (child before parent)
+        try { await ctx.env.DB.prepare(`DELETE FROM negotiation_turns WHERE negotiationId IN (SELECT id FROM negotiation_sessions WHERE userId=?)`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM negotiation_sessions WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM translation_chat_messages WHERE sessionId IN (SELECT id FROM translation_chat_sessions WHERE userId=?)`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM translation_chat_sessions WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM context_switch_logs WHERE ruleId IN (SELECT id FROM context_switch_rules WHERE userId=?)`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM context_switch_rules WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM curriculum_progress WHERE curriculumId IN (SELECT id FROM learning_curricula WHERE userId=?)`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM learning_curricula WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM connector_sync_logs WHERE connectorId IN (SELECT id FROM external_connectors WHERE userId=?)`).bind(userId).run(); } catch { /* ignore */ }
+        try { await ctx.env.DB.prepare(`DELETE FROM external_connectors WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }
+
+        // Personal data cleanup — userId-based deletes
+        const personalDataDeletions = [
+          ctx.env.DB.prepare(`DELETE FROM personality_profiles WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM personality_reports WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM notification_preferences WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM push_subscriptions WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM api_keys WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM webhooks WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM scheduler_preferences WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM scenario_purchases WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM scenario_reviews WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM sandbox_sessions WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM debate_rankings WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM debate_sessions WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM emotion_journal_entries WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM emotion_alerts WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM emotion_calibration WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM risk_assessments WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM roleplay_sessions WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM rehearsal_sessions WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM impact_map_entries WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM impact_map_reports WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM interactive_scenarios WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM weekly_reviews WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM daily_briefings WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM theme_recommendations WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM theme_rankings WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM dialogue_style_profiles WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM success_patterns WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM custom_widgets WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM scenario_comparisons WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM roi_goals WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM multimodal_inputs WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM brainstorm_sessions WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM knowledge_quizzes WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM quiz_attempts WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM persona_ab_tests WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM cross_culture_analyses WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM second_opinions WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM journal_comments WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM learning_journal_entries WHERE userId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM matching_scenarios WHERE creatorUserId=?`).bind(userId),
+          ctx.env.DB.prepare(`DELETE FROM error_logs WHERE userId=?`).bind(userId),
+        ];
+        for (const stmt of personalDataDeletions) {
+          try { await stmt.run(); } catch { /* table may not exist */ }
+        }
 
         // Profile & twin (near-last)
         try { await ctx.env.DB.prepare(`DELETE FROM user_profiles WHERE userId=?`).bind(userId).run(); } catch { /* ignore */ }

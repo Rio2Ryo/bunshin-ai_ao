@@ -125,7 +125,26 @@ export const friendsRouter = router({
     .input(z.object({ friendId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
-      await ctx.env.DB.prepare(`DELETE FROM friendships WHERE (userId=? AND friendId=?) OR (userId=? AND friendId=?)`).bind(ctx.userId, input.friendId, input.friendId, ctx.userId).run();
+      const fId = input.friendId;
+      const uId = ctx.userId;
+
+      // Clean up related data between these two users
+      const relatedCleanup = [
+        `DELETE FROM intimacy_scores WHERE (userId=? AND friendId=?) OR (userId=? AND friendId=?)`,
+        `DELETE FROM auto_matching_schedules WHERE (userId=? AND friendId=?) OR (userId=? AND friendId=?)`,
+        `DELETE FROM matching_requests WHERE (senderUserId=? AND receiverUserId=?) OR (senderUserId=? AND receiverUserId=?)`,
+        `DELETE FROM trust_progress WHERE (userId=? AND friendId=?) OR (userId=? AND friendId=?)`,
+      ];
+      for (const sql of relatedCleanup) {
+        try {
+          await ctx.env.DB.prepare(sql).bind(uId, fId, fId, uId).run();
+        } catch { /* table may not exist */ }
+      }
+
+      // Delete the friendship itself
+      await ctx.env.DB.prepare(
+        `DELETE FROM friendships WHERE (userId=? AND friendId=?) OR (userId=? AND friendId=?)`
+      ).bind(uId, fId, fId, uId).run();
       return { success: true };
     }),
   getWaveformCompatibility: protectedProcedure

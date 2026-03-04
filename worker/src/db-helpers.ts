@@ -2677,6 +2677,11 @@ function splitStatements(sql: string): string[] {
 export async function ensureSchema(db: D1Database) {
   if (schemaReady) return;
 
+  // Enable foreign key enforcement
+  try {
+    await db.prepare("PRAGMA foreign_keys = ON").run();
+  } catch { /* PRAGMA may not be supported in all D1 versions */ }
+
   // 1. Core schema (CREATE TABLE/INDEX IF NOT EXISTS — always safe to re-run)
   const stmts = splitStatements(SCHEMA_SQL);
   await db.batch(stmts.map((s) => db.prepare(s)));

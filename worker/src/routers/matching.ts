@@ -5326,6 +5326,9 @@ JSON形式: [{"title":"提案タイトル","description":"具体的な説明","i
     .input(z.object({ eventId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
+      try {
+        await ctx.env.DB.prepare(`DELETE FROM matching_reminders WHERE eventId=?`).bind(input.eventId).run();
+      } catch {}
       await ctx.env.DB.prepare(`DELETE FROM matching_calendar_events WHERE id=? AND userId=?`).bind(input.eventId, ctx.userId).run();
       return { deleted: true };
     }),

@@ -141,6 +141,8 @@ export const feedRouter = router({
     .input(z.object({ feedItemId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await ensureSchema(ctx.env.DB);
+      await ctx.env.DB.prepare(`DELETE FROM feed_comments WHERE feedItemId=?`).bind(input.feedItemId).run();
+      await ctx.env.DB.prepare(`DELETE FROM feed_likes WHERE feedItemId=?`).bind(input.feedItemId).run();
       await ctx.env.DB.prepare(
         `DELETE FROM feed_items WHERE id=? AND userId=?`
       ).bind(input.feedItemId, ctx.userId).run();
